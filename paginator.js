@@ -802,6 +802,7 @@ export class Paginator extends HTMLElement {
         }
     }
     #onTouchMove(e) {
+        if (this.#locked) return
         const state = this.#touchState
         if (state.pinched) return
         state.pinched = globalThis.visualViewport.scale > 1
@@ -1041,6 +1042,9 @@ export class Paginator extends HTMLElement {
         })
         if (shouldGo || !this.hasAttribute('animated')) await wait(100)
         this.#locked = false
+    }
+    setLocked(locked) {
+        this.#locked = locked
     }
     prev(distance) {
         return this.#turnPage(-1, distance)
