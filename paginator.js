@@ -430,7 +430,7 @@ export class Paginator extends HTMLElement {
     #index = -1
     #anchor = 0 // anchor view to a fraction (0-1), Range, or Element
     #justAnchored = false
-    #locked = false // while true, prevent any further navigation
+    locked = false // while true, prevent any further navigation
     #styles
     #styleMap = new WeakMap()
     #mediaQuery = matchMedia('(prefers-color-scheme: dark)')
@@ -802,7 +802,7 @@ export class Paginator extends HTMLElement {
         }
     }
     #onTouchMove(e) {
-        if (this.#locked) return
+        if (this.locked) return
         const state = this.#touchState
         if (state.pinched) return
         state.pinched = globalThis.visualViewport.scale > 1
@@ -994,7 +994,7 @@ export class Paginator extends HTMLElement {
         }
     }
     async goTo(target) {
-        if (this.#locked) return
+        if (this.locked) return
         const resolved = await target
         if (this.#canGoToIndex(resolved.index)) return this.#goTo(resolved)
     }
@@ -1032,8 +1032,8 @@ export class Paginator extends HTMLElement {
             if (this.sections[index]?.linear !== 'no') return index
     }
     async #turnPage(dir, distance) {
-        if (this.#locked) return
-        this.#locked = true
+        if (this.locked) return
+        this.locked = true
         const prev = dir === -1
         const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
         if (shouldGo) await this.#goTo({
@@ -1041,10 +1041,7 @@ export class Paginator extends HTMLElement {
             anchor: prev ? () => 1 : () => 0,
         })
         if (shouldGo || !this.hasAttribute('animated')) await wait(100)
-        this.#locked = false
-    }
-    setLocked(locked) {
-        this.#locked = locked
+        this.locked = false
     }
     prev(distance) {
         return this.#turnPage(-1, distance)
