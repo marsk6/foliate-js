@@ -5,29 +5,29 @@ import { textWalker } from './text-walker.js'
 
 const SEARCH_PREFIX = 'foliate-search:'
 
-const isZip = async file => {
+export const isZip = async file => {
     const arr = new Uint8Array(await file.slice(0, 4).arrayBuffer())
     return arr[0] === 0x50 && arr[1] === 0x4b && arr[2] === 0x03 && arr[3] === 0x04
 }
 
-const isPDF = async file => {
+export const isPDF = async file => {
     const arr = new Uint8Array(await file.slice(0, 5).arrayBuffer())
     return arr[0] === 0x25
         && arr[1] === 0x50 && arr[2] === 0x44 && arr[3] === 0x46
         && arr[4] === 0x2d
 }
 
-const isCBZ = ({ name, type }) =>
+export const isCBZ = ({ name, type }) =>
     type === 'application/vnd.comicbook+zip' || name.endsWith('.cbz')
 
-const isFB2 = ({ name, type }) =>
+export const isFB2 = ({ name, type }) =>
     type === 'application/x-fictionbook+xml' || name.endsWith('.fb2')
 
-const isFBZ = ({ name, type }) =>
+export const isFBZ = ({ name, type }) =>
     type === 'application/x-zip-compressed-fb2'
     || name.endsWith('.fb2.zip') || name.endsWith('.fbz')
 
-const makeZipLoader = async file => {
+export const makeZipLoader = async file => {
     const { configure, ZipReader, BlobReader, TextWriter, BlobWriter } =
         await import('./vendor/zip.js')
     configure({ useWebWorkers: false })
@@ -211,7 +211,7 @@ const languageInfo = lang => {
 }
 
 export class View extends HTMLElement {
-    #root = this.attachShadow({ mode: 'closed' })
+    #root = this.attachShadow({ mode: 'open' })
     #sectionProgress
     #tocProgress
     #pageProgress
