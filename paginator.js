@@ -559,6 +559,7 @@ export class Paginator extends HTMLElement {
         this.addEventListener('touchmove', this.#onTouchMove.bind(this), opts)
         this.addEventListener('touchend', this.#onTouchEnd.bind(this))
         this.addEventListener('load', ({ detail: { doc } }) => {
+            // NOTE: view 里的 #iframe.contentDocument
             doc.addEventListener('touchstart', this.#onTouchStart.bind(this), opts)
             doc.addEventListener('touchmove', this.#onTouchMove.bind(this), opts)
             doc.addEventListener('touchend', this.#onTouchEnd.bind(this))
@@ -582,6 +583,7 @@ export class Paginator extends HTMLElement {
                 this.next()
         }, 700)
         this.addEventListener('load', ({ detail: { doc } }) => {
+            // 
             let isPointerSelecting = false
             doc.addEventListener('pointerdown', () => isPointerSelecting = true)
             doc.addEventListener('pointerup', () => isPointerSelecting = false)
