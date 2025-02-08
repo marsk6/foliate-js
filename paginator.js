@@ -1065,6 +1065,9 @@ export class Paginator extends HTMLElement {
         const index = this.sections.findLastIndex(section => section.linear !== 'no')
         return this.goTo({ index })
     }
+    /**
+     * 获取 paginator 的一些私有属性
+     */
     getContents() {
         if (this.#view) return [{
             index: this.#index,

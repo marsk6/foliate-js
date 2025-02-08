@@ -221,6 +221,7 @@ export class View extends HTMLElement {
     isFixedLayout = false
     lastLocation
     history = new History()
+    renderer = null
     constructor() {
         super()
         this.history.addEventListener('popstate', ({ detail }) => {
