@@ -197,9 +197,12 @@ const setStylesImportant = (el, styles) => {
     for (const [k, v] of Object.entries(styles)) style.setProperty(k, v, 'important')
 }
 
+// NOTE: 实际内容渲染处，在一个 div 的 iframe 里，iframe 用多列布局
 class View {
     #observer = new ResizeObserver(() => this.expand())
+    // NOTE: 宽度等于屏幕宽度，固定
     #element = document.createElement('div')
+        // NOTE: book 内容的完整宽度，用 css 多列布局
     #iframe = document.createElement('iframe')
     #contentRange = document.createRange()
     #overlayer
@@ -276,6 +279,7 @@ class View {
         if (!layout) return
         this.#column = layout.flow !== 'scrolled'
         this.#layout = layout
+        //  NOTE: 横向还是纵向布局
         if (this.#column) this.columnize(layout)
         else this.scrolled(layout)
     }
@@ -411,6 +415,7 @@ class View {
 }
 
 // NOTE: everything here assumes the so-called "negative scroll type" for RTL
+// NOTE: 整体的布局 header（标题） container（book） footer（进度）
 export class Paginator extends HTMLElement {
     static observedAttributes = [
         'flow', 'gap', 'margin',
@@ -423,6 +428,9 @@ export class Paginator extends HTMLElement {
     #container
     #header
     #footer
+    /**
+     * @type {View}
+     */
     #view
     #vertical = false
     #rtl = false
@@ -734,6 +742,7 @@ export class Paginator extends HTMLElement {
         }))
         this.#scrollToAnchor(this.#anchor)
     }
+    // NOTE: 是否是垂直滚动布局
     get scrolled() {
         return this.getAttribute('flow') === 'scrolled'
     }
@@ -789,6 +798,7 @@ export class Paginator extends HTMLElement {
 
         this.#scrollToPage(page, 'snap').then(() => {
             const dir = page <= 0 ? -1 : page >= pages - 1 ? 1 : null
+            // NOTE: 回到目录
             if (dir) return this.#goTo({
                 index: this.#adjacentIndex(dir),
                 anchor: dir < 0 ? () => 1 : () => 0,
@@ -867,6 +877,7 @@ export class Paginator extends HTMLElement {
     async #scrollTo(offset, reason, smooth) {
         const element = this.#container
         const { scrollProp, size } = this
+        // TODO:
         if (element[scrollProp] === offset) {
             this.#scrollBounds = [offset, this.atStart ? 0 : size, this.atEnd ? 0 : size]
             this.#afterScroll(reason)
