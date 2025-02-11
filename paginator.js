@@ -16,6 +16,16 @@ const debounce = (f, wait, immediate) => {
 
 const lerp = (min, max, x) => x * (max - min) + min
 const easeOutQuad = x => 1 - (1 - x) * (1 - x)
+
+/**
+ * 用 requestAnimationFrame 实现动画
+ * @param {*} a 
+ * @param {*} b 
+ * @param {*} duration 
+ * @param {*} ease 
+ * @param {*} render 
+ * @returns 
+ */
 const animate = (a, b, duration, ease, render) => new Promise(resolve => {
     let start
     const step = now => {
