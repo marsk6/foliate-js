@@ -1,6 +1,7 @@
 import { Overlayer } from './overlayer'
 
-export declare class FoliatePaginatorElement extends HTMLElement {
+export declare interface FoliatePaginatorElement extends HTMLElement {
+  #margin: string;
   getContents: () => Array<{
     index: number;
     overlayer: Overlayer;

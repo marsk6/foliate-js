@@ -19,12 +19,12 @@ const easeOutQuad = x => 1 - (1 - x) * (1 - x)
 
 /**
  * 用 requestAnimationFrame 实现动画
- * @param {*} a 
- * @param {*} b 
- * @param {*} duration 
- * @param {*} ease 
- * @param {*} render 
- * @returns 
+ * @param {number} a scrollLeft 或 scrollRight
+ * @param {number} b offset
+ * @param {number} duration
+ * @param {Function} ease
+ * @param {Function} render
+ * @returns {void}
  */
 const animate = (a, b, duration, ease, render) => new Promise(resolve => {
     let start
@@ -426,6 +426,14 @@ class View {
 
 // NOTE: everything here assumes the so-called "negative scroll type" for RTL
 // NOTE: 整体的布局 header（标题） container（book） footer（进度）
+
+/**
+ * @import { FoliatePaginatorElement } from './paginator'
+ */
+
+/**
+ * @implements {FoliatePaginatorElement}
+ */
 export class Paginator extends HTMLElement {
     static observedAttributes = [
         'flow', 'gap', 'margin',
@@ -442,9 +450,15 @@ export class Paginator extends HTMLElement {
      * @type {View}
      */
     #view
+    /**
+     * NOTE: 是否垂直书写
+     */
     #vertical = false
     #rtl = false
     #margin = 0
+    /**
+     * 索引，类似目录，页码，但又像章节
+     */
     #index = -1
     #anchor = 0 // anchor view to a fraction (0-1), Range, or Element
     #justAnchored = false
@@ -453,6 +467,13 @@ export class Paginator extends HTMLElement {
     #styleMap = new WeakMap()
     #mediaQuery = matchMedia('(prefers-color-scheme: dark)')
     #mediaQueryListener
+    /**
+     * @type {Array}
+     * [offset, a, b]
+     * offset 当前页码的偏移量
+     * a aStart，0 或 size
+     * b aEnd，0 或 size
+     */
     #scrollBounds
     #touchState
     #touchScrolled
@@ -655,6 +676,7 @@ export class Paginator extends HTMLElement {
     open(book) {
         this.bookDir = book.dir
         this.sections = book.sections
+        console.log('🚨🚨🚨👉👉📢', 'this.sections', this.sections);
     }
     #createView() {
         if (this.#view) {
@@ -752,7 +774,9 @@ export class Paginator extends HTMLElement {
         }))
         this.#scrollToAnchor(this.#anchor)
     }
-    // NOTE: 是否是垂直滚动布局
+    /**
+     * 是否是垂直滚动布局
+     */
     get scrolled() {
         return this.getAttribute('flow') === 'scrolled'
     }
@@ -761,26 +785,47 @@ export class Paginator extends HTMLElement {
         return this.#vertical ? (scrolled ? 'scrollLeft' : 'scrollTop')
             : scrolled ? 'scrollTop' : 'scrollLeft'
     }
+    /**
+     * 滚动时判断用哪个边计算
+     */
     get sideProp() {
         const { scrolled } = this
         return this.#vertical ? (scrolled ? 'width' : 'height')
             : scrolled ? 'height' : 'width'
     }
+    /**
+     * 就是每一页的大小
+     */
     get size() {
         return this.#container.getBoundingClientRect()[this.sideProp]
     }
+    /**
+     * iframe 的大小，即内容的全长
+     */
     get viewSize() {
         return this.#view.element.getBoundingClientRect()[this.sideProp]
     }
+    /**
+     * 某一页的偏移量，某一页的左边
+     */
     get start() {
         return Math.abs(this.#container[this.scrollProp])
     }
+    /**
+     * 某一页的右边
+     */
     get end() {
         return this.start + this.size
     }
+    /**
+     * 当前页码
+     */
     get page() {
         return Math.floor(((this.start + this.end) / 2) / this.size)
     }
+    /**
+     * 总页数
+     */
     get pages() {
         return Math.round(this.viewSize / this.size)
     }
@@ -796,19 +841,24 @@ export class Paginator extends HTMLElement {
             element[scrollProp] + delta))
     }
     snap(vx, vy) {
+        // 滑动速度
         const velocity = this.#vertical ? vy : vx
         const [offset, a, b] = this.#scrollBounds
         const { start, end, pages, size } = this
+        // 上一页左边界偏移量
         const min = Math.abs(offset) - a
+        // 下一页左边界偏移量
         const max = Math.abs(offset) + b
+        // 这个 d 值似乎没有意义，可以理解为 d 值越大，加上当前页中间 offset 就会到下一页
         const d = velocity * (this.#rtl ? -size : size)
+        // NOTE: 按 page 翻页
         const page = Math.floor(
             Math.max(min, Math.min(max, (start + end) / 2
                 + (isNaN(d) ? 0 : d))) / size)
 
         this.#scrollToPage(page, 'snap').then(() => {
             const dir = page <= 0 ? -1 : page >= pages - 1 ? 1 : null
-            // NOTE: 回到目录
+            // NOTE: 回到目录或首页
             if (dir) return this.#goTo({
                 index: this.#adjacentIndex(dir),
                 anchor: dir < 0 ? () => 1 : () => 0,
@@ -818,14 +868,17 @@ export class Paginator extends HTMLElement {
     #onTouchStart(e) {
         const touch = e.changedTouches[0]
         this.#touchState = {
-            x: touch?.screenX, y: touch?.screenY,
+            x: touch?.screenX,
+            y: touch?.screenY,
             t: e.timeStamp,
-            vx: 0, xy: 0,
+            vx: 0,
+            xy: 0,
         }
     }
     #onTouchMove(e) {
         if (this.locked) return
         const state = this.#touchState
+        // NOTE: pinch 捏，双指缩放屏幕
         if (state.pinched) return
         state.pinched = globalThis.visualViewport.scale > 1
         if (this.scrolled || state.pinched) return
@@ -835,8 +888,11 @@ export class Paginator extends HTMLElement {
         }
         e.preventDefault()
         const touch = e.changedTouches[0]
-        const x = touch.screenX, y = touch.screenY
-        const dx = state.x - x, dy = state.y - y
+        const x = touch.screenX
+        const y = touch.screenY
+        // NOTE: touch move 的距离和移动速度
+        const dx = state.x - x
+        const dy = state.y - y
         const dt = e.timeStamp - state.t
         state.x = x
         state.y = y
