@@ -478,6 +478,10 @@ export class Paginator extends HTMLElement {
     #touchState
     #touchScrolled
     #lastVisibleRange
+    /**
+     * 书的章节，或者说目录
+     */
+    sections = []
     constructor() {
         super()
         this.#root.innerHTML = `<style>
@@ -677,7 +681,6 @@ export class Paginator extends HTMLElement {
     open(book) {
         this.bookDir = book.dir
         this.sections = book.sections
-        console.log('🚨🚨🚨👉👉📢', 'this.sections', this.sections);
     }
     #createView() {
         if (this.#view) {
