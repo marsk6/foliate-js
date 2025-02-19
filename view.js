@@ -583,7 +583,7 @@ export class View extends HTMLElement {
         if (this.tts && this.tts.doc === doc) return
         const { TTS } = await import('./tts.js')
         this.tts = new TTS(doc, textWalker, range =>
-            this.renderer.scrollToAnchor(range, true), granularity)
+            this.renderer.scrollToAnchor(range, 'highlight'), granularity)
     }
     startMediaOverlay() {
         const { index } = this.renderer.getContents()[0]

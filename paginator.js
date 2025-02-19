@@ -609,6 +609,7 @@ export class Paginator extends HTMLElement {
         })
 
         this.addEventListener('relocate', ({ detail }) => {
+            if (detail.reason === 'highlight') return;
             if (detail.reason === 'selection') setSelectionTo(this.#anchor, 0)
             else if (detail.reason === 'navigation') {
                 if (this.#anchor === 1) setSelectionTo(detail.range, 1)
@@ -976,11 +977,11 @@ export class Paginator extends HTMLElement {
     /**
      * 跳到 dom
      * @param {Range} anchor 
-     * @param {'selection' | 'navigation' | 'anchor'} select
+     * @param {'selection' | 'navigation' | 'anchor' | 'highlight'} reason
      * @returns
      */
-    async scrollToAnchor(anchor, select) {
-        return this.#scrollToAnchor(anchor, select ? 'selection' : 'navigation')
+    async scrollToAnchor(anchor, reason) {
+        return this.#scrollToAnchor(anchor, reason)
     }
     async #scrollToAnchor(anchor, reason = 'anchor') {
         this.#anchor = anchor
@@ -1021,7 +1022,7 @@ export class Paginator extends HTMLElement {
         const range = this.#getVisibleRange()
         this.#lastVisibleRange = range
         // don't set new anchor if relocation was to scroll to anchor
-        if (reason !== 'selection' && reason !== 'navigation' && reason !== 'anchor')
+        if (reason !== 'selection' && reason !== 'navigation' && reason !== 'anchor' && reason !== 'highlight')
             this.#anchor = range
         else this.#justAnchored = true
 
@@ -1063,7 +1064,7 @@ export class Paginator extends HTMLElement {
             this.#view = view
         }
         await this.scrollToAnchor((typeof anchor === 'function'
-            ? anchor(this.#view.document) : anchor) ?? 0, select)
+            ? anchor(this.#view.document) : anchor) ?? 0, select ? 'selection' : 'navigation')
         if (hasFocus) this.focusView()
     }
     #canGoToIndex(index) {
