@@ -274,5 +274,6 @@ export class TTS {
             this.#lastMark = mark
             this.highlight(range.cloneRange())
         }
+        return range;
     }
 }

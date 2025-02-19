@@ -972,6 +972,13 @@ export class Paginator extends HTMLElement {
         const offset = this.size * (this.#rtl ? -page : page)
         return this.#scrollTo(offset, reason, smooth)
     }
+
+    /**
+     * 跳到 dom
+     * @param {Range} anchor 
+     * @param {'selection' | 'navigation' | 'anchor'} select
+     * @returns
+     */
     async scrollToAnchor(anchor, select) {
         return this.#scrollToAnchor(anchor, select ? 'selection' : 'navigation')
     }
@@ -1006,6 +1013,10 @@ export class Paginator extends HTMLElement {
         return getVisibleRange(this.#view.document,
             this.start - size, this.end - size, this.#getRectMapper())
     }
+    /**
+     * 滚动后触发 relocate 事件
+     * @param {'selection' | 'navigation' | 'anchor'} reason
+     */
     #afterScroll(reason) {
         const range = this.#getVisibleRange()
         this.#lastVisibleRange = range
