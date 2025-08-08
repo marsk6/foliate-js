@@ -486,6 +486,16 @@ export class Paginator extends HTMLElement {
     sections = []
     constructor() {
         super()
+        /**
+         * NOTE:
+         * top 是整个书架的容器，里面包含 background（背景） header（标题） container（book） footer（进度）
+         * 
+         * 
+         * 
+         * 
+         * 
+         * 
+         */
         this.#root.innerHTML = `<style>
         :host {
             display: block;
@@ -1060,6 +1070,7 @@ export class Paginator extends HTMLElement {
         this.#index = index
         const hasFocus = this.#view?.document?.hasFocus()
         if (src) {
+            // NOTE: 创建 container 区域
             const view = this.#createView()
             const afterLoad = doc => {
                 if (doc.head) {
@@ -1156,9 +1167,19 @@ export class Paginator extends HTMLElement {
         if (shouldGo || !this.hasAttribute('animated')) await wait(100)
         this.locked = false
     }
+    /**
+     * 上一页
+     * @param {*} distance 
+     * @returns 
+     */
     prev(distance) {
         return this.#turnPage(-1, distance)
     }
+    /**
+     * 下一页
+     * @param {*} distance 
+     * @returns 
+     */
     next(distance) {
         return this.#turnPage(1, distance)
     }
