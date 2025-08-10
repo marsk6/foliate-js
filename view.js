@@ -32,6 +32,7 @@ export const makeZipLoader = async file => {
         await import('./vendor/zip.js')
     configure({ useWebWorkers: false })
     const reader = new ZipReader(new BlobReader(file))
+    // NOTE: entries 就是 epub（zip 包） 里的文件列表
     const entries = await reader.getEntries()
     const map = new Map(entries.map(entry => [entry.filename, entry]))
     const load = f => (name, ...args) =>

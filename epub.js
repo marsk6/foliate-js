@@ -722,6 +722,7 @@ class Loader {
         Object.defineProperty(detail, 'name', { value: href }) // readonly
         const event = new CustomEvent('data', { detail })
         this.eventTarget.dispatchEvent(event)
+        // MOTE: 读出来的就是 epub 里的 html
         const newData = await event.detail.data
         const newType = await event.detail.type
         const url = URL.createObjectURL(new Blob([newData], { type: newType }))
@@ -923,6 +924,9 @@ const getDisplayOptions = doc => {
 
 export class EPUB {
     parser = new DOMParser()
+    /**
+     * @type {Loader}
+     */
     #loader
     #encryption
     constructor({ loadText, loadBlob, getSize, sha1 }) {
@@ -968,6 +972,7 @@ ${doc.querySelector('parsererror').innerText}`)
             resources: this.resources,
         })
         this.transformTarget = this.#loader.eventTarget
+        // NOTE: spine 即是 ebook 的目录
         this.sections = this.resources.spine.map((spineItem, index) => {
             const { idref, linear, properties = [] } = spineItem
             const item = this.resources.getItemByID(idref)
@@ -977,6 +982,7 @@ ${doc.querySelector('parsererror').innerText}`)
             }
             return {
                 id: item.href,
+                // NOTE: 返回的 src 被用于 paginator.js 中的 view 的 iframe
                 load: () => this.#loader.loadItem(item),
                 unload: () => this.#loader.unloadItem(item),
                 createDocument: () => this.loadDocument(item),

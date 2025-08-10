@@ -1,7 +1,4 @@
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
-/**
- * @typedef {Promise<{index: number, src: string, anchor: () => number, onLoad: (detail: {doc: Document, index: number}) => void, select: boolean}>} SectionLoad
- */
 
 const debounce = (f, wait, immediate) => {
     let timeout
@@ -217,7 +214,7 @@ class View {
     #observer = new ResizeObserver(() => this.expand())
     // NOTE: 宽度等于屏幕宽度，固定
     #element = document.createElement('div')
-    // NOTE: book 内容的完整宽度，用 css 多列布局
+        // NOTE: book 内容的完整宽度，用 css 多列布局
     #iframe = document.createElement('iframe')
     #contentRange = document.createRange()
     #overlayer
@@ -258,13 +255,6 @@ class View {
     get document() {
         return this.#iframe.contentDocument
     }
-    /**
-     * 
-     * @param {string} src 是 zipLoader 提供的 blob 链接
-     * @param {Function} afterLoad 
-     * @param {Function} beforeRender 
-     * @returns {Promise<void>}
-     */
     async load(src, afterLoad, beforeRender) {
         if (typeof src !== 'string') throw new Error(`${src} is not string`)
         return new Promise(resolve => {
@@ -492,8 +482,6 @@ export class Paginator extends HTMLElement {
     #lastVisibleRange
     /**
      * 书的章节，或者说目录
-     * @typedef {{id: string, load: () => Promise<SectionLoad>, createDocument: () => Promise<Document>, size: number, linear: string, cfi: string}} EPUBSection
-     * @type {Array<EPUBSection>}
      */
     sections = []
     constructor() {
@@ -501,6 +489,12 @@ export class Paginator extends HTMLElement {
         /**
          * NOTE:
          * top 是整个书架的容器，里面包含 background（背景） header（标题） container（book） footer（进度）
+         * 
+         * 
+         * 
+         * 
+         * 
+         * 
          */
         this.#root.innerHTML = `<style>
         :host {
@@ -1071,11 +1065,6 @@ export class Paginator extends HTMLElement {
         }
         this.dispatchEvent(new CustomEvent('relocate', { detail }))
     }
-    /**
-     * 
-     * @param {SectionLoad} promise 
-     * @returns
-     */
     async #display(promise) {
         const { index, src, anchor, onLoad, select } = await promise
         this.#index = index
@@ -1110,7 +1099,7 @@ export class Paginator extends HTMLElement {
     #canGoToIndex(index) {
         return index >= 0 && index <= this.sections.length - 1
     }
-    async #goTo({ index, anchor, select }) {
+    async #goTo({ index, anchor, select}) {
         if (index === this.#index) await this.#display({ index, anchor, select })
         else {
             const oldIndex = this.#index
@@ -1249,4 +1238,4 @@ export class Paginator extends HTMLElement {
     }
 }
 
-customElements.define('foliate-paginator', Paginator)
+customElements.define('foliate-canvas', Paginator)
