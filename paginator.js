@@ -489,6 +489,10 @@ export class Paginator extends HTMLElement {
     #scrollBounds
     #touchState
     #touchScrolled
+    /**
+     * 上拉
+     */
+    #isPullUp = true
     #lastVisibleRange
     /**
      * 书的章节，或者说目录
@@ -920,12 +924,10 @@ export class Paginator extends HTMLElement {
         // NOTE: pinch 捏，双指缩放屏幕
         if (state.pinched) return
         state.pinched = globalThis.visualViewport.scale > 1
-        if (this.scrolled || state.pinched) return
         if (e.touches.length > 1) {
             if (this.#touchScrolled) e.preventDefault()
-            return
+                return
         }
-        e.preventDefault()
         const touch = e.changedTouches[0]
         const x = touch.screenX
         const y = touch.screenY
@@ -938,12 +940,37 @@ export class Paginator extends HTMLElement {
         state.t = e.timeStamp
         state.vx = dx / dt
         state.vy = dy / dt
+        if (this.scrolled || state.pinched) {
+            if (this.scrolled) {
+                this.#isPullUp = dy > 0
+            }
+            return
+        }
+        e.preventDefault()
         this.#touchScrolled = true
         this.scrollBy(dx, dy)
     }
     #onTouchEnd() {
         this.#touchScrolled = false
-        if (this.scrolled) return
+        if (this.scrolled) {
+            // NOTE: fraction 阅读进度，0.25 = 阅读到 25%
+            // FIXME: 如果是滚动模式，无法滚动到下一章，左右滑动还能滑过来再加载展示，上下滚动无法连续展示
+            const fraction = this.start / this.viewSize
+            if (this.pages > 1) {
+                if (fraction < 0.001 && !this.#isPullUp) {
+                    this.prevSection()
+                } else if (fraction > 0.999 && this.#isPullUp) {
+                    this.nextSection()
+                }
+            } else {
+                if (this.#isPullUp) {
+                    this.nextSection()
+                } else {
+                    this.prevSection()
+                }
+            }
+            return
+        }
 
         // XXX: Firefox seems to report scale as 1... sometimes...?
         // at this point I'm basically throwing `requestAnimationFrame` at
@@ -1050,7 +1077,7 @@ export class Paginator extends HTMLElement {
     }
     /**
      * 滚动后触发 relocate 事件
-     * @param {'selection' | 'navigation' | 'anchor'} reason
+     * @param {'selection' | 'navigation' | 'anchor' | 'scroll'} reason
      */
     #afterScroll(reason) {
         const range = this.#getVisibleRange()
@@ -1062,6 +1089,7 @@ export class Paginator extends HTMLElement {
 
         const index = this.#index
         const detail = { reason, range, index }
+        // NOTE: fraction 阅读进度，0.25 = 阅读到 25%
         if (this.scrolled) detail.fraction = this.start / this.viewSize
         else if (this.pages > 0) {
             const { page, pages } = this
@@ -1162,6 +1190,11 @@ export class Paginator extends HTMLElement {
     get atEnd() {
         return this.#adjacentIndex(1) == null && this.page >= this.pages - 2
     }
+    /**
+     * adjacent 相邻的章节
+     * @param {number} dir
+     * @returns
+     */
     #adjacentIndex(dir) {
         for (let index = this.#index + dir; this.#canGoToIndex(index); index += dir)
             if (this.sections[index]?.linear !== 'no') return index
