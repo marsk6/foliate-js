@@ -18,10 +18,6 @@ import TransferEngine from './layout-engine.js';
  * @property {string} textColor - 文字颜色
  * @property {number} baseFontSize - 基础字体大小
  * @property {string} fontFamily - 字体族
- */
-
-/**
- * @typedef {Object} LayoutConfig
  * @property {number} paddingX - 水平内边距
  * @property {number} paddingY - 垂直内边距
  * @property {number} lineHeight - 行高倍数
@@ -31,7 +27,6 @@ import TransferEngine from './layout-engine.js';
  * @typedef {Object} RenderConfig
  * @property {HTMLCanvasElement} canvas - Canvas元素
  * @property {ThemeConfig} theme - 主题配置
- * @property {LayoutConfig} layout - 布局配置
  */
 
 /**
@@ -73,9 +68,6 @@ export class CanvasRenderer {
   /** @type {ThemeConfig} 主题配置 */
   theme;
 
-  /** @type {LayoutConfig} 布局配置 */
-  layout;
-
   // 引擎和数据
   /** @type {TransferEngine} HTML转换引擎实例 */
   transferEngine;
@@ -99,21 +91,16 @@ export class CanvasRenderer {
     this.canvas = config.canvas;
     this.ctx = this.canvas.getContext('2d');
 
-    // 主题配置
+    // 主题配置（包含布局配置）
     this.theme = {
       backgroundColor: '#fff',
       textColor: '#222',
       baseFontSize: 20,
       fontFamily: 'system-ui, sans-serif',
-      ...config.theme,
-    };
-
-    // 布局配置
-    this.layout = {
       paddingX: 16,
       paddingY: 20,
       lineHeight: 1.8, // 相对于字体大小的倍数
-      ...config.layout,
+      ...config.theme,
     };
 
     // 转换引擎实例
@@ -189,7 +176,7 @@ export class CanvasRenderer {
     // 应用页面边距
     if (this.pageStyle.marginTop) {
       const marginTop = this.parseSize(this.pageStyle.marginTop);
-      this.layout.paddingY = Math.max(this.layout.paddingY, marginTop);
+      this.theme.paddingY = Math.max(this.theme.paddingY, marginTop);
     }
 
     if (this.pageStyle.marginBottom) {
@@ -224,14 +211,14 @@ export class CanvasRenderer {
     const words = [];
     const elements = [];
 
-    let x = this.layout.paddingX;
-    let y = this.layout.paddingY;
+    let x = this.theme.paddingX;
+    let y = this.theme.paddingY;
     let currentLine = 0;
 
     // 遍历节点树进行布局
     this.layoutNodes(nodes, x, y, currentLine, words, elements);
 
-    const totalHeight = y + this.layout.paddingY;
+    const totalHeight = y + this.theme.paddingY;
 
     return {
       words,
@@ -292,9 +279,9 @@ export class CanvasRenderer {
       }
 
       // 块级元素从新行开始
-      if (x > this.layout.paddingX) {
+      if (x > this.theme.paddingX) {
         line++;
-        x = this.layout.paddingX;
+        x = this.theme.paddingX;
         y += this.getLineHeight(node.style);
       }
     }
@@ -313,7 +300,7 @@ export class CanvasRenderer {
 
       // 图片后换行
       line++;
-      x = this.layout.paddingX;
+      x = this.theme.paddingX;
       y += 120; // 图片高度 + 间距
     } else if (node.children && node.children.length > 0) {
       // 递归处理子节点
@@ -339,7 +326,7 @@ export class CanvasRenderer {
 
       // 块级元素后换行
       line++;
-      x = this.layout.paddingX;
+      x = this.theme.paddingX;
       y += this.getLineHeight(node.style);
     }
 
@@ -385,27 +372,27 @@ export class CanvasRenderer {
       if (segment.type === 'word') {
         // 英文单词：整个单词必须在同一行
         if (
-          x + segmentWidth > canvasWidth - this.layout.paddingX &&
-          x > this.layout.paddingX
+          x + segmentWidth > canvasWidth - this.theme.paddingX &&
+          x > this.theme.paddingX
         ) {
           needNewLine = true;
         }
       } else if (segment.type === 'cjk' || segment.type === 'punctuation') {
         // 中文字符和标点：可以在任意位置换行
         if (
-          x + segmentWidth > canvasWidth - this.layout.paddingX &&
-          x > this.layout.paddingX
+          x + segmentWidth > canvasWidth - this.theme.paddingX &&
+          x > this.theme.paddingX
         ) {
           needNewLine = true;
         }
       } else if (segment.type === 'space') {
         // 空格：如果导致换行则不渲染
         if (
-          x + segmentWidth > canvasWidth - this.layout.paddingX &&
-          x > this.layout.paddingX
+          x + segmentWidth > canvasWidth - this.theme.paddingX &&
+          x > this.theme.paddingX
         ) {
           line++;
-          x = this.layout.paddingX;
+          x = this.theme.paddingX;
           y += lineHeight;
           continue; // 跳过这个空格
         }
@@ -413,7 +400,7 @@ export class CanvasRenderer {
 
       if (needNewLine) {
         line++;
-        x = this.layout.paddingX;
+        x = this.theme.paddingX;
         y += lineHeight;
       }
 
@@ -548,9 +535,9 @@ export class CanvasRenderer {
    * @param {Object} style
    * @returns {number}
    */
-  getLineHeight(style) {
+  getLineHeight(style = {}) {
     const fontSize = this.parseSize(style.fontSize) || this.theme.baseFontSize;
-    return fontSize * this.layout.lineHeight;
+    return fontSize * this.theme.lineHeight;
   }
 
   /**
@@ -642,12 +629,12 @@ export class CanvasRenderer {
     const y = clientY - rect.top;
 
     const { words } = this.renderResult;
-
+    const lineHeight = this.getLineHeight();
     for (let i = 0; i < words.length; i++) {
       const word = words[i];
       if (
-        y > word.y - this.theme.lineHeight / 2 &&
-        y < word.y + this.theme.lineHeight / 2 &&
+        y > word.y - lineHeight / 2 &&
+        y < word.y + lineHeight / 2 &&
         x >= word.x &&
         x <= word.x + word.width
       ) {

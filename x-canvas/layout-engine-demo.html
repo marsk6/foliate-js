@@ -6,9 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>编排引擎演示</title>
-    <script>
-
-    </script>
+    <script></script>
     <style>
       body {
         font-family: system-ui, sans-serif;
@@ -99,36 +97,6 @@
       </div>
     </div>
     <script src="../x-canvas/text.js"></script>
-    <script type="module">
-      // 全局变量
-      import { CanvasRenderer } from '../x-canvas/canvas-renderer.js';
-      let renderer;
-      // 初始化
-      window.addEventListener('DOMContentLoaded', () => {
-        const canvas = document.getElementById('renderCanvas');
-
-        renderer = new CanvasRenderer({
-          canvas: canvas,
-          theme: {
-            backgroundColor: '#fff',
-            textColor: '#222',
-            selectionColor: '#007aff',
-            selectionOpacity: 0.2,
-            highlightColor: '#ffeb3b',
-            highlightOpacity: 0.3,
-          },
-        });
-        renderContent(); // 初始渲染
-      });
-
-      // 渲染内容
-      window.renderContent = function () {
-        if (currentHTML.trim()) {
-          renderer.render(currentHTML);
-          // 修复渲染器中的getCurrentHTML方法
-          renderer.getCurrentHTML = () => currentHTML;
-        }
-      };
-    </script>
+    <script type="module" src="../x-canvas/renderer.js"></script>
   </body>
 </html>

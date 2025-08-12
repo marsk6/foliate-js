@@ -1,4 +1,7 @@
 import { CanvasRenderer } from './canvas-renderer.js';
+/**
+ * @type {CanvasRenderer}
+ */
 let renderer;
 // 初始化
 window.addEventListener('DOMContentLoaded', () => {
@@ -84,24 +87,26 @@ window.addEventListener('DOMContentLoaded', () => {
   const updateHighlightBar = () => {
     highlightLayer.innerHTML = '';
     if (startIdx == null || endIdx == null) return;
+    const charPos = renderer.renderResult.words
     const min = Math.min(startIdx, endIdx);
     const max = Math.max(startIdx, endIdx);
     // 按行分组高亮
     let lineMap = {};
     for (let i = min; i <= max; i++) {
-      const l = renderer.renderResult.words[i].line;
+      const l = charPos[i].line;
       if (!lineMap[l]) lineMap[l] = { start: i, end: i };
       else lineMap[l].end = i;
     }
+    const lineHeight = renderer.getLineHeight();
     Object.values(lineMap).forEach(({ start, end }) => {
-      const c1 = renderer.renderResult.words[start];
-      const c2 = renderer.renderResult.words[end];
+      const c1 = charPos[start];
+      const c2 = charPos[end];
       const bar = document.createElement('div');
       bar.className = 'highlight-bar';
       bar.style.left = c1.x + 'px';
-      bar.style.top = c1.y - renderer.theme.lineHeight + 'px';
+      bar.style.top = c1.y - lineHeight + 'px';
       bar.style.width = c2.x + c2.width - c1.x + 'px';
-      bar.style.height = renderer.theme.lineHeight + 8 + 'px';
+      bar.style.height = renderer.theme.baseFontSize + 8 + 'px';
       highlightLayer.appendChild(bar);
     });
   };
@@ -122,7 +127,10 @@ window.addEventListener('DOMContentLoaded', () => {
       updateAnchors();
     });
   });
-
+  /**
+   * @param {Point} point
+   * @param {"start" | "end"} type
+   */
   window.nativeEvent.on('moveAnchor', (point, type) => {
     if (type === 'start') {
       startIdx = renderer.getCharIndexAt(point);
@@ -134,6 +142,29 @@ window.addEventListener('DOMContentLoaded', () => {
       updateAnchors();
     });
   });
+
+  window.nativeEvent.on('touch', () => {
+    isSelecting = false
+    startIdx = null
+    endIdx = null
+    updateHighlightBar()
+    updateAnchors()
+  });
+
+  document.addEventListener(
+    'touchstart',
+    function (e) {
+      if (isSelecting) {
+        window.nativeEvent.emit('touch');
+        e.preventDefault();
+      }
+      window.native.postMessage('webviewTouch');
+    },
+    {
+      capture: true,
+    }
+  );
+  
 });
 
 class NativeEvent {
@@ -142,14 +173,16 @@ class NativeEvent {
     movePress: [],
     moveMagnifier: [],
     highlightRange: [],
-    webviewTouch: [],
   };
   on(eventName, callback) {
+    if (!this.eventListenerMap[eventName]) {
+      this.eventListenerMap[eventName] = [];
+    }
     this.eventListenerMap[eventName].push(callback);
   }
-  emit(eventName, params) {
+  emit(eventName, ...rest) {
     this.eventListenerMap[eventName].forEach((callback) => {
-      callback(params);
+      callback(...rest);
     });
   }
 }
@@ -157,45 +190,6 @@ class NativeEvent {
 window.nativeEvent = new NativeEvent();
 
 window.native = {
-  findNearestText: function (start, end) {
-    // 1. 找到最近的文本索引
-    // const idx1 = getCharIdxByTouch(start.x, start.y)
-    // const idx2 = getCharIdxByTouch(end.x, end.y)
-    // if (idx1 == null || idx2 == null) return
-    // startIdx = idx1
-    // endIdx = idx2
-    // updateHighlightBar()
-    // 2. 计算高亮区左右端点坐标
-    // setAnchorsPos()
-    // 3. 回传给 native
-  },
-  handleLongPress: function (start, end) {
-    isSelecting = true;
-    startIdx = getCharIdxByTouch(start);
-    endIdx = getCharIdxByTouch(end);
-    updateAll();
-  },
-  handleMovePress: function (start) {
-    if (!isSelecting) return;
-    requestAnimationFrame(() => {
-      endIdx = getCharIdxByTouch(start);
-      updateAll();
-    });
-  },
-  /**
-   * @param {Point} point
-   * @param {"start" | "end"} type
-   */
-  handleMoveAnchor: function (point, type) {
-    if (type === 'start') {
-      startIdx = getCharIdxByTouch(point);
-    } else {
-      endIdx = getCharIdxByTouch(point);
-    }
-    requestAnimationFrame(() => {
-      updateAll();
-    });
-  },
   getAnchorPosition: function () {
     const startRect = startAnchor.getBoundingClientRect();
     const endRect = endAnchor.getBoundingClientRect();
@@ -209,12 +203,6 @@ window.native = {
         y: endRect.top,
       },
     };
-  },
-  handleTouch: function () {
-    isSelecting = false;
-    startIdx = null;
-    endIdx = null;
-    updateAll();
   },
   /**
    * @param {"moveMagnifier" | "highlightRange" | "webviewTouch"} name
@@ -230,17 +218,3 @@ window.native = {
     }
   },
 };
-
-document.addEventListener(
-  'touchstart',
-  function (e) {
-    if (isSelecting) {
-      window.native.handleTouch();
-      e.preventDefault();
-    }
-    window.native.postMessage('webviewTouch');
-  },
-  {
-    capture: true,
-  }
-);
