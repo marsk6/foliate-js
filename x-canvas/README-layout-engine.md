@@ -36,7 +36,7 @@ web/foliate-js/
 ### 基本用法
 
 ```javascript
-import LayoutEngine from './layout-engine.js';
+import TransferEngine from './layout-engine.js';
 import CanvasRenderer from './canvas-renderer.js';
 
 // 创建Canvas渲染器
@@ -67,7 +67,7 @@ renderer.render(htmlContent);
 
 ### 配置选项
 
-#### LayoutEngine 配置
+#### TransferEngine 配置
 
 ```javascript
 const config = {
@@ -81,7 +81,7 @@ const config = {
     textColor: '#222'      // 文本颜色
 };
 
-const layoutEngine = new LayoutEngine(config);
+const layoutEngine = new TransferEngine(config);
 ```
 
 #### CanvasRenderer 配置
@@ -104,7 +104,7 @@ const config = {
 
 ## API 文档
 
-### LayoutEngine
+### TransferEngine
 
 #### 方法
 
@@ -210,7 +210,7 @@ const config = {
 
 ```javascript
 // 集成示例
-import { LayoutEngine, CanvasRenderer } from './foliate-js/index.js';
+import { TransferEngine, CanvasRenderer } from './foliate-js/index.js';
 
 class EpubReader {
     constructor(container) {

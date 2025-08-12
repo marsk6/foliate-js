@@ -6,6 +6,9 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>编排引擎演示</title>
+    <script>
+
+    </script>
     <style>
       body {
         font-family: system-ui, sans-serif;
@@ -79,7 +82,7 @@
       <canvas
         id="renderCanvas"
         width="320"
-        height="940"
+        height="640"
         style="display: block"></canvas>
       <div class="highlight-layer" id="highlightLayer"></div>
       <div class="anchor" id="startAnchor">
@@ -95,14 +98,11 @@
         </div>
       </div>
     </div>
-
-    <script src="../x-canvas/layout-engine.js"></script>
-    <script src="../x-canvas/canvas-renderer.js"></script>
-    <script>
+    <script src="../x-canvas/text.js"></script>
+    <script type="module">
       // 全局变量
+      import { CanvasRenderer } from '../x-canvas/canvas-renderer.js';
       let renderer;
-      let currentHTML = '';
-
       // 初始化
       window.addEventListener('DOMContentLoaded', () => {
         const canvas = document.getElementById('renderCanvas');
@@ -117,86 +117,17 @@
             highlightColor: '#ffeb3b',
             highlightOpacity: 0.3,
           },
-          enableSelection: true,
-          enableHighlight: true,
         });
-
-        setupEventListeners();
         renderContent(); // 初始渲染
       });
 
-      // 设置事件监听器
-      function setupEventListeners() {
-
-      }
-
-      // 选择单词
-      function selectWordAt(charIndex, chars) {
-        let start = charIndex;
-        let end = charIndex;
-
-        // 向前查找单词边界
-        while (start > 0 && !isWordBoundary(chars[start - 1].char)) {
-          start--;
-        }
-
-        // 向后查找单词边界
-        while (end < chars.length - 1 && !isWordBoundary(chars[end + 1].char)) {
-          end++;
-        }
-
-        return { start, end };
-      }
-
-      // 判断是否为单词边界
-      function isWordBoundary(char) {
-        return /\s|[，。！？；：""''（）【】《》]/.test(char);
-      }
-
       // 渲染内容
       window.renderContent = function () {
-        const htmlInput = document.getElementById('htmlInput');
-        currentHTML = htmlInput.value;
-
         if (currentHTML.trim()) {
           renderer.render(currentHTML);
           // 修复渲染器中的getCurrentHTML方法
           renderer.getCurrentHTML = () => currentHTML;
         }
-      };
-
-      // 清空画布
-      window.clearCanvas = function () {
-        renderer.clear();
-        renderer.clearSelection();
-        renderer.clearHighlights();
-        updateSelectionInfo();
-      };
-
-      // 导出图片
-      window.exportImage = function () {
-        const canvas = document.getElementById('renderCanvas');
-        const link = document.createElement('a');
-        link.download = 'rendered-text.png';
-        link.href = canvas.toDataURL();
-        link.click();
-      };
-
-      // 更新主题
-      window.updateTheme = function () {
-        const bgColor = document.getElementById('bgColor').value;
-        const textColor = document.getElementById('textColor').value;
-        const selectionColor = document.getElementById('selectionColor').value;
-        const highlightColor = document.getElementById('highlightColor').value;
-
-        renderer.setTheme({
-          backgroundColor: bgColor,
-          textColor: textColor,
-          selectionColor: selectionColor,
-          highlightColor: highlightColor,
-        });
-
-        renderContent(); // 重新渲染以应用主题
       };
     </script>
   </body>
