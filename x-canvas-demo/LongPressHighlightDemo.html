@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+
+    <title>Canvas文本选择高亮锚点 Demo</title>
+    <!-- <script src="http://192.168.0.105:5500/demo/hammer.min.js"></script> -->
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 12px;
+        background: #f8f8f8;
+        -webkit-user-select: none; /* 禁止选中文本 */
+        -webkit-touch-callout: none; /* 禁止长按弹出菜单 */
+        touch-action: manipulation; /* 禁止双指缩放、双击放大等 */
+        user-select: none;
+      }
+      .canvas-wrap {
+        position: relative;
+        display: inline-block;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        padding: 0;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .anchor {
+        width: 10px;
+        height: 36px;
+        position: absolute;
+        z-index: 10;
+        pointer-events: auto;
+        background: none;
+        border: none;
+        display: none;
+      }
+      .anchor-inner {
+        position: absolute;
+        left: 0;
+        top: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        height: 100%;
+      }
+      .anchor-line {
+        width: 3px;
+        height: 26px;
+        background: #007aff;
+      }
+      .anchor-dot {
+        width: 10px;
+        height: 10px;
+        background: #007aff;
+        border-radius: 10px;
+      }
+      .highlight-bar {
+        position: absolute;
+        background: #007aff;
+        opacity: 0.2;
+        pointer-events: none;
+      }
+      .highlight-layer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 2;
+      }
+    </style>
+  </head>
+  <body>
+    <button onclick="window.location.reload()">reload</button>
+    <div
+      class="canvas-wrap"
+      style="width: 320px; position: relative"
+    >
+      <canvas
+        id="myCanvas"
+        width="320"
+        height="940"
+        style="display: block"
+      ></canvas>
+      <div
+        class="highlight-layer"
+        id="highlightLayer"
+      ></div>
+      <div
+        class="anchor"
+        id="startAnchor"
+      >
+        <div class="anchor-inner">
+          <div class="anchor-dot"></div>
+          <div class="anchor-line"></div>
+        </div>
+      </div>
+      <div
+        class="anchor"
+        id="endAnchor"
+      >
+        <div class="anchor-inner">
+          <div class="anchor-line"></div>
+          <div class="anchor-dot"></div>
+        </div>
+      </div>
+    </div>
+    <script>
+      window.WebSocket = undefined
+
+      const text = `这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        印度和俄罗斯这种在能源、军事、核能和高层外交等多个战略领域的深度相互依赖，构成了难以通过单一经济杠杆（如关税）瓦解的坚实基础。
+        这意味着美国的“额外惩罚”可能不足以从根本上改变印度的战略考量，因为切断这些联系对印度而言将是巨大的代价。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        印度和俄罗斯这种在能源、军事、核能和高层外交等多个战略领域的深度相互依赖，构成了难以通过单一经济杠杆（如关税）瓦解的坚实基础。
+        这意味着美国的“额外惩罚”可能不足以从根本上改变印度的战略考量，因为切断这些联系对印度而言将是巨大的代价。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        印度和俄罗斯这种在能源、军事、核能和高层外交等多个战略领域的深度相互依赖，构成了难以通过单一经济杠杆（如关税）瓦解的坚实基础。
+        这意味着美国的“额外惩罚”可能不足以从根本上改变印度的战略考量，因为切断这些联系对印度而言将是巨大的代价。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。
+        印度和俄罗斯这种在能源、军事、核能和高层外交等多个战略领域的深度相互依赖，构成了难以通过单一经济杠杆（如关税）瓦解的坚实基础。
+        这意味着美国的“额外惩罚”可能不足以从根本上改变印度的战略考量，因为切断这些联系对印度而言将是巨大的代价。
+        `
+      const text2 = '这意味着美国的“额外惩罚”可能不足以从根本上改变印度的战略考量，因为切断这些'
+      const canvas = document.getElementById('myCanvas')
+      const ctx = canvas.getContext('2d')
+      const fontSize = 20
+      const lineHeight = 36
+      const paddingX = 16
+      const paddingY = 20
+      const maxWidth = canvas.width - paddingX * 2
+      ctx.font = `${fontSize}px system-ui, sans-serif`
+
+      // 文本排版：每个字的坐标和行号
+      let charPos = []
+      let lines = []
+
+      function layoutText() {
+        charPos = []
+        lines = []
+        let x = paddingX,
+          y = paddingY + fontSize,
+          line = 0
+        let lineStart = 0
+        for (let i = 0; i < text.length; i++) {
+          const w = ctx.measureText(text[i]).width
+          if (x + w > canvas.width - paddingX) {
+            lines.push({ start: lineStart, end: i - 1, y })
+            line++
+            x = paddingX
+            y += lineHeight
+            lineStart = i
+          }
+          charPos.push({ x, y, w, line })
+          x += w
+        }
+        lines.push({ start: lineStart, end: text.length - 1, y })
+      }
+      layoutText()
+
+      // 选区状态
+      let startIdx = null,
+        endIdx = null,
+        isSelecting = false,
+        longPressTimer = null
+      let draggingAnchor = null // 'start' or 'end'
+
+      // 渲染文本和高亮
+      function drawText() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        ctx.font = `${fontSize}px system-ui, sans-serif`
+        // 文本
+        ctx.fillStyle = '#222'
+        for (let i = 0; i < text.length; i++) {
+          const { x, y } = charPos[i]
+          ctx.fillText(text[i], x, y)
+        }
+      }
+
+      // 锚点定位
+      const startAnchor = document.getElementById('startAnchor')
+      const endAnchor = document.getElementById('endAnchor')
+      function updateAnchors() {
+        startAnchor.style.display = 'none'
+        endAnchor.style.display = 'none'
+        if (startIdx == null || endIdx == null) return
+        const min = Math.min(startIdx, endIdx)
+        const max = Math.max(startIdx, endIdx)
+        // 按行分组高亮
+        let lineMap = {}
+        for (let i = min; i <= max; i++) {
+          const l = charPos[i].line
+          if (!lineMap[l]) lineMap[l] = { start: i, end: i }
+          else lineMap[l].end = i
+        }
+        const linesArr = Object.values(lineMap)
+        const anchorWidth = 10,
+          anchorHeight = 36
+        const anchorDotHeight = 10
+        // 获取高亮条 dom
+        const bars = highlightLayer.querySelectorAll('.highlight-bar')
+        if (linesArr.length > 0 && bars.length > 0) {
+          // TODO: 锚点的高度使用高亮条的高度
+          // 首行锚点
+          const bar1 = bars[0]
+          const bar1Rect = bar1.getBoundingClientRect()
+          const wrapRect = canvas.getBoundingClientRect()
+          startAnchor.style.display = 'block'
+          startAnchor.style.left = bar1Rect.left - wrapRect.left - anchorWidth / 2 + 'px'
+          startAnchor.style.top = bar1Rect.bottom - wrapRect.top - anchorHeight + 'px'
+        }
+        if (linesArr.length > 0 && bars.length > 0) {
+          // 末行锚点
+          const bar2 = bars[bars.length - 1]
+          const bar2Rect = bar2.getBoundingClientRect()
+          const wrapRect = canvas.getBoundingClientRect()
+          endAnchor.style.display = 'block'
+          endAnchor.style.left = bar2Rect.right - wrapRect.left - anchorWidth / 2 + 'px'
+          endAnchor.style.top =
+            bar2Rect.bottom - wrapRect.top - anchorHeight + anchorDotHeight + 'px'
+        }
+      }
+
+      // 高亮层 DOM
+      const highlightLayer = document.getElementById('highlightLayer')
+      function updateHighlightBar() {
+        highlightLayer.innerHTML = ''
+        if (startIdx == null || endIdx == null) return
+        const min = Math.min(startIdx, endIdx)
+        const max = Math.max(startIdx, endIdx)
+        // 按行分组高亮
+        let lineMap = {}
+        for (let i = min; i <= max; i++) {
+          const l = charPos[i].line
+          if (!lineMap[l]) lineMap[l] = { start: i, end: i }
+          else lineMap[l].end = i
+        }
+        Object.values(lineMap).forEach(({ start, end }) => {
+          const c1 = charPos[start]
+          const c2 = charPos[end]
+          const bar = document.createElement('div')
+          bar.className = 'highlight-bar'
+          bar.style.left = c1.x + 'px'
+          bar.style.top = c1.y - fontSize + 'px'
+          bar.style.width = c2.x + c2.w - c1.x + 'px'
+          bar.style.height = fontSize + 8 + 'px'
+          highlightLayer.appendChild(bar)
+        })
+      }
+
+      function updateAll() {
+        // drawText();
+        updateHighlightBar()
+        updateAnchors()
+      }
+
+      // 命中检测
+      function getCharIdxByTouch(start) {
+        const { x: clientX, y: clientY } = start
+        const rect = canvas.getBoundingClientRect()
+        const x = clientX - rect.left
+        const y = clientY - rect.top
+        for (let i = 0; i < charPos.length; i++) {
+          const c = charPos[i]
+          if (
+            y > c.y - fontSize - lineHeight / 2 &&
+            y < c.y + lineHeight / 2 &&
+            x >= c.x &&
+            x <= c.x + c.w
+          ) {
+            return i
+          }
+        }
+        return null
+      }
+
+      // 点击空白处，清除高亮和锚点
+
+      // 禁止页面滚动（如有必要，可用 Hammer 的 input/preventDefault 机制）
+
+      // 首次渲染
+      function fixCanvasDpi() {
+        const dpr = window.devicePixelRatio || 1
+        const cssWidth = 320
+        const cssHeight = 940
+        canvas.width = cssWidth * dpr
+        canvas.height = cssHeight * dpr
+        canvas.style.width = cssWidth + 'px'
+        canvas.style.height = cssHeight + 'px'
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        // TODO: 为什么修改这些，canvas 的内容会消失
+        drawText()
+      }
+      window.addEventListener('resize', fixCanvasDpi)
+      fixCanvasDpi()
+      drawText()
+      updateAll()
+
+      window.native = {
+        findNearestText: function (start, end) {
+          // 1. 找到最近的文本索引
+          // const idx1 = getCharIdxByTouch(start.x, start.y)
+          // const idx2 = getCharIdxByTouch(end.x, end.y)
+          // if (idx1 == null || idx2 == null) return
+          // startIdx = idx1
+          // endIdx = idx2
+          // updateHighlightBar()
+          // 2. 计算高亮区左右端点坐标
+          // setAnchorsPos()
+          // 3. 回传给 native
+        },
+        handleLongPress: function (start, end) {
+          isSelecting = true
+          startIdx = getCharIdxByTouch(start)
+          endIdx = getCharIdxByTouch(end)
+          updateAll()
+        },
+        handleMovePress: function (start) {
+          if (!isSelecting) return
+          requestAnimationFrame(() => {
+            endIdx = getCharIdxByTouch(start)
+            updateAll()
+          })
+        },
+        /**
+         * @param {Point} point
+         * @param {"start" | "end"} type
+         */
+        handleMoveAnchor: function (point, type) {
+          if (type === 'start') {
+            startIdx = getCharIdxByTouch(point)
+          } else {
+            endIdx = getCharIdxByTouch(point)
+          }
+          requestAnimationFrame(() => {
+            updateAll()
+          })
+        },
+        getAnchorPosition: function () {
+          const startRect = startAnchor.getBoundingClientRect()
+          const endRect = endAnchor.getBoundingClientRect()
+          return {
+            start: {
+              x: startRect.left,
+              y: startRect.top,
+            },
+            end: {
+              x: endRect.left,
+              y: endRect.top,
+            },
+          }
+        },
+        handleTouch: function () {
+          isSelecting = false
+          startIdx = null
+          endIdx = null
+          updateAll()
+        },
+        /**
+         * @param {"moveMagnifier" | "highlightRange" | "webviewTouch"} name
+         * @param {any} params
+         */
+        postMessage: function (name, params) {
+          if (
+            window.webkit &&
+            window.webkit.messageHandlers &&
+            window.webkit.messageHandlers[name]
+          ) {
+            window.webkit.messageHandlers[name].postMessage(params)
+          }
+        },
+      }
+
+      document.addEventListener(
+        'touchstart',
+        function (e) {
+          if (isSelecting) {
+            window.native.handleTouch()
+            e.preventDefault()
+          }
+          window.native.postMessage('webviewTouch')
+        },
+        {
+          capture: true,
+        }
+      )
+    </script>
+  </body>
+</html>

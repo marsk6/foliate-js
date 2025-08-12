@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <title>DOM 放大镜 Demo</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 40px;
+        background: #f8f8f8;
+      }
+      .main-text {
+        position: relative;
+        width: 320px;
+        min-height: 120px;
+        font-size: 20px;
+        line-height: 2;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        padding: 24px;
+        user-select: none;
+        -webkit-user-select: none;
+        word-break: break-all;
+      }
+      .char-span {
+        position: relative;
+        user-select: none;
+        -webkit-user-select: none;
+        display: inline-block;
+      }
+      .highlight {
+        background: #ffe066;
+        border-radius: 4px;
+      }
+      #magnifier {
+        display: none;
+        position: absolute;
+        z-index: 100;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+        border: 1px solid rgba(34, 34, 34, 0.5);
+        overflow: hidden;
+        background: #fff;
+        pointer-events: none;
+      }
+      #mag-content {
+        position: absolute;
+        left: 0;
+        top: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      class="main-text"
+      id="mainTextDom"
+    ></div>
+    <div id="magnifier">
+      <div id="mag-content"></div>
+    </div>
+    <script>
+      const domText =
+        "这是一个用于演示的文本。请长按并拖动选择部分内容，系统会高亮选区并显示自定义的锚点。"
+      const mainTextDom = document.getElementById("mainTextDom")
+      let domCharSpans = []
+      function renderDomText() {
+        mainTextDom.innerHTML = ""
+        domCharSpans = []
+        for (let i = 0; i < domText.length; i++) {
+          const span = document.createElement("span")
+          span.className = "char-span"
+          span.textContent = domText[i]
+          span.dataset.idx = i
+          mainTextDom.appendChild(span)
+          domCharSpans.push(span)
+        }
+      }
+      renderDomText()
+      // 高亮
+      function updateDomHighlight(startIdx, endIdx) {
+        domCharSpans.forEach((span, i) => {
+          span.classList.remove("highlight")
+          if (startIdx != null && endIdx != null) {
+            const min = Math.min(startIdx, endIdx)
+            const max = Math.max(startIdx, endIdx)
+            if (i >= min && i <= max) {
+              span.classList.add("highlight")
+            }
+          }
+        })
+      }
+      // 放大镜 DOM
+      const magnifier = document.getElementById("magnifier")
+      const magContent = document.getElementById("mag-content")
+      function showDomMagnifier(charIdx, touchX, touchY, startIdx, endIdx) {
+        if (charIdx == null || !domCharSpans[charIdx]) {
+          magnifier.style.display = "none"
+          return
+        }
+        // 生成内容
+        magContent.innerHTML = mainTextDom.innerHTML
+        // 高亮
+        const magSpans = magContent.querySelectorAll(".char-span")
+        magSpans.forEach((span, i) => {
+          span.classList.remove("highlight")
+          if (startIdx != null && endIdx != null) {
+            const min = Math.min(startIdx, endIdx)
+            const max = Math.max(startIdx, endIdx)
+            if (i >= min && i <= max) span.classList.add("highlight")
+          }
+        })
+        // 计算目标字在 mainTextDom 的位置
+        const targetSpan = domCharSpans[charIdx]
+        const mainRect = mainTextDom.getBoundingClientRect()
+        const spanRect = targetSpan.getBoundingClientRect()
+        const magTargetSpan = magSpans[charIdx]
+        const magRect = magContent.getBoundingClientRect()
+        const magSpanRect = magTargetSpan.getBoundingClientRect()
+        // 偏移让目标字对准圆心
+        const offsetX = magSpanRect.left - magRect.left - 40 + magSpanRect.width / 2
+        const offsetY = magSpanRect.top - magRect.top - 40 + magSpanRect.height / 2
+        magContent.style.left = -offsetX + "px"
+        magContent.style.top = -offsetY + "px"
+        // 放大镜位置
+        const relX = touchX - mainRect.left
+        const relY = touchY - mainRect.top
+        magnifier.style.left = relX - 40 + "px"
+        magnifier.style.top = relY - 40 + "px"
+        magnifier.style.display = "block"
+      }
+      function hideDomMagnifier() {
+        magnifier.style.display = "none"
+      }
+      // 交互示例：长按 mainTextDom
+      let domStartIdx = null,
+        domEndIdx = null,
+        domIsSelecting = false,
+        domLongPressTimer = null
+      mainTextDom.addEventListener("touchstart", (e) => {
+        if (e.touches.length !== 1) return
+        domLongPressTimer = setTimeout(() => {
+          domIsSelecting = true
+          domStartIdx = getDomIdxByTouch(e)
+          domEndIdx = domStartIdx
+          updateDomHighlight(domStartIdx, domEndIdx)
+          // 放大镜
+          const idx = getDomIdxByTouch(e)
+          const touch = e.touches[0]
+          showDomMagnifier(domEndIdx, touch.clientX, touch.clientY, domStartIdx, domEndIdx)
+        }, 350)
+      })
+      mainTextDom.addEventListener(
+        "touchmove",
+        (e) => {
+          if (!domIsSelecting) return
+          domEndIdx = getDomIdxByTouch(e)
+          updateDomHighlight(domStartIdx, domEndIdx)
+          // 放大镜
+          const idx = getDomIdxByTouch(e)
+          const touch = e.touches[0]
+          showDomMagnifier(domEndIdx, touch.clientX, touch.clientY, domStartIdx, domEndIdx)
+          e.preventDefault()
+        },
+        { passive: false }
+      )
+      mainTextDom.addEventListener("touchend", (e) => {
+        clearTimeout(domLongPressTimer)
+        if (domIsSelecting) {
+          domIsSelecting = false
+          updateDomHighlight(domStartIdx, domEndIdx)
+        }
+        hideDomMagnifier()
+      })
+      mainTextDom.addEventListener("touchcancel", () => {
+        clearTimeout(domLongPressTimer)
+        domIsSelecting = false
+        hideDomMagnifier()
+      })
+      function getDomIdxByTouch(e) {
+        const touch = e.touches[0]
+        const el = document.elementFromPoint(touch.clientX, touch.clientY)
+        if (el && el.classList.contains("char-span")) {
+          return parseInt(el.dataset.idx)
+        }
+        return null
+      }
+    </script>
+  </body>
+</html>
+<!-- 这个 dom 放大镜的实现，就是用 clip-path 画了个圆，然后取 innerHTML 内容渲染到圆上，再用 transform 偏移文本到放大镜中心 -->
+<!-- 问题多多，主要受 dom 布局影响大 -->

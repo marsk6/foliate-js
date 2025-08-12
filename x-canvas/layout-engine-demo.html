@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>编排引擎演示</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 12px;
+        background: #f8f8f8;
+        -webkit-user-select: none; /* 禁止选中文本 */
+        -webkit-touch-callout: none; /* 禁止长按弹出菜单 */
+        touch-action: manipulation; /* 禁止双指缩放、双击放大等 */
+        user-select: none;
+      }
+      .canvas-wrap {
+        position: relative;
+        display: inline-block;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        padding: 0;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .anchor {
+        width: 10px;
+        height: 36px;
+        position: absolute;
+        z-index: 10;
+        pointer-events: auto;
+        background: none;
+        border: none;
+        display: none;
+      }
+      .anchor-inner {
+        position: absolute;
+        left: 0;
+        top: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        height: 100%;
+      }
+      .anchor-line {
+        width: 3px;
+        height: 26px;
+        background: #007aff;
+      }
+      .anchor-dot {
+        width: 10px;
+        height: 10px;
+        background: #007aff;
+        border-radius: 10px;
+      }
+      .highlight-bar {
+        position: absolute;
+        background: #007aff;
+        opacity: 0.2;
+        pointer-events: none;
+      }
+      .highlight-layer {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 2;
+      }
+    </style>
+  </head>
+  <body>
+    <button onclick="window.location.reload()">reload</button>
+    <div class="canvas-wrap" style="width: 320px; position: relative">
+      <canvas
+        id="renderCanvas"
+        width="320"
+        height="940"
+        style="display: block"></canvas>
+      <div class="highlight-layer" id="highlightLayer"></div>
+      <div class="anchor" id="startAnchor">
+        <div class="anchor-inner">
+          <div class="anchor-dot"></div>
+          <div class="anchor-line"></div>
+        </div>
+      </div>
+      <div class="anchor" id="endAnchor">
+        <div class="anchor-inner">
+          <div class="anchor-line"></div>
+          <div class="anchor-dot"></div>
+        </div>
+      </div>
+    </div>
+
+    <script src="../x-canvas/layout-engine.js"></script>
+    <script src="../x-canvas/canvas-renderer.js"></script>
+    <script>
+      // 全局变量
+      let renderer;
+      let currentHTML = '';
+
+      // 初始化
+      window.addEventListener('DOMContentLoaded', () => {
+        const canvas = document.getElementById('renderCanvas');
+
+        renderer = new CanvasRenderer({
+          canvas: canvas,
+          theme: {
+            backgroundColor: '#fff',
+            textColor: '#222',
+            selectionColor: '#007aff',
+            selectionOpacity: 0.2,
+            highlightColor: '#ffeb3b',
+            highlightOpacity: 0.3,
+          },
+          enableSelection: true,
+          enableHighlight: true,
+        });
+
+        setupEventListeners();
+        renderContent(); // 初始渲染
+      });
+
+      // 设置事件监听器
+      function setupEventListeners() {
+
+      }
+
+      // 选择单词
+      function selectWordAt(charIndex, chars) {
+        let start = charIndex;
+        let end = charIndex;
+
+        // 向前查找单词边界
+        while (start > 0 && !isWordBoundary(chars[start - 1].char)) {
+          start--;
+        }
+
+        // 向后查找单词边界
+        while (end < chars.length - 1 && !isWordBoundary(chars[end + 1].char)) {
+          end++;
+        }
+
+        return { start, end };
+      }
+
+      // 判断是否为单词边界
+      function isWordBoundary(char) {
+        return /\s|[，。！？；：""''（）【】《》]/.test(char);
+      }
+
+      // 渲染内容
+      window.renderContent = function () {
+        const htmlInput = document.getElementById('htmlInput');
+        currentHTML = htmlInput.value;
+
+        if (currentHTML.trim()) {
+          renderer.render(currentHTML);
+          // 修复渲染器中的getCurrentHTML方法
+          renderer.getCurrentHTML = () => currentHTML;
+        }
+      };
+
+      // 清空画布
+      window.clearCanvas = function () {
+        renderer.clear();
+        renderer.clearSelection();
+        renderer.clearHighlights();
+        updateSelectionInfo();
+      };
+
+      // 导出图片
+      window.exportImage = function () {
+        const canvas = document.getElementById('renderCanvas');
+        const link = document.createElement('a');
+        link.download = 'rendered-text.png';
+        link.href = canvas.toDataURL();
+        link.click();
+      };
+
+      // 更新主题
+      window.updateTheme = function () {
+        const bgColor = document.getElementById('bgColor').value;
+        const textColor = document.getElementById('textColor').value;
+        const selectionColor = document.getElementById('selectionColor').value;
+        const highlightColor = document.getElementById('highlightColor').value;
+
+        renderer.setTheme({
+          backgroundColor: bgColor,
+          textColor: textColor,
+          selectionColor: selectionColor,
+          highlightColor: highlightColor,
+        });
+
+        renderContent(); // 重新渲染以应用主题
+      };
+    </script>
+  </body>
+</html>
