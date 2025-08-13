@@ -1,4 +1,4 @@
-window.WebSocket = undefined
+window.WebSocket = undefined;
 let currentHTML = `
 <?xml version='1.0' encoding='utf-8'?>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -24,6 +24,55 @@ let currentHTML = `
         <i class="calibre5">and for Di, who heard this one first. </i>
       </p>
     </div>
-  </body>
+    <p class="calibre1">
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+    </p>
+    <p class="calibre1">
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+    </p>
+    <p class="calibre1">
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+    </p>
+      <p class="calibre1">
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+    </p>
+    <p class="calibre1">
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+    </p>
+    <p class="calibre1">
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+    </p>
+     <p class="calibre1">
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+      for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
+    </p>
+      </body>
 </html>
-`;
+`.replaceAll('  ', '').replaceAll('\n', '');

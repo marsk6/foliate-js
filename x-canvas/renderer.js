@@ -1,14 +1,14 @@
-import { CanvasRenderer } from './canvas-renderer.js';
+import { VirtualCanvasRenderer } from './virtual-canvas-renderer.js';
 /**
- * @type {CanvasRenderer}
+ * @type {VirtualCanvasRenderer}
  */
 let renderer;
 // 初始化
 window.addEventListener('DOMContentLoaded', () => {
-  const canvas = document.getElementById('renderCanvas');
+  const container = document.getElementById('renderCanvas');
 
-  renderer = new CanvasRenderer({
-    canvas: canvas,
+  renderer = new VirtualCanvasRenderer({
+    mountPoint: container,
     theme: {
       backgroundColor: '#fff',
       textColor: '#222',
