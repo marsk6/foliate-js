@@ -16,6 +16,7 @@
         -webkit-touch-callout: none; /* 禁止长按弹出菜单 */
         touch-action: manipulation; /* 禁止双指缩放、双击放大等 */
         user-select: none;
+        height: 80vh;
       }
       .canvas-wrap {
         position: relative;
@@ -74,8 +75,13 @@
       }
     </style>
   </head>
-  <body>
-    <button onclick="window.location.reload()">reload</button>
+  <body
+    style="
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    ">
+    <button style="width: 50px;" onclick="window.location.reload()">reload</button>
     <div class="canvas-wrap" style="width: 320px; position: relative">
       <div id="renderCanvas"></div>
       <div class="highlight-layer" id="highlightLayer"></div>

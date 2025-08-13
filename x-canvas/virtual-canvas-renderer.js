@@ -118,10 +118,10 @@ class VirtualViewport {
     this.scrollContent = config.scrollContent;
     this.poolSize = config.poolSize || 4;
     this.config = {
-      viewportHeight: 600, // 默认视窗高度
-      viewportWidth: 400, // 默认视窗宽度
+      viewportHeight: config.viewportHeight, // 默认视窗高度
+      viewportWidth: config.viewportWidth, // 默认视窗宽度
       bufferSize: 1.5, // 缓冲区为视窗高度的1.5倍
-      chunkHeight: 150, // 每个渲染块高度，应该等于Canvas高度
+      chunkHeight: config.chunkHeight, // 每个渲染块高度，应该等于Canvas高度
       ...config,
     };
 
@@ -325,13 +325,13 @@ class VirtualViewport {
    * 处理向上滚动
    */
   handleUpwardScroll(extendedStart, extendedEnd, chunkHeight) {
-    const { scrollTop } = this.state;
+    const { scrollTop, viewportHeight } = this.state;
     const tailCanvas = this.canvasInfoList[this.tailIndex];
     const tailPrevIndex = (this.tailIndex - 1 + this.poolSize) % this.poolSize;
     const tailPrevCanvas = this.canvasInfoList[tailPrevIndex];
-
+    console.log('🚨🚨🚨👉👉📢', 'up', tailCanvas.contentStartY, chunkHeight);
     // 计算触发重定位的阈值：TAIL Canvas开始位置 - 上一个Canvas的40%
-    const triggerPoint = tailCanvas.contentStartY - chunkHeight * 0.4;
+    const triggerPoint = tailCanvas.contentStartY - chunkHeight * 0.4 - viewportHeight;
 
     // 如果滚动位置低于触发点，需要重定位TAIL Canvas
     if (scrollTop <= triggerPoint) {
@@ -673,7 +673,7 @@ export class VirtualCanvasRenderer {
 
     // 视窗尺寸 - 用户可见的滚动区域
     this.viewportWidth = config.viewportWidth || 400;
-    this.viewportHeight = config.viewportHeight || 150;
+    this.viewportHeight = config.viewportHeight || 250;
 
     // Canvas尺寸 - 每个Canvas块的大小，通常等于视窗尺寸
     this.canvasWidth = config.canvasWidth || this.viewportWidth;
