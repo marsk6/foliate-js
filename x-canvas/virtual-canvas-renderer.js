@@ -319,16 +319,7 @@ class VirtualViewport {
     canvasInfo.needsRerender = true;
   }
 
-  /**
-   * 检查块是否在可视区域
-   * @param {number} startY
-   * @param {number} endY
-   * @returns {boolean}
-   */
-  isChunkVisible(startY, endY) {
-    const { visibleStart, visibleEnd } = this.state;
-    return endY >= visibleStart && startY <= visibleEnd;
-  }
+
 
   /**
    * 设置内容总高度
@@ -423,7 +414,6 @@ class VirtualViewport {
  * @property {number} baseFontSize - 基础字体大小
  * @property {string} fontFamily - 字体族
  * @property {number} paddingX - 水平内边距
- * @property {number} paddingY - 垂直内边距
  * @property {number} lineHeight - 行高倍数
  */
 
@@ -539,7 +529,6 @@ export class VirtualCanvasRenderer {
       baseFontSize: 20,
       fontFamily: 'system-ui, sans-serif',
       paddingX: 16,
-      paddingY: 20,
       lineHeight: 1.4,
       ...config.theme,
     };
@@ -748,7 +737,7 @@ export class VirtualCanvasRenderer {
     const elements = [];
 
     let x = this.theme.paddingX;
-    let y = this.theme.paddingY;
+    let y = 0;
     let currentLine = 0;
 
     // 使用原有的布局算法计算所有位置
@@ -761,12 +750,10 @@ export class VirtualCanvasRenderer {
       elements
     );
 
-    // 📐 正确的总高度计算方式：总行数 × 行高 + 上下padding
+    // 📐 正确的总高度计算方式：总行数 × 行高
     const totalLines = result.line + 1; // 行数从0开始，所以+1
     const lineHeight = this.getLineHeight();
-    const topPadding = this.theme.paddingY;
-    const bottomPadding = this.theme.paddingY;
-    const contentHeight = totalLines * lineHeight + topPadding + bottomPadding;
+    const contentHeight = totalLines * lineHeight;
 
     // 计算需要的总块数
     const chunkHeight = this.viewport.config.chunkHeight;
@@ -806,13 +793,13 @@ export class VirtualCanvasRenderer {
 
       // 找到属于这个块的单词和元素
       const chunkWords = words.filter((word) => {
-        const wordY =
-          word.y -
-          this.getTextBaseline(
-            this.getLineHeight(word.style),
-            word.style.fontSize
-          );
-        return wordY >= startY && wordY < endY;
+        const lineHeight = this.getLineHeight(word.style);
+        const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
+        const wordTop = word.y - baseline;
+        const wordBottom = wordTop + lineHeight;
+        
+        // 检查文本行是否与块区域有交集
+        return wordBottom > startY && wordTop < endY;
       });
 
       const chunkElements = elements.filter((element) => {
@@ -881,9 +868,6 @@ export class VirtualCanvasRenderer {
     const startChunkIndex = Math.floor(contentStartY / chunkHeight);
     const endChunkIndex = Math.floor((contentEndY - 1) / chunkHeight);
 
-    let totalWords = 0;
-    let totalElements = 0;
-
     // 遍历相关的chunks并渲染内容
     for (
       let chunkIndex = startChunkIndex;
@@ -895,13 +879,13 @@ export class VirtualCanvasRenderer {
 
       // 过滤出在当前Canvas区域内的内容
       const canvasWords = chunk.words.filter((word) => {
-        const wordTop =
-          word.y -
-          this.getTextBaseline(
-            this.getLineHeight(word.style),
-            word.style.fontSize
-          );
-        return wordTop >= contentStartY && wordTop < contentEndY;
+        const lineHeight = this.getLineHeight(word.style);
+        const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
+        const wordTop = word.y - baseline;
+        const wordBottom = wordTop + lineHeight;
+        
+        // 检查文本行是否与Canvas区域有交集
+        return wordBottom > contentStartY && wordTop < contentEndY;
       });
 
       const canvasElements = chunk.elements.filter((element) => {
@@ -911,9 +895,6 @@ export class VirtualCanvasRenderer {
       // 渲染内容（相对于Canvas的偏移）
       this.renderCanvasText(canvasWords, ctx, contentStartY);
       this.renderCanvasElements(canvasElements, ctx, contentStartY);
-
-      totalWords += canvasWords.length;
-      totalElements += canvasElements.length;
     }
   }
 
@@ -1058,11 +1039,7 @@ export class VirtualCanvasRenderer {
   applyPageStyle() {
     if (!this.pageStyle) return;
 
-    // 应用页面边距
-    if (this.pageStyle.marginTop) {
-      const marginTop = this.parseSize(this.pageStyle.marginTop);
-      this.theme.paddingY = Math.max(this.theme.paddingY, marginTop);
-    }
+    // 应用页面边距 - 已移除paddingY支持
 
     if (this.pageStyle.marginBottom) {
       const marginBottom = this.parseSize(this.pageStyle.marginBottom);
@@ -1097,13 +1074,13 @@ export class VirtualCanvasRenderer {
     const elements = [];
 
     let x = this.theme.paddingX;
-    let y = this.theme.paddingY;
+    let y = 0;
     let currentLine = 0;
 
     // 遍历节点树进行布局
     this.layoutNodes(nodes, x, y, currentLine, words, elements);
 
-    const totalHeight = y + this.theme.paddingY;
+    const totalHeight = y;
 
     return {
       words,
