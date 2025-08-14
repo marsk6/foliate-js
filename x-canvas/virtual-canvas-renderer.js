@@ -87,6 +87,9 @@ class VirtualViewport {
   /** @type {number} 上次滚动位置，用于判断滚动方向 */
   lastScrollTop = 0;
 
+  /** @type {number} 节流定时器ID */
+  scrollThrottleId = null;
+
   /**
    * @param {ViewportConfig} config
    */
@@ -131,6 +134,7 @@ class VirtualViewport {
         contentStartY: i * this.config.chunkHeight,
         contentEndY: (i + 1) * this.config.chunkHeight,
         lastUsed: Date.now(),
+        needsRerender: true, // 初始时需要渲染
       });
     }
 
@@ -174,7 +178,7 @@ class VirtualViewport {
   }
 
   /**
-   * 处理滚动事件
+   * 处理滚动事件（节流版本）
    */
   handleScroll() {
     if (this.isUpdating) return;
@@ -182,8 +186,16 @@ class VirtualViewport {
     // 立即更新滚动位置（快速响应）
     this.updateScrollPosition();
 
-    this.updateViewport();
-    this.notifyViewportChange();
+    // 使用requestAnimationFrame进行节流，确保按帧率执行
+    if (this.scrollThrottleId) {
+      return; // 如果已经有待处理的更新，跳过
+    }
+
+    this.scrollThrottleId = requestAnimationFrame(() => {
+      this.scrollThrottleId = null;
+      this.updateViewport();
+      this.notifyViewportChange();
+    });
   }
 
   /**
@@ -280,7 +292,7 @@ class VirtualViewport {
     const { scrollTop } = this.state;
     const headCanvas = this.canvasInfoList[this.headIndex];
     const tailCanvas = this.canvasInfoList[this.tailIndex];
-    
+
     // 计算触发重定位的阈值：HEAD Canvas开始位置 + Canvas高度的50%
     const triggerPoint = headCanvas.contentStartY + chunkHeight * 0.5;
 
@@ -396,6 +408,12 @@ class VirtualViewport {
   destroy() {
     this.container.removeEventListener('scroll', this.handleScroll);
     window.removeEventListener('resize', this.handleResize);
+
+    // 清理节流定时器
+    if (this.scrollThrottleId) {
+      cancelAnimationFrame(this.scrollThrottleId);
+      this.scrollThrottleId = null;
+    }
 
     // 清理引用（DOM由主类管理）
     this.container = null;
@@ -704,6 +722,11 @@ export class VirtualCanvasRenderer {
 
     // 设置虚拟内容高度
     this.viewport.setContentHeight(this.fullLayoutData.totalHeight);
+
+    // 标记所有Canvas需要重新渲染（因为内容已更改）
+    this.viewport.canvasInfoList.forEach((canvasInfo) => {
+      canvasInfo.needsRerender = true;
+    });
 
     // 渲染当前可视区域
     this.renderVisibleContent();
