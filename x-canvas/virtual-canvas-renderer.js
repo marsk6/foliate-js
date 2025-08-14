@@ -319,8 +319,6 @@ class VirtualViewport {
     canvasInfo.needsRerender = true;
   }
 
-
-
   /**
    * 设置内容总高度
    * @param {number} height
@@ -537,9 +535,9 @@ export class VirtualCanvasRenderer {
     this.viewportWidth = window.innerWidth; // 使用窗口宽度作为视窗宽度
     this.viewportHeight = window.innerHeight; // 使用窗口高度作为视窗高度
 
-    // Canvas尺寸 - 基于行高自动计算
+    // Canvas尺寸 - 直接使用视窗尺寸
     this.canvasWidth = this.viewportWidth;
-    this.canvasHeight = this.calculateOptimalCanvasHeight();
+    this.canvasHeight = this.viewportHeight;
 
     // 块高度 - 每个渲染块的高度，等于Canvas高度
     this.chunkHeight = this.canvasHeight;
@@ -578,24 +576,6 @@ export class VirtualCanvasRenderer {
     this.setupHighDPI();
 
     window.addEventListener('resize', this.setupHighDPI.bind(this));
-  }
-
-  /**
-   * 计算最优的Canvas高度
-   * 使其为行高的整数倍，且最接近并小于viewportHeight，确保完整显示文字
-   * @returns {number}
-   */
-  calculateOptimalCanvasHeight() {
-    const lineHeight = this.getLineHeight();
-    const targetHeight = this.viewportHeight;
-    
-    // 计算能容纳的行数（向下取整确保不超过目标高度）
-    const linesCount = Math.floor(targetHeight / lineHeight);
-    
-    // 确保至少有1行
-    const actualLinesCount = Math.max(1, linesCount);
-    
-    return actualLinesCount * lineHeight;
   }
 
   /**
@@ -674,7 +654,7 @@ export class VirtualCanvasRenderer {
     this.viewportWidth = window.innerWidth;
     this.viewportHeight = window.innerHeight;
     this.canvasWidth = this.viewportWidth;
-    this.canvasHeight = this.calculateOptimalCanvasHeight();
+    this.canvasHeight = this.viewportHeight;
     this.chunkHeight = this.canvasHeight;
 
     // 更新容器尺寸
@@ -689,7 +669,7 @@ export class VirtualCanvasRenderer {
       canvas.height = this.canvasHeight * dpr;
       canvas.style.width = this.canvasWidth + 'px';
       canvas.style.height = this.canvasHeight + 'px';
-      
+
       const ctx = canvas.getContext('2d');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     });
@@ -750,10 +730,8 @@ export class VirtualCanvasRenderer {
       elements
     );
 
-    // 📐 正确的总高度计算方式：总行数 × 行高
-    const totalLines = result.line + 1; // 行数从0开始，所以+1
-    const lineHeight = this.getLineHeight();
-    const contentHeight = totalLines * lineHeight;
+    // 📐 正确的总高度计算方式：使用实际的Y坐标
+    const contentHeight = result.y;
 
     // 计算需要的总块数
     const chunkHeight = this.viewport.config.chunkHeight;
@@ -768,7 +746,6 @@ export class VirtualCanvasRenderer {
       contentHeight, // 实际内容高度
       scrollContentHeight, // 滚动容器高度
       totalHeight: scrollContentHeight, // 兼容性，使用滚动容器高度
-      totalLines: totalLines,
       totalChunks,
     };
     // 分割为块
@@ -877,20 +854,9 @@ export class VirtualCanvasRenderer {
       const chunk = this.renderChunks.get(chunkIndex);
       if (!chunk) continue;
 
-      // 过滤出在当前Canvas区域内的内容
-      const canvasWords = chunk.words.filter((word) => {
-        const lineHeight = this.getLineHeight(word.style);
-        const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
-        const wordTop = word.y - baseline;
-        const wordBottom = wordTop + lineHeight;
-        
-        // 检查文本行是否与Canvas区域有交集
-        return wordBottom > contentStartY && wordTop < contentEndY;
-      });
-
-      const canvasElements = chunk.elements.filter((element) => {
-        return element.y >= contentStartY && element.y < contentEndY;
-      });
+      // 直接使用chunk中已经分配好的单词和元素
+      const canvasWords = chunk.words;
+      const canvasElements = chunk.elements;
 
       // 渲染内容（相对于Canvas的偏移）
       this.renderCanvasText(canvasWords, ctx, contentStartY);
