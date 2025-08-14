@@ -10,7 +10,7 @@
  * 字符位置 → canvas-renderer.render() → Canvas显示
  */
 
-import TransferEngine from './layout-engine.js';
+import TransferEngine from '../x-canvas/layout-engine.js';
 
 /**
  * @typedef {Object} ThemeConfig

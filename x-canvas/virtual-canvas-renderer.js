@@ -31,7 +31,6 @@ import TransferEngine from './layout-engine.js';
  * @property {number} currentTop - 当前top位置
  * @property {number} contentStartY - 渲染内容的起始Y坐标
  * @property {number} contentEndY - 渲染内容的结束Y坐标
- * @property {number} lastUsed - 最后使用时间
  */
 
 /**
@@ -39,8 +38,6 @@ import TransferEngine from './layout-engine.js';
  * @property {number} scrollTop - 当前滚动位置
  * @property {number} viewportHeight - 视窗高度
  * @property {number} contentHeight - 内容总高度
- * @property {number} visibleStart - 可视区域开始位置
- * @property {number} visibleEnd - 可视区域结束位置
  */
 
 /**
@@ -109,8 +106,6 @@ class VirtualViewport {
       scrollTop: 0,
       viewportHeight: this.config.viewportHeight,
       contentHeight: 0,
-      visibleStart: 0,
-      visibleEnd: 0,
     };
 
     this.initCanvasPool();
@@ -133,7 +128,6 @@ class VirtualViewport {
         currentTop: i * this.config.chunkHeight, // 初始位置
         contentStartY: i * this.config.chunkHeight,
         contentEndY: (i + 1) * this.config.chunkHeight,
-        lastUsed: Date.now(),
         needsRerender: true, // 初始时需要渲染
       });
     }
@@ -225,12 +219,6 @@ class VirtualViewport {
    */
   updateViewport() {
     this.updateScrollPosition();
-
-    const { scrollTop, viewportHeight, contentHeight } = this.state;
-
-    // 计算可视区域
-    this.state.visibleStart = scrollTop;
-    this.state.visibleEnd = scrollTop + viewportHeight;
 
     // 更新Canvas池位置
     this.updateCanvasPositions();
@@ -325,7 +313,6 @@ class VirtualViewport {
     canvasInfo.currentTop = newTop;
     canvasInfo.contentStartY = newTop;
     canvasInfo.contentEndY = newTop + chunkHeight;
-    canvasInfo.lastUsed = Date.now();
 
     // 触发重渲染标记
     canvasInfo.needsRerender = true;
@@ -774,51 +761,11 @@ export class VirtualCanvasRenderer {
     // 分割为块
     this.createRenderChunks();
   }
-  createRenderChunks() {
-    if (!this.fullLayoutData) return;
-
-    const { words, elements, totalChunks, scrollContentHeight } =
-      this.fullLayoutData;
-    const chunkHeight = this.viewport.config.chunkHeight;
-
-    // 清空现有块
-    this.renderChunks.clear();
-
-    for (let i = 0; i < totalChunks; i++) {
-      const startY = i * chunkHeight;
-      const endY = Math.min((i + 1) * chunkHeight, scrollContentHeight);
-
-      // 找到属于这个块的单词和元素
-      const chunkWords = words.filter((word) => {
-        const lineHeight = this.getLineHeight(word.style);
-        const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
-        const wordTop = word.y - baseline;
-        const wordBottom = wordTop + lineHeight;
-
-        // 检查文本行是否与块区域有交集
-        // TODO: 不能直接用尾 word 判断，要用 last y
-        return wordBottom > startY && wordTop < endY;
-      });
-
-      const chunkElements = elements.filter((element) => {
-        return element.y >= startY && element.y < endY;
-      });
-
-      this.renderChunks.set(i, {
-        index: i,
-        startY,
-        endY,
-        words: chunkWords,
-        elements: chunkElements,
-        rendered: false,
-      });
-    }
-  }
 
   /**
    * 创建渲染块（优化版本：避免重复遍历）
    */
-  createRenderChunks1() {
+  createRenderChunks() {
     if (!this.fullLayoutData) return;
 
     const { words, elements, totalChunks, scrollContentHeight } =
@@ -875,7 +822,8 @@ export class VirtualCanvasRenderer {
   findWordsInRange(words, startIndex, startY, endY) {
     const chunkWords = [];
     let i = startIndex;
-
+    let nextWordIndex = startIndex;
+    let currentLine = 0;
     // 从startIndex开始搜索，避免重复检查
     while (i < words.length) {
       const word = words[i];
@@ -894,6 +842,10 @@ export class VirtualCanvasRenderer {
       if (wordTop >= endY) {
         break;
       }
+      if (word.line !== currentLine) {
+        currentLine = word.line;
+        nextWordIndex = i;
+      }
 
       // 单词与当前范围有交集，加入当前块
       if (wordBottom > startY && wordTop < endY) {
@@ -905,7 +857,7 @@ export class VirtualCanvasRenderer {
 
     return {
       chunkWords,
-      nextWordIndex: i, // 下一个块从这个索引开始搜索
+      nextWordIndex, // 下一个块从这个索引开始搜索
     };
   }
 
