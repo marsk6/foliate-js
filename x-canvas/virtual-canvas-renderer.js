@@ -759,7 +759,7 @@ export class VirtualCanvasRenderer {
     // 计算需要的总块数
     const chunkHeight = this.viewport.config.chunkHeight;
     const totalChunks = Math.ceil(contentHeight / chunkHeight);
-    
+
     // scrollContent 的高度基于块数量，而不是内容高度
     const scrollContentHeight = totalChunks * chunkHeight;
 
@@ -774,14 +774,11 @@ export class VirtualCanvasRenderer {
     // 分割为块
     this.createRenderChunks();
   }
-
-  /**
-   * 创建渲染块
-   */
   createRenderChunks() {
     if (!this.fullLayoutData) return;
 
-    const { words, elements, totalChunks, scrollContentHeight } = this.fullLayoutData;
+    const { words, elements, totalChunks, scrollContentHeight } =
+      this.fullLayoutData;
     const chunkHeight = this.viewport.config.chunkHeight;
 
     // 清空现有块
@@ -797,8 +794,9 @@ export class VirtualCanvasRenderer {
         const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
         const wordTop = word.y - baseline;
         const wordBottom = wordTop + lineHeight;
-        
+
         // 检查文本行是否与块区域有交集
+        // TODO: 不能直接用尾 word 判断，要用 last y
         return wordBottom > startY && wordTop < endY;
       });
 
@@ -815,6 +813,138 @@ export class VirtualCanvasRenderer {
         rendered: false,
       });
     }
+  }
+
+  /**
+   * 创建渲染块（优化版本：避免重复遍历）
+   */
+  createRenderChunks1() {
+    if (!this.fullLayoutData) return;
+
+    const { words, elements, totalChunks, scrollContentHeight } =
+      this.fullLayoutData;
+    const chunkHeight = this.viewport.config.chunkHeight;
+
+    // 清空现有块
+    this.renderChunks.clear();
+
+    let wordStartIndex = 0; // 跟踪下一个要检查的单词索引
+    let elementStartIndex = 0; // 跟踪下一个要检查的元素索引
+
+    for (let i = 0; i < totalChunks; i++) {
+      const startY = i * chunkHeight;
+      const endY = Math.min((i + 1) * chunkHeight, scrollContentHeight);
+
+      // 优化：使用范围搜索而不是全量过滤
+      const { chunkWords, nextWordIndex } = this.findWordsInRange(
+        words,
+        wordStartIndex,
+        startY,
+        endY
+      );
+
+      const { chunkElements, nextElementIndex } = this.findElementsInRange(
+        elements,
+        elementStartIndex,
+        startY,
+        endY
+      );
+      // 更新起始索引，避免重复检查已分配的内容
+      wordStartIndex = nextWordIndex;
+      elementStartIndex = nextElementIndex;
+
+      this.renderChunks.set(i, {
+        index: i,
+        startY,
+        endY,
+        words: chunkWords,
+        elements: chunkElements,
+        rendered: false,
+      });
+    }
+  }
+
+  /**
+   * 在指定范围内查找单词（优化版本）
+   * @param {Array} words - 所有单词数组
+   * @param {number} startIndex - 开始搜索的索引
+   * @param {number} startY - 范围开始Y坐标
+   * @param {number} endY - 范围结束Y坐标
+   * @returns {Object} 返回找到的单词和下一个搜索索引
+   */
+  findWordsInRange(words, startIndex, startY, endY) {
+    const chunkWords = [];
+    let i = startIndex;
+
+    // 从startIndex开始搜索，避免重复检查
+    while (i < words.length) {
+      const word = words[i];
+      const lineHeight = this.getLineHeight(word.style);
+      const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
+      const wordTop = word.y - baseline;
+      const wordBottom = wordTop + lineHeight;
+
+      // 如果单词完全在当前范围之前，跳过
+      if (wordBottom <= startY) {
+        i++;
+        continue;
+      }
+
+      // 如果单词完全在当前范围之后，提前终止
+      if (wordTop >= endY) {
+        break;
+      }
+
+      // 单词与当前范围有交集，加入当前块
+      if (wordBottom > startY && wordTop < endY) {
+        chunkWords.push(word);
+      }
+
+      i++;
+    }
+
+    return {
+      chunkWords,
+      nextWordIndex: i, // 下一个块从这个索引开始搜索
+    };
+  }
+
+  /**
+   * 在指定范围内查找元素（优化版本）
+   * @param {Array} elements - 所有元素数组
+   * @param {number} startIndex - 开始搜索的索引
+   * @param {number} startY - 范围开始Y坐标
+   * @param {number} endY - 范围结束Y坐标
+   * @returns {Object} 返回找到的元素和下一个搜索索引
+   */
+  findElementsInRange(elements, startIndex, startY, endY) {
+    const chunkElements = [];
+    let i = startIndex;
+
+    // 从startIndex开始搜索，避免重复检查
+    while (i < elements.length) {
+      const element = elements[i];
+
+      // 如果元素完全在当前范围之前，跳过
+      if (element.y < startY) {
+        i++;
+        continue;
+      }
+
+      // 如果元素完全在当前范围之后，提前终止
+      if (element.y >= endY) {
+        break;
+      }
+
+      // 元素在当前范围内，加入当前块
+      chunkElements.push(element);
+      i++;
+    }
+
+    return {
+      chunkElements,
+      nextElementIndex: i, // 下一个块从这个索引开始搜索
+    };
   }
 
   /**
@@ -917,6 +1047,7 @@ export class VirtualCanvasRenderer {
 
   /**
    * 渲染Canvas中的元素
+   * TODO: 如何渲染 image
    * @param {Array} elements
    * @param {CanvasRenderingContext2D} ctx
    * @param {number} offsetY
