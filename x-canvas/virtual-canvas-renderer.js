@@ -8,12 +8,6 @@ import TransferEngine from './layout-engine.js';
 /**
  * @typedef {Object} VirtualRenderConfig
  * @property {HTMLElement} mountPoint - 挂载点元素
- * @property {number} [viewportWidth=400] - 视窗宽度（用户可见的滚动区域宽度）
- * @property {number} [viewportHeight=150] - 视窗高度（用户可见的滚动区域高度）
- * @property {number} [canvasWidth] - Canvas宽度（默认等于视窗宽度）
- * @property {number} [canvasHeight] - Canvas高度（默认等于视窗高度）
- * @property {number} [chunkHeight] - 渲染块高度（默认等于Canvas高度）
- * @property {number} [bufferSize=1.5] - 缓冲区大小（视窗高度的倍数）
  * @property {number} [poolSize=4] - Canvas池大小
  * @property {Object} [theme] - 主题配置
  */
@@ -25,7 +19,6 @@ import TransferEngine from './layout-engine.js';
  * @property {HTMLElement} scrollContent - 滚动内容容器
  * @property {number} viewportHeight - 视窗高度
  * @property {number} viewportWidth - 视窗宽度
- * @property {number} bufferSize - 缓冲区大小（视窗高度的倍数）
  * @property {number} chunkHeight - 每个渲染块的高度
  * @property {number} poolSize - Canvas池大小
  * @property {Function} onViewportChange - 视窗变化回调
@@ -48,18 +41,6 @@ import TransferEngine from './layout-engine.js';
  * @property {number} contentHeight - 内容总高度
  * @property {number} visibleStart - 可视区域开始位置
  * @property {number} visibleEnd - 可视区域结束位置
- * @property {number} renderStart - 渲染区域开始位置（包含缓冲区）
- * @property {number} renderEnd - 渲染区域结束位置（包含缓冲区）
- */
-
-/**
- * @typedef {Object} ChunkInfo
- * @property {number} index - 块索引
- * @property {number} startY - 块开始Y坐标
- * @property {number} endY - 块结束Y坐标
- * @property {number} height - 块高度
- * @property {boolean} isVisible - 是否在可视区域
- * @property {boolean} shouldRender - 是否需要渲染
  */
 
 /**
@@ -91,9 +72,6 @@ class VirtualViewport {
   /** @type {ViewportState} 当前状态 */
   state;
 
-  /** @type {Map<number, ChunkInfo>} 块信息缓存 */
-  chunks = new Map();
-
   /** @type {CanvasInfo[]} Canvas信息数组 */
   canvasInfoList = [];
 
@@ -120,7 +98,6 @@ class VirtualViewport {
     this.config = {
       viewportHeight: config.viewportHeight, // 默认视窗高度
       viewportWidth: config.viewportWidth, // 默认视窗宽度
-      bufferSize: 1.5, // 缓冲区为视窗高度的1.5倍
       chunkHeight: config.chunkHeight, // 每个渲染块高度，应该等于Canvas高度
       ...config,
     };
@@ -131,8 +108,6 @@ class VirtualViewport {
       contentHeight: 0,
       visibleStart: 0,
       visibleEnd: 0,
-      renderStart: 0,
-      renderEnd: 0,
     };
 
     this.initCanvasPool();
@@ -240,24 +215,13 @@ class VirtualViewport {
     this.updateScrollPosition();
 
     const { scrollTop, viewportHeight, contentHeight } = this.state;
-    const bufferHeight = viewportHeight * this.config.bufferSize;
 
     // 计算可视区域
     this.state.visibleStart = scrollTop;
     this.state.visibleEnd = scrollTop + viewportHeight;
 
-    // 计算渲染区域（包含缓冲区）
-    this.state.renderStart = Math.max(0, scrollTop - bufferHeight);
-    this.state.renderEnd = Math.min(
-      contentHeight,
-      scrollTop + viewportHeight + bufferHeight
-    );
-
     // 更新Canvas池位置
     this.updateCanvasPositions();
-
-    // 更新块信息
-    this.updateChunks();
   }
 
   /**
@@ -265,44 +229,32 @@ class VirtualViewport {
    * 根据滚动方向决定从头部还是尾部取Canvas进行重定位
    */
   updateCanvasPositions() {
-    const { renderStart, renderEnd, contentHeight, scrollTop } = this.state;
+    const { contentHeight, scrollTop } = this.state;
     const { chunkHeight } = this.config;
 
     // 判断滚动方向
     const scrollDirection = scrollTop > this.lastScrollTop ? 'down' : 'up';
     this.lastScrollTop = scrollTop;
 
-    // 计算可视区域（带缓冲）
-    const bufferSize = chunkHeight * this.config.bufferSize;
-    const extendedStart = Math.max(0, renderStart - bufferSize);
-    const extendedEnd = Math.min(contentHeight, renderEnd + bufferSize);
-
     if (scrollDirection === 'down') {
       // 向下滚动：检查头部Canvas是否需要移到尾部
-      this.handleDownwardScroll(
-        extendedStart,
-        extendedEnd,
-        chunkHeight,
-        contentHeight
-      );
+      this.handleDownwardScroll(chunkHeight, contentHeight);
     } else {
       // 向上滚动：检查尾部Canvas是否需要移到头部
-      this.handleUpwardScroll(extendedStart, extendedEnd, chunkHeight);
+      this.handleUpwardScroll(chunkHeight);
     }
   }
 
   /**
    * 处理向下滚动
    */
-  handleDownwardScroll(extendedStart, extendedEnd, chunkHeight, contentHeight) {
+  handleDownwardScroll(chunkHeight, contentHeight) {
     const { scrollTop } = this.state;
     const headCanvas = this.canvasInfoList[this.headIndex];
-    const headNextIndex = (this.headIndex + 1) % this.poolSize;
-    const headNextCanvas = this.canvasInfoList[headNextIndex];
 
-    // 计算触发重定位的阈值：HEAD Canvas + 下一个Canvas的40%
+    // 计算触发重定位的阈值：HEAD Canvas + 下一个Canvas的50%
     const triggerPoint =
-      headCanvas.contentStartY + chunkHeight + chunkHeight * 0.4;
+      headCanvas.contentStartY + chunkHeight + chunkHeight * 0.5;
 
     // 如果滚动位置超过触发点，需要重定位HEAD Canvas
     if (scrollTop >= triggerPoint) {
@@ -324,26 +276,24 @@ class VirtualViewport {
   /**
    * 处理向上滚动
    */
-  handleUpwardScroll(extendedStart, extendedEnd, chunkHeight) {
-    const { scrollTop, viewportHeight } = this.state;
+  handleUpwardScroll(chunkHeight) {
+    const { scrollTop } = this.state;
+    const headCanvas = this.canvasInfoList[this.headIndex];
     const tailCanvas = this.canvasInfoList[this.tailIndex];
-    const tailPrevIndex = (this.tailIndex - 1 + this.poolSize) % this.poolSize;
-    const tailPrevCanvas = this.canvasInfoList[tailPrevIndex];
-    console.log('🚨🚨🚨👉👉📢', 'up', tailCanvas.contentStartY, chunkHeight);
-    // 计算触发重定位的阈值：TAIL Canvas开始位置 - 上一个Canvas的40%
-    const triggerPoint = tailCanvas.contentStartY - chunkHeight * 0.4 - viewportHeight;
+    
+    // 计算触发重定位的阈值：HEAD Canvas开始位置 + Canvas高度的50%
+    const triggerPoint = headCanvas.contentStartY + chunkHeight * 0.5;
 
-    // 如果滚动位置低于触发点，需要重定位TAIL Canvas
-    if (scrollTop <= triggerPoint) {
+    // 如果滚动位置低于触发点，需要将TAIL Canvas移动到HEAD Canvas前面
+    if (scrollTop < triggerPoint) {
       // 计算新位置：当前头部Canvas的上方
-      const headCanvas = this.canvasInfoList[this.headIndex];
       const newPosition = headCanvas.contentStartY - chunkHeight;
 
       // 确保不超出内容范围
       if (newPosition >= 0) {
         this.repositionCanvas(tailCanvas, newPosition);
 
-        // 更新游标：尾部向后移动，头部指向刚移动的Canvas
+        // 更新游标：TAIL Canvas变成新的HEAD，TAIL向前移动
         this.headIndex = this.tailIndex;
         this.tailIndex = (this.tailIndex - 1 + this.poolSize) % this.poolSize;
       }
@@ -370,63 +320,6 @@ class VirtualViewport {
   }
 
   /**
-   * 获取循环链表状态（调试用）
-   */
-  getCanvasPoolState() {
-    return {
-      headIndex: this.headIndex,
-      tailIndex: this.tailIndex,
-      canvases: this.canvasInfoList.map((info, index) => ({
-        index,
-        isHead: index === this.headIndex,
-        isTail: index === this.tailIndex,
-        position: info.contentStartY,
-        range: `${info.contentStartY}-${info.contentEndY}`,
-      })),
-    };
-  }
-
-  /**
-   * 更新块信息
-   */
-  updateChunks() {
-    const { chunkHeight } = this.config;
-    const { renderStart, renderEnd, contentHeight } = this.state;
-
-    // 计算需要的块范围
-    const startChunkIndex = Math.floor(renderStart / chunkHeight);
-    const endChunkIndex = Math.ceil(renderEnd / chunkHeight);
-
-    // 清理不需要的块
-    for (const [index, chunk] of this.chunks) {
-      if (index < startChunkIndex || index > endChunkIndex) {
-        this.chunks.delete(index);
-      }
-    }
-
-    // 添加新的块
-    for (let i = startChunkIndex; i <= endChunkIndex; i++) {
-      if (!this.chunks.has(i)) {
-        const startY = i * chunkHeight;
-        const endY = Math.min((i + 1) * chunkHeight, contentHeight);
-
-        this.chunks.set(i, {
-          index: i,
-          startY,
-          endY,
-          height: endY - startY,
-          isVisible: this.isChunkVisible(startY, endY),
-          shouldRender: true,
-        });
-      } else {
-        // 更新现有块的可见性
-        const chunk = this.chunks.get(i);
-        chunk.isVisible = this.isChunkVisible(chunk.startY, chunk.endY);
-      }
-    }
-  }
-
-  /**
    * 检查块是否在可视区域
    * @param {number} startY
    * @param {number} endY
@@ -449,30 +342,6 @@ class VirtualViewport {
       this.scrollContent.style.height = height + 'px';
       this.updateViewport();
     }
-  }
-
-  /**
-   * 获取当前需要渲染的块
-   * @returns {ChunkInfo[]}
-   */
-  getVisibleChunks() {
-    return Array.from(this.chunks.values())
-      .filter((chunk) => chunk.shouldRender)
-      .sort((a, b) => a.index - b.index);
-  }
-
-  /**
-   * 获取块在Canvas中的渲染位置
-   * @param {ChunkInfo} chunk
-   * @returns {Object}
-   */
-  getChunkRenderPosition(chunk) {
-    const { scrollTop } = this.state;
-    return {
-      sourceY: chunk.startY, // 在完整内容中的Y位置
-      targetY: chunk.startY - scrollTop, // 在Canvas中的Y位置
-      height: chunk.height,
-    };
   }
 
   /**
@@ -520,10 +389,7 @@ class VirtualViewport {
    */
   notifyViewportChange() {
     if (this.config.onViewportChange) {
-      this.config.onViewportChange({
-        state: { ...this.state },
-        visibleChunks: this.getVisibleChunks(),
-      });
+      this.config.onViewportChange();
     }
   }
 
@@ -547,7 +413,6 @@ class VirtualViewport {
     this.canvasList = null;
     this.canvasInfoList = [];
     this.scrollContent = null;
-    this.chunks.clear();
   }
 }
 
@@ -587,10 +452,6 @@ class VirtualViewport {
  * @typedef {Object} VirtualRenderConfig
  * @property {HTMLElement} mountPoint - 挂载点元素
  * @property {ThemeConfig} theme - 主题配置
- * @property {number} viewportHeight - 视窗高度
- * @property {number} viewportWidth - 视窗宽度
- * @property {number} chunkHeight - 每个渲染块的高度
- * @property {number} bufferSize - 缓冲区大小
  */
 
 /**
@@ -671,23 +532,7 @@ export class VirtualCanvasRenderer {
   constructor(config) {
     this.mountPoint = config.mountPoint;
 
-    // 视窗尺寸 - 用户可见的滚动区域
-    this.viewportWidth = config.viewportWidth || 400;
-    this.viewportHeight = config.viewportHeight || 250;
-
-    // Canvas尺寸 - 每个Canvas块的大小，通常等于视窗尺寸
-    this.canvasWidth = config.canvasWidth || this.viewportWidth;
-    this.canvasHeight = config.canvasHeight || this.viewportHeight;
-
-    // 块高度 - 每个渲染块的高度，通常等于Canvas高度
-    this.chunkHeight = config.chunkHeight || this.canvasHeight;
-
-    // 创建DOM结构
-    this.createDOMStructure();
-
-    this.ctx = this.canvas.getContext('2d');
-
-    // 主题配置
+    // 主题配置需要先初始化，用于计算行高
     this.theme = {
       backgroundColor: '#fff',
       textColor: '#222',
@@ -698,6 +543,22 @@ export class VirtualCanvasRenderer {
       lineHeight: 1.4,
       ...config.theme,
     };
+
+    // 视窗尺寸 - 基于窗口尺寸自动计算
+    this.viewportWidth = window.innerWidth; // 使用窗口宽度作为视窗宽度
+    this.viewportHeight = window.innerHeight; // 使用窗口高度作为视窗高度
+
+    // Canvas尺寸 - 基于行高自动计算
+    this.canvasWidth = this.viewportWidth;
+    this.canvasHeight = this.calculateOptimalCanvasHeight();
+
+    // 块高度 - 每个渲染块的高度，等于Canvas高度
+    this.chunkHeight = this.canvasHeight;
+
+    // 创建DOM结构
+    this.createDOMStructure();
+
+    this.ctx = this.canvas.getContext('2d');
 
     // 转换引擎实例
     this.transferEngine = new TransferEngine();
@@ -720,7 +581,6 @@ export class VirtualCanvasRenderer {
       viewportHeight: this.viewportHeight,
       viewportWidth: this.viewportWidth,
       chunkHeight: this.chunkHeight,
-      bufferSize: config.bufferSize || 1.5,
       poolSize: config.poolSize || 4,
       onViewportChange: this.handleViewportChange.bind(this),
     });
@@ -729,6 +589,24 @@ export class VirtualCanvasRenderer {
     this.setupHighDPI();
 
     window.addEventListener('resize', this.setupHighDPI.bind(this));
+  }
+
+  /**
+   * 计算最优的Canvas高度
+   * 使其为行高的整数倍，且最接近并小于viewportHeight，确保完整显示文字
+   * @returns {number}
+   */
+  calculateOptimalCanvasHeight() {
+    const lineHeight = this.getLineHeight();
+    const targetHeight = this.viewportHeight;
+    
+    // 计算能容纳的行数（向下取整确保不超过目标高度）
+    const linesCount = Math.floor(targetHeight / lineHeight);
+    
+    // 确保至少有1行
+    const actualLinesCount = Math.max(1, linesCount);
+    
+    return actualLinesCount * lineHeight;
   }
 
   /**
@@ -744,9 +622,6 @@ export class VirtualCanvasRenderer {
       position: relative;
       overflow-y: auto;
       overflow-x: hidden;
-      background: #fff;
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     `;
 
     // 创建滚动内容容器（关键！）
@@ -806,13 +681,37 @@ export class VirtualCanvasRenderer {
   setupHighDPI() {
     const dpr = window.devicePixelRatio || 1;
 
-    // 使用固定的Canvas尺寸
-    this.canvas.width = this.canvasWidth * dpr;
-    this.canvas.height = this.canvasHeight * dpr;
-    this.canvas.style.width = this.canvasWidth + 'px';
-    this.canvas.style.height = this.canvasHeight + 'px';
+    // 重新计算尺寸（窗口大小可能已变化）
+    this.viewportWidth = window.innerWidth;
+    this.viewportHeight = window.innerHeight;
+    this.canvasWidth = this.viewportWidth;
+    this.canvasHeight = this.calculateOptimalCanvasHeight();
+    this.chunkHeight = this.canvasHeight;
 
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // 更新容器尺寸
+    if (this.container) {
+      this.container.style.width = this.viewportWidth + 'px';
+      this.container.style.height = this.viewportHeight + 'px';
+    }
+
+    // 更新所有Canvas的尺寸
+    this.canvasList.forEach((canvas) => {
+      canvas.width = this.canvasWidth * dpr;
+      canvas.height = this.canvasHeight * dpr;
+      canvas.style.width = this.canvasWidth + 'px';
+      canvas.style.height = this.canvasHeight + 'px';
+      
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    });
+
+    // 更新虚拟视窗配置
+    if (this.viewport) {
+      this.viewport.config.viewportWidth = this.viewportWidth;
+      this.viewport.config.viewportHeight = this.viewportHeight;
+      this.viewport.config.chunkHeight = this.chunkHeight;
+      this.viewport.state.viewportHeight = this.viewportHeight;
+    }
   }
 
   /**
@@ -867,15 +766,24 @@ export class VirtualCanvasRenderer {
     const lineHeight = this.getLineHeight();
     const topPadding = this.theme.paddingY;
     const bottomPadding = this.theme.paddingY;
-    const totalHeight = totalLines * lineHeight + topPadding + bottomPadding;
+    const contentHeight = totalLines * lineHeight + topPadding + bottomPadding;
+
+    // 计算需要的总块数
+    const chunkHeight = this.viewport.config.chunkHeight;
+    const totalChunks = Math.ceil(contentHeight / chunkHeight);
+    
+    // scrollContent 的高度基于块数量，而不是内容高度
+    const scrollContentHeight = totalChunks * chunkHeight;
 
     this.fullLayoutData = {
       words,
       elements,
-      totalHeight,
+      contentHeight, // 实际内容高度
+      scrollContentHeight, // 滚动容器高度
+      totalHeight: scrollContentHeight, // 兼容性，使用滚动容器高度
       totalLines: totalLines,
+      totalChunks,
     };
-
     // 分割为块
     this.createRenderChunks();
   }
@@ -886,19 +794,15 @@ export class VirtualCanvasRenderer {
   createRenderChunks() {
     if (!this.fullLayoutData) return;
 
-    const { words, elements } = this.fullLayoutData;
+    const { words, elements, totalChunks, scrollContentHeight } = this.fullLayoutData;
     const chunkHeight = this.viewport.config.chunkHeight;
-    const totalHeight = this.fullLayoutData.totalHeight;
 
     // 清空现有块
     this.renderChunks.clear();
 
-    // 计算总块数
-    const totalChunks = Math.ceil(totalHeight / chunkHeight);
-
     for (let i = 0; i < totalChunks; i++) {
       const startY = i * chunkHeight;
-      const endY = Math.min((i + 1) * chunkHeight, totalHeight);
+      const endY = Math.min((i + 1) * chunkHeight, scrollContentHeight);
 
       // 找到属于这个块的单词和元素
       const chunkWords = words.filter((word) => {
@@ -928,9 +832,8 @@ export class VirtualCanvasRenderer {
 
   /**
    * 处理视窗变化
-   * @param {Object} viewportInfo
    */
-  handleViewportChange(viewportInfo) {
+  handleViewportChange() {
     this.renderVisibleContent();
   }
 
@@ -1135,30 +1038,6 @@ export class VirtualCanvasRenderer {
     // 滚动到该位置，居中显示
     const targetY = wordY - this.viewport.state.viewportHeight / 2;
     this.viewport.scrollTo(Math.max(0, targetY));
-  }
-
-  /**
-   * 获取可见区域的文本
-   * @returns {string}
-   */
-  getVisibleText() {
-    if (!this.fullLayoutData) return '';
-
-    const { visibleStart, visibleEnd } = this.viewport.state;
-    const { words } = this.fullLayoutData;
-
-    return words
-      .filter((word) => {
-        const wordY =
-          word.y -
-          this.getTextBaseline(
-            this.getLineHeight(word.style),
-            word.style.fontSize
-          );
-        return wordY >= visibleStart && wordY <= visibleEnd;
-      })
-      .map((word) => word.text)
-      .join('');
   }
 
   /**

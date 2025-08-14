@@ -8,23 +8,21 @@
     <title>编排引擎演示</title>
     <script></script>
     <style>
+      * {
+        box-sizing: border-box;
+      }
       body {
         font-family: system-ui, sans-serif;
-        padding: 12px;
         background: #f8f8f8;
         -webkit-user-select: none; /* 禁止选中文本 */
         -webkit-touch-callout: none; /* 禁止长按弹出菜单 */
         touch-action: manipulation; /* 禁止双指缩放、双击放大等 */
         user-select: none;
-        height: 80vh;
+        height: 100vh;
+        margin: 0;
       }
       .canvas-wrap {
         position: relative;
-        display: inline-block;
-        background: #fff;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-        padding: 0;
         -webkit-user-select: none;
         user-select: none;
       }
@@ -75,14 +73,13 @@
       }
     </style>
   </head>
-  <body
-    style="
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    ">
-    <button style="width: 50px;" onclick="window.location.reload()">reload</button>
-    <div class="canvas-wrap" style="width: 320px; position: relative">
+  <body>
+    <button
+      style="width: 50px; position: fixed; top: 10px; right: 10px"
+      onclick="window.location.reload()">
+      reload
+    </button>
+    <div class="canvas-wrap">
       <div id="renderCanvas"></div>
       <div class="highlight-layer" id="highlightLayer"></div>
       <div class="anchor" id="startAnchor">
@@ -98,6 +95,7 @@
         </div>
       </div>
     </div>
+
     <script src="../x-canvas/text.js"></script>
     <script type="module" src="../x-canvas/renderer.js"></script>
   </body>
