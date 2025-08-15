@@ -1,6 +1,33 @@
 /**
  * 虚拟Canvas渲染器
  * 整合Canvas渲染和虚拟滚动功能，实现大内容的高性能渲染
+ *
+ * 支持两种渲染模式：
+ * - vertical: 垂直滚动模式（默认）
+ * - horizontal: 横向页面滑动模式
+ *
+ * 使用示例：
+ *
+ * // 垂直滚动模式（默认）
+ * const renderer = new VirtualCanvasRenderer({
+ *   mountPoint: document.getElementById('container'),
+ *   mode: 'vertical',
+ *   theme: { baseFontSize: 18 }
+ * });
+ *
+ * // 横向滑动模式
+ * const horizontalRenderer = new VirtualCanvasRenderer({
+ *   mountPoint: document.getElementById('container'),
+ *   mode: 'horizontal',
+ *   theme: { baseFontSize: 18 }
+ * });
+ *
+ * // 渲染内容
+ * renderer.render('<p>Hello World</p>');
+ *
+ * // 获取和设置模式
+ * console.log(renderer.getMode()); // 'vertical' 或 'horizontal'
+ * renderer.setMode('horizontal'); // 切换到横向模式
  */
 
 import TransferEngine from './layout-engine.js';
@@ -10,6 +37,7 @@ import TransferEngine from './layout-engine.js';
  * @property {HTMLElement} mountPoint - 挂载点元素
  * @property {number} [poolSize=4] - Canvas池大小
  * @property {Object} [theme] - 主题配置
+ * @property {string} [mode='vertical'] - 渲染模式：'vertical' | 'horizontal'
  */
 
 /**
@@ -45,9 +73,6 @@ import TransferEngine from './layout-engine.js';
  * 负责管理多Canvas的虚拟滚动，模拟Google Docs的实现方式
  */
 class VirtualViewport {
-  /** @type {HTMLElement} 挂载点 */
-  mountPoint;
-
   /** @type {HTMLElement} 滚动容器 */
   container;
 
@@ -493,6 +518,9 @@ export class VirtualCanvasRenderer {
   /** @type {number} Canvas高度 */
   canvasHeight;
 
+  /** @type {string} 渲染模式：'vertical' | 'horizontal' */
+  mode;
+
   // 引擎和数据
   /** @type {TransferEngine} HTML转换引擎实例 */
   transferEngine;
@@ -509,7 +537,7 @@ export class VirtualCanvasRenderer {
   /** @type {string|undefined} 当前HTML内容 */
   currentHTML;
 
-  // 虚拟滚动相关
+  // 虚拟滚动相关（垂直模式）
   /** @type {VirtualViewport} 虚拟视窗管理器 */
   viewport;
 
@@ -534,6 +562,9 @@ export class VirtualCanvasRenderer {
    */
   constructor(config) {
     this.mountPoint = config.mountPoint;
+
+    // 渲染模式配置 - 支持 'vertical' 和 'horizontal'
+    this.mode = config.mode || 'vertical';
 
     // 主题配置需要先初始化，用于计算行高
     this.theme = {
@@ -574,18 +605,8 @@ export class VirtualCanvasRenderer {
     this.measureCanvas = document.createElement('canvas');
     this.measureCtx = this.measureCanvas.getContext('2d');
 
-    // 初始化虚拟视窗
-    this.viewport = new VirtualViewport({
-      mountPoint: null, // 不需要挂载点，DOM已经创建
-      container: this.container,
-      canvasList: this.canvasList,
-      scrollContent: this.scrollContent,
-      viewportHeight: this.viewportHeight,
-      viewportWidth: this.viewportWidth,
-      chunkHeight: this.chunkHeight,
-      poolSize: config.poolSize || 4,
-      onViewportChange: this.handleViewportChange.bind(this),
-    });
+    // 初始化垂直模式
+    this.initVerticalMode(config);
 
     // 设置高DPI
     this.setupHighDPI();
@@ -689,7 +710,7 @@ export class VirtualCanvasRenderer {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     });
 
-    // 更新虚拟视窗配置
+    // 更新管理器配置
     if (this.viewport) {
       this.viewport.config.viewportWidth = this.viewportWidth;
       this.viewport.config.viewportHeight = this.viewportHeight;
@@ -714,7 +735,7 @@ export class VirtualCanvasRenderer {
     // 2. 应用页面样式
     this.applyPageStyle();
 
-    // 虚拟滚动模式：执行完整布局计算（不渲染）
+    // 垂直模式：执行完整布局计算（不渲染）
     this.calculateFullLayout();
 
     // 设置虚拟内容高度
@@ -1366,32 +1387,23 @@ export class VirtualCanvasRenderer {
       const segmentWidth = this.measureCtx.measureText(segment.content).width;
 
       // 检查是否需要换行
-      const canvasWidth = this.canvasWidth;
+      const maxWidth = this.canvasWidth - this.theme.paddingX;
 
       let needNewLine = false;
 
       if (segment.type === 'word') {
         // 英文单词：整个单词必须在同一行
-        if (
-          x + segmentWidth > canvasWidth - this.theme.paddingX &&
-          x > this.theme.paddingX
-        ) {
+        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
           needNewLine = true;
         }
       } else if (segment.type === 'cjk' || segment.type === 'punctuation') {
         // 中文字符和标点：可以在任意位置换行
-        if (
-          x + segmentWidth > canvasWidth - this.theme.paddingX &&
-          x > this.theme.paddingX
-        ) {
+        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
           needNewLine = true;
         }
       } else if (segment.type === 'space') {
         // 空格：如果导致换行则不渲染
-        if (
-          x + segmentWidth > canvasWidth - this.theme.paddingX &&
-          x > this.theme.paddingX
-        ) {
+        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
           line++;
           x = this.theme.paddingX;
           y += lineHeight; // 整行高度
@@ -1730,9 +1742,10 @@ export class VirtualCanvasRenderer {
       this.container.parentNode.removeChild(this.container);
     }
 
-    // 销毁虚拟视窗
+    // 销毁管理器
     if (this.viewport) {
       this.viewport.destroy();
+      this.viewport = null;
     }
 
     // 清理引用
@@ -1743,6 +1756,8 @@ export class VirtualCanvasRenderer {
     this.canvas = null;
     this.measureCanvas = null;
     this.measureCtx = null;
+
+    // 清理数据
     this.renderChunks.clear();
     this.fullLayoutData = null;
 
@@ -1750,6 +1765,55 @@ export class VirtualCanvasRenderer {
     this.imageCache.clear();
 
     window.removeEventListener('resize', this.setupHighDPI.bind(this));
+  }
+
+  /**
+   * 初始化垂直模式
+   */
+  initVerticalMode(config) {
+    // 初始化虚拟视窗
+    this.viewport = new VirtualViewport({
+      mountPoint: null, // 不需要挂载点，DOM已经创建
+      container: this.container,
+      canvasList: this.canvasList,
+      scrollContent: this.scrollContent,
+      viewportHeight: this.viewportHeight,
+      viewportWidth: this.viewportWidth,
+      chunkHeight: this.chunkHeight,
+      poolSize: config.poolSize || 4,
+      onViewportChange: this.handleViewportChange.bind(this),
+    });
+  }
+
+  /**
+   * 获取容器元素（供外部访问）
+   * @returns {HTMLElement}
+   */
+  getContainer() {
+    return this.container;
+  }
+
+  /**
+   * 设置渲染模式
+   * @param {string} mode - 'vertical' | 'horizontal'
+   */
+  setMode(mode) {
+    // 验证模式参数
+    if (!['vertical', 'horizontal'].includes(mode)) {
+      console.warn(`Invalid mode "${mode}". Mode not changed.`);
+      return;
+    }
+
+    // 如果模式没有变化，直接返回
+    if (this.mode === mode) {
+      return;
+    }
+
+    console.log(`Switching from ${this.mode} mode to ${mode} mode`);
+    this.mode = mode;
+
+    // TODO: 在这里添加模式切换的具体实现
+    // 目前只是更新模式属性，具体的DOM重构和管理器切换将在后续实现
   }
 }
 
