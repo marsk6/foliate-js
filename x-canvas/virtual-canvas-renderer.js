@@ -447,10 +447,8 @@ class VirtualViewport {
 
 /**
  * @typedef {Object} WordPosition
- * @property {number} vx - 垂直模式X坐标
- * @property {number} vy - 垂直模式Y坐标
- * @property {number} hx - 水平模式X坐标
- * @property {number} hy - 水平模式Y坐标
+ * @property {number} x - X坐标
+ * @property {number} y - Y坐标
  * @property {number} width - 单词宽度
  * @property {number} height - 单词高度
  * @property {number} line - 所在行号
@@ -759,39 +757,24 @@ export class VirtualCanvasRenderer {
     const words = [];
     const elements = [];
 
-    // 初始化坐标
-    let vx = this.theme.paddingX; // 垂直模式X坐标
-    let vy = 0; // 垂直模式Y坐标
-    let hx = this.theme.paddingX; // 水平模式X坐标
-    let hy = 0
+    let x = this.theme.paddingX;
+    let y = 0;
     let currentLine = 0;
 
-    // 使用新的双坐标系统布局算法计算所有位置
+    // 使用原有的布局算法计算所有位置
     const result = this.layoutNodes(
       this.parsedNodes,
-      vx,
-      vy,
-      hx,
-      hy,
+      x,
+      y,
       currentLine,
       words,
       elements
     );
 
-    // 根据模式计算总尺寸
-    let contentHeight, contentWidth;
-    
-    if (this.mode === 'vertical') {
-      // 垂直模式：使用垂直坐标系统
-      contentHeight = result.vy;
-      contentWidth = this.canvasWidth;
-    } else {
-      // 水平模式：使用水平坐标系统
-      contentHeight = this.canvasHeight; // 水平模式高度固定为canvas高度
-      contentWidth = result.hx + this.canvasWidth; // 总宽度 = 最后的hx + 一个页面宽度
-    }
+    // 📐 正确的总高度计算方式：使用实际的Y坐标
+    const contentHeight = result.y;
 
-    // 计算需要的总块数（主要用于垂直模式）
+    // 计算需要的总块数
     const chunkHeight = this.viewport.config.chunkHeight;
     const totalChunks = Math.ceil(contentHeight / chunkHeight);
 
@@ -802,13 +785,10 @@ export class VirtualCanvasRenderer {
       words,
       elements,
       contentHeight, // 实际内容高度
-      contentWidth, // 实际内容宽度
       scrollContentHeight, // 滚动容器高度
       totalHeight: scrollContentHeight, // 兼容性，使用滚动容器高度
       totalChunks,
-      mode: this.mode, // 当前模式
     };
-    
     // 分割为块
     this.createRenderChunks();
   }
@@ -1024,10 +1004,9 @@ export class VirtualCanvasRenderer {
    * 渲染Canvas中的文本
    * @param {Array} words
    * @param {CanvasRenderingContext2D} ctx
-   * @param {number} offsetY - Y轴偏移量（垂直模式使用）
-   * @param {number} offsetX - X轴偏移量（水平模式使用）
+   * @param {number} offsetY
    */
-  renderCanvasText(words, ctx, offsetY = 0, offsetX = 0) {
+  renderCanvasText(words, ctx, offsetY) {
     let currentFont = '';
 
     words.forEach((word) => {
@@ -1043,20 +1022,9 @@ export class VirtualCanvasRenderer {
 
       ctx.fillStyle = style.color || this.theme.textColor;
 
-      // 根据模式选择坐标系统
-      let canvasX, canvasY;
-      
-      if (this.mode === 'vertical') {
-        // 垂直模式：使用垂直坐标系统
-        canvasX = word.vx;
-        canvasY = word.vy - offsetY;
-      } else {
-        // 水平模式：使用水平坐标系统
-        canvasX = word.hx - offsetX;
-        canvasY = word.hy;
-      }
-
-      ctx.fillText(word.text, canvasX, canvasY);
+      // 计算在Canvas内的相对位置
+      const canvasY = word.y - offsetY;
+      ctx.fillText(word.text, word.x, canvasY);
     });
   }
 
@@ -1065,34 +1033,19 @@ export class VirtualCanvasRenderer {
    * TODO: 添加一个重新加载的功能
    * @param {Array<ImageElement>} elements - 元素数组
    * @param {CanvasRenderingContext2D} ctx - Canvas上下文
-   * @param {number} offsetY - Y轴偏移量（垂直模式使用）
-   * @param {number} offsetX - X轴偏移量（水平模式使用）
+   * @param {number} offsetY - Y轴偏移量
    */
-  renderCanvasElements(elements, ctx, offsetY = 0, offsetX = 0) {
+  renderCanvasElements(elements, ctx, offsetY) {
     elements.forEach(async (element) => {
       if (element.type === 'image') {
-        // 根据模式选择坐标系统
-        let canvasX, canvasY;
-        
-        if (this.mode === 'vertical') {
-          // 垂直模式：使用垂直坐标系统
-          canvasX = element.vx;
-          canvasY = element.vy - offsetY;
-        } else {
-          // 水平模式：使用水平坐标系统
-          canvasX = element.hx - offsetX;
-          canvasY = element.hy;
-        }
-
+        const canvasY = element.y - offsetY;
         // 显示占位符
         this.drawImagePlaceholder(
           ctx,
           element,
-          canvasX,
           canvasY,
           element.alt || 'Image'
         );
-        
         // 懒加载：检查图片是否已在缓存中
         const cachedImagePromise = this.imageCache.get(element.src);
         let cachedImage = null;
@@ -1113,7 +1066,7 @@ export class VirtualCanvasRenderer {
           try {
             ctx.drawImage(
               cachedImage.imageElement,
-              canvasX,
+              element.x,
               canvasY,
               element.width,
               element.height
@@ -1123,11 +1076,11 @@ export class VirtualCanvasRenderer {
             if (this.theme.showImageBorder) {
               ctx.strokeStyle = this.theme.imageBorderColor || '#ddd';
               ctx.lineWidth = 1;
-              ctx.strokeRect(canvasX, canvasY, element.width, element.height);
+              ctx.strokeRect(element.x, canvasY, element.width, element.height);
             }
           } catch (error) {
             console.warn('Failed to draw image:', element.src, error);
-            this.drawImagePlaceholder(ctx, element, canvasX, canvasY, 'Error');
+            this.drawImagePlaceholder(ctx, element, canvasY, 'Error');
           }
         }
       }
@@ -1138,19 +1091,18 @@ export class VirtualCanvasRenderer {
    * 绘制图片占位符
    * @param {CanvasRenderingContext2D} ctx - Canvas上下文
    * @param {ImageElement} element - 图片元素
-   * @param {number} canvasX - Canvas中的X坐标
    * @param {number} canvasY - Canvas中的Y坐标
    * @param {string} text - 显示的文本
    */
-  drawImagePlaceholder(ctx, element, canvasX, canvasY, text) {
+  drawImagePlaceholder(ctx, element, canvasY, text) {
     // 绘制图片占位符边框
     ctx.strokeStyle = '#ccc';
-    ctx.strokeRect(canvasX, canvasY, element.width, element.height);
+    ctx.strokeRect(element.x, canvasY, element.width, element.height);
 
     // 绘制图片图标或文字
     ctx.fillStyle = '#999';
     ctx.font = '14px system-ui';
-    // ctx.fillText(text, canvasX + 10, canvasY + element.height / 2);
+    // ctx.fillText(text, element.x + 10, canvasY + element.height / 2);
   }
 
   /**
@@ -1174,37 +1126,24 @@ export class VirtualCanvasRenderer {
     const canvasX = clientX - rect.left;
     const canvasY = clientY - rect.top;
 
+    // 转换为内容坐标
+    const contentY = this.viewport.canvasToContentY(canvasY);
+
     const { words } = this.fullLayoutData;
     const lineHeight = this.getLineHeight();
     const baseline = this.getTextBaseline(lineHeight, this.theme.baseFontSize);
 
     for (let i = 0; i < words.length; i++) {
       const word = words[i];
-      
-      // 根据模式选择坐标系统
-      let wordX, wordY, contentY;
-      
-      if (this.mode === 'vertical') {
-        // 垂直模式：使用垂直坐标系统
-        wordX = word.vx;
-        wordY = word.vy;
-        contentY = this.viewport.canvasToContentY(canvasY);
-      } else {
-        // 水平模式：使用水平坐标系统
-        wordX = word.hx;
-        wordY = word.hy;
-        contentY = canvasY; // 水平模式不需要转换Y坐标
-      }
-      
-      // 计算行的顶部和底部
-      const lineTop = wordY - baseline;
+      // word.y 现在是基线位置，需要计算行的顶部和底部
+      const lineTop = word.y - baseline;
       const lineBottom = lineTop + lineHeight;
 
       if (
         contentY >= lineTop &&
         contentY <= lineBottom &&
-        canvasX >= wordX &&
-        canvasX <= wordX + word.width
+        canvasX >= word.x &&
+        canvasX <= word.x + word.width
       ) {
         return i;
       }
@@ -1224,20 +1163,14 @@ export class VirtualCanvasRenderer {
 
     const word = this.fullLayoutData.words[charIndex];
 
-    if (this.mode === 'vertical') {
-      // 垂直模式：滚动到指定Y位置
-      const wordY =
-        word.vy -
-        this.getTextBaseline(this.getLineHeight(word.style), word.style.fontSize);
+    // 计算字符所在的Y位置
+    const wordY =
+      word.y -
+      this.getTextBaseline(this.getLineHeight(word.style), word.style.fontSize);
 
-      // 滚动到该位置，居中显示
-      const targetY = wordY - this.viewport.state.viewportHeight / 2;
-      this.viewport.scrollTo(Math.max(0, targetY));
-    } else {
-      // 水平模式：滚动到指定位置
-      // TODO: 实现水平模式的滚动逻辑
-      console.log(`Horizontal mode: scroll to word at (${word.hx}, ${word.hy})`);
-    }
+    // 滚动到该位置，居中显示
+    const targetY = wordY - this.viewport.state.viewportHeight / 2;
+    this.viewport.scrollTo(Math.max(0, targetY));
   }
 
   /**
@@ -1311,85 +1244,59 @@ export class VirtualCanvasRenderer {
   /**
    * 布局节点
    * @param {Array} nodes
-   * @param {number} startVX - 垂直模式起始X坐标
-   * @param {number} startVY - 垂直模式起始Y坐标
-   * @param {number} startHX - 水平模式起始X坐标
-   * @param {number} startHY - 水平模式起始Y坐标
+   * @param {number} startX
+   * @param {number} startY
    * @param {number} startLine
    * @param {Array} words
    * @param {Array} elements
    * @returns {Object}
    */
-  layoutNodes(nodes, startVX, startVY, startHX, startHY, startLine, words, elements) {
-    let vx = startVX;
-    let vy = startVY;
-    let hx = startHX;
-    let hy = startHY;
+  layoutNodes(nodes, startX, startY, startLine, words, elements) {
+    let x = startX;
+    let y = startY;
     let line = startLine;
 
     for (const node of nodes) {
-      const result = this.layoutNode(node, vx, vy, hx, hy, line, words, elements);
-      vx = result.vx;
-      vy = result.vy;
-      hx = result.hx;
-      hy = result.hy;
+      const result = this.layoutNode(node, x, y, line, words, elements);
+      x = result.x;
+      y = result.y;
       line = result.line;
     }
 
-    return { vx, vy, hx, hy, line };
+    return { x, y, line };
   }
 
   /**
    * 布局单个节点
    * @param {Object} node
-   * @param {number} startVX - 垂直模式起始X坐标
-   * @param {number} startVY - 垂直模式起始Y坐标
-   * @param {number} startHX - 水平模式起始X坐标
-   * @param {number} startHY - 水平模式起始Y坐标
+   * @param {number} startX
+   * @param {number} startY
    * @param {number} startLine
    * @param {Array} words
    * @param {Array} elements
    * @returns {Object}
    */
-  layoutNode(node, startVX, startVY, startHX, startHY, startLine, words, elements) {
+  layoutNode(node, startX, startY, startLine, words, elements) {
     if (node.tag === 'text') {
-      return this.layoutText(node.text, {}, startVX, startVY, startHX, startHY, startLine, words);
+      return this.layoutText(node.text, {}, startX, startY, startLine, words);
     }
 
-    let vx = startVX;
-    let vy = startVY;
-    let hx = startHX;
-    let hy = startHY;
+    let x = startX;
+    let y = startY;
     let line = startLine;
 
     // 处理块级元素的上边距
     if (this.transferEngine.isBlockElement(node.tag)) {
       const marginTop = this.parseSize(node.style.marginTop);
       if (marginTop > 0) {
-        vy += marginTop;
-        hy += marginTop;
+        y += marginTop;
       }
 
       // 块级元素从新行开始
-      if (vx > this.theme.paddingX || hx > this.theme.paddingX) {
+      if (x > this.theme.paddingX) {
         line++;
-        vx = this.theme.paddingX;
-        const lineHeight = this.getLineHeight(node.style);
-        vy += lineHeight;
-        hy += lineHeight;
-        
-        // 水平模式：检查是否需要换页
-        if (this.mode === 'horizontal') {
-          const maxHeight = this.canvasHeight - this.theme.paddingX;
-          if (hy + lineHeight > maxHeight) {
-            hx += this.canvasWidth; // 移动到下一页
-            hy = this.theme.paddingX; // 重置到页面顶部
-          } else {
-            hx = this.theme.paddingX; // 正常换行
-          }
-        } else {
-          hx = this.theme.paddingX;
-        }
+        x = this.theme.paddingX;
+        y += this.getLineHeight(node.style); // 使用完整行高
       }
     }
 
@@ -1401,10 +1308,8 @@ export class VirtualCanvasRenderer {
 
       const imageElement = {
         type: 'image',
-        vx: vx,
-        vy: vy,
-        hx: hx,
-        hy: hy,
+        x: x,
+        y: y,
         width: imageWidth,
         height: imageHeight,
         src: node.src,
@@ -1415,38 +1320,20 @@ export class VirtualCanvasRenderer {
 
       // 图片后换行，使用实际的图片高度
       line++;
-      vx = this.theme.paddingX;
-      vy += imageHeight + 20; // 图片高度 + 间距
-      hy += imageHeight + 20;
-      
-      // 水平模式：检查是否需要换页
-      if (this.mode === 'horizontal') {
-        const maxHeight = this.canvasHeight - this.theme.paddingX;
-        if (hy + imageHeight + 20 > maxHeight) {
-          hx += this.canvasWidth; // 移动到下一页
-          hy = this.theme.paddingX; // 重置到页面顶部
-        } else {
-          hx = this.theme.paddingX; // 正常换行
-        }
-      } else {
-        hx = this.theme.paddingX;
-      }
+      x = this.theme.paddingX;
+      y += imageHeight + 20; // 图片高度 + 间距
     } else if (node.children && node.children.length > 0) {
       // 递归处理子节点
       const result = this.layoutNodes(
         node.children,
-        vx,
-        vy,
-        hx,
-        hy,
+        x,
+        y,
         line,
         words,
         elements
       );
-      vx = result.vx;
-      vy = result.vy;
-      hx = result.hx;
-      hy = result.hy;
+      x = result.x;
+      y = result.y;
       line = result.line;
     }
 
@@ -1454,47 +1341,29 @@ export class VirtualCanvasRenderer {
     if (this.transferEngine.isBlockElement(node.tag)) {
       const marginBottom = this.parseSize(node.style.marginBottom);
       if (marginBottom > 0) {
-        vy += marginBottom;
-        hy += marginBottom;
+        y += marginBottom;
       }
 
       // 块级元素后换行
       line++;
-      vx = this.theme.paddingX;
-      const lineHeight = this.getLineHeight(node.style);
-      vy += lineHeight;
-      hy += lineHeight;
-      
-      // 水平模式：检查是否需要换页
-      if (this.mode === 'horizontal') {
-        const maxHeight = this.canvasHeight - this.theme.paddingX;
-        if (hy + lineHeight > maxHeight) {
-          hx += this.canvasWidth; // 移动到下一页
-          hy = this.theme.paddingX; // 重置到页面顶部
-        } else {
-          hx = this.theme.paddingX; // 正常换行
-        }
-      } else {
-        hx = this.theme.paddingX;
-      }
+      x = this.theme.paddingX;
+      y += this.getLineHeight(node.style); // 使用完整行高
     }
 
-    return { vx, vy, hx, hy, line };
+    return { x, y, line };
   }
 
   /**
    * 布局文本
    * @param {string} text
    * @param {Object} style
-   * @param {number} startVX - 垂直模式起始X坐标
-   * @param {number} startVY - 垂直模式起始Y坐标
-   * @param {number} startHX - 水平模式起始X坐标
-   * @param {number} startHY - 水平模式起始Y坐标
+   * @param {number} startX
+   * @param {number} startY
    * @param {number} startLine
    * @param {Array} words
    * @returns {Object}
    */
-  layoutText(text, style, startVX, startVY, startHX, startHY, startLine, words) {
+  layoutText(text, style, startX, startY, startLine, words) {
     const fontSize = this.parseSize(style.fontSize) || this.theme.baseFontSize;
     const fontWeight = style.fontWeight || 'normal';
     const fontStyle = style.fontStyle || 'normal';
@@ -1503,20 +1372,13 @@ export class VirtualCanvasRenderer {
     // 更新测量上下文的字体
     this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.theme.fontFamily}`;
 
-    // 垂直模式坐标
-    let vx = startVX;
-    let vy = startVY;
-    
-    // 水平模式坐标
-    let hx = startHX;
-    let hy = startHY;
-    
+    let x = startX;
+    let y = startY;
     let line = startLine;
 
     // 计算当前行的基线位置
     const baseline = this.getTextBaseline(lineHeight, fontSize);
-    let currentVLineY = vy + baseline;
-    let currentHLineY = hy + baseline;
+    let currentLineY = y + baseline;
 
     // 将文本按照单词和中文字符分割
     const segments = this.segmentText(text);
@@ -1524,94 +1386,43 @@ export class VirtualCanvasRenderer {
     for (const segment of segments) {
       const segmentWidth = this.measureCtx.measureText(segment.content).width;
 
-      // 根据模式检查是否需要换行
+      // 检查是否需要换行
+      const maxWidth = this.canvasWidth - this.theme.paddingX;
+
       let needNewLine = false;
 
-      if (this.mode === 'vertical') {
-        // 垂直模式：检查宽度限制
-        const maxWidth = this.canvasWidth - this.theme.paddingX;
-        
-        if (segment.type === 'word') {
-          // 英文单词：整个单词必须在同一行
-          if (vx + segmentWidth > maxWidth && vx > this.theme.paddingX) {
-            needNewLine = true;
-          }
-        } else if (segment.type === 'cjk' || segment.type === 'punctuation') {
-          // 中文字符和标点：可以在任意位置换行
-          if (vx + segmentWidth > maxWidth && vx > this.theme.paddingX) {
-            needNewLine = true;
-          }
-        } else if (segment.type === 'space') {
-          // 空格：如果导致换行则不渲染
-          if (vx + segmentWidth > maxWidth && vx > this.theme.paddingX) {
-            line++;
-            vx = this.theme.paddingX;
-            vy += lineHeight;
-            currentVLineY = vy + baseline;
-            continue; // 跳过这个空格
-          }
+      if (segment.type === 'word') {
+        // 英文单词：整个单词必须在同一行
+        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
+          needNewLine = true;
         }
-
-        if (needNewLine) {
+      } else if (segment.type === 'cjk' || segment.type === 'punctuation') {
+        // 中文字符和标点：可以在任意位置换行
+        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
+          needNewLine = true;
+        }
+      } else if (segment.type === 'space') {
+        // 空格：如果导致换行则不渲染
+        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
           line++;
-          vx = this.theme.paddingX;
-          vy += lineHeight;
-          currentVLineY = vy + baseline;
+          x = this.theme.paddingX;
+          y += lineHeight; // 整行高度
+          currentLineY = y + baseline; // 重新计算基线位置
+          continue; // 跳过这个空格
         }
-      } else if (this.mode === 'horizontal') {
-        // 水平模式：检查宽度和高度限制
-        const maxWidth = this.canvasWidth - this.theme.paddingX;
-        const maxHeight = this.canvasHeight - this.theme.paddingX;
+      }
 
-        // 检查宽度换行
-        if (segment.type === 'word') {
-          if (hx + segmentWidth > maxWidth && hx > this.theme.paddingX) {
-            needNewLine = true;
-          }
-        } else if (segment.type === 'cjk' || segment.type === 'punctuation') {
-          if (hx + segmentWidth > maxWidth && hx > this.theme.paddingX) {
-            needNewLine = true;
-          }
-        } else if (segment.type === 'space') {
-          if (hx + segmentWidth > maxWidth && hx > this.theme.paddingX) {
-            line++;
-            hy += lineHeight;
-            currentHLineY = hy + baseline;
-            
-            // 检查是否需要换页（超出高度限制）
-            if (hy + lineHeight > maxHeight) {
-              hx += this.canvasWidth; // 移动到下一页
-              hy = this.theme.paddingX; // 重置到页面顶部
-              currentHLineY = hy + baseline;
-            } else {
-              hx = this.theme.paddingX; // 正常换行
-            }
-            continue;
-          }
-        }
-
-        if (needNewLine) {
-          line++;
-          hy += lineHeight;
-          currentHLineY = hy + baseline;
-          
-          // 检查是否需要换页（超出高度限制）
-          if (hy + lineHeight > maxHeight) {
-            hx += this.canvasWidth; // 移动到下一页
-            hy = this.theme.paddingX; // 重置到页面顶部
-            currentHLineY = hy + baseline;
-          } else {
-            hx = this.theme.paddingX; // 正常换行
-          }
-        }
+      if (needNewLine) {
+        line++;
+        x = this.theme.paddingX;
+        y += lineHeight; // 整行高度
+        currentLineY = y + baseline; // 重新计算基线位置
       }
 
       // 添加到words数组
       words.push({
-        vx,
-        vy: currentVLineY, // 垂直模式：使用基线位置作为y坐标
-        hx,
-        hy: currentHLineY, // 水平模式：使用基线位置作为y坐标
+        x,
+        y: currentLineY, // 使用基线位置作为y坐标
         width: segmentWidth,
         height: fontSize,
         line,
@@ -1627,12 +1438,10 @@ export class VirtualCanvasRenderer {
         endIndex: segment.endIndex,
       });
 
-      // 更新坐标
-      vx += segmentWidth;
-      hx += segmentWidth;
+      x += segmentWidth;
     }
 
-    return { vx, vy, hx, hy, line };
+    return { x, y, line };
   }
 
   /**
