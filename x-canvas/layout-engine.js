@@ -11,12 +11,40 @@
  */
 
 /**
+ * @typedef {Object} ImageNode
+ * @property {string} tag - 'img'
+ * @property {Object} style - 样式对象
+ * @property {string} src - 图片源地址
+ * @property {string} alt - 图片描述文字
+ * @property {number} [width] - 图片宽度（可选，从样式或属性中解析）
+ * @property {number} [height] - 图片高度（可选，从样式或属性中解析）
+ * @property {Array} children - 子节点（图片通常为空数组）
+ */
+
+/**
  * @typedef {Object} ElementNode
  * @property {string} tag - 标签名
  * @property {Object} style - 样式对象
  * @property {string} [src] - 图片源（仅img标签）
  * @property {string} [alt] - 图片描述（仅img标签）
- * @property {(ElementNode|TextNode)[]} children - 子节点
+ * @property {number} [width] - 元素宽度（可选）
+ * @property {number} [height] - 元素高度（可选）
+ * @property {(ElementNode|TextNode|ImageNode)[]} children - 子节点
+ */
+
+/**
+ * @typedef {Object} ImageElement
+ * @property {string} type - 'image'
+ * @property {number} x - X坐标
+ * @property {number} y - Y坐标
+ * @property {number} width - 图片宽度
+ * @property {number} height - 图片高度
+ * @property {string} src - 图片源地址
+ * @property {string} alt - 图片描述文字
+ * @property {HTMLImageElement} [imageElement] - 加载的图片DOM元素
+ * @property {boolean} [loaded] - 图片是否已加载完成
+ * @property {boolean} [loading] - 图片是否正在加载
+ * @property {string} [error] - 加载错误信息
  */
 
 /**
@@ -238,6 +266,25 @@ export class TransferEngine {
       if (tagName === 'img') {
         nodeData.src = element.getAttribute('src') || '';
         nodeData.alt = element.getAttribute('alt') || '';
+
+        // 解析图片尺寸
+        const widthAttr = element.getAttribute('width');
+        const heightAttr = element.getAttribute('height');
+
+        if (widthAttr) {
+          nodeData.width = parseFloat(widthAttr) || null;
+        }
+        if (heightAttr) {
+          nodeData.height = parseFloat(heightAttr) || null;
+        }
+
+        // 从样式中获取尺寸（优先级更高）
+        if (mergedStyle.width) {
+          nodeData.width = parseFloat(mergedStyle.width) || null;
+        }
+        if (mergedStyle.height) {
+          nodeData.height = parseFloat(mergedStyle.height) || null;
+        }
       }
 
       // 递归处理子节点

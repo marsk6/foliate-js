@@ -519,6 +519,16 @@ export class VirtualCanvasRenderer {
   /** @type {Array} 完整的布局数据 */
   fullLayoutData = null;
 
+  // 图片管理相关
+  /** @type {Map<string, ImageElement>} 图片缓存 */
+  imageCache = new Map();
+
+  /** @type {number} 默认图片宽度 */
+  defaultImageWidth = 200;
+
+  /** @type {number} 默认图片高度 */
+  defaultImageHeight = 150;
+
   /**
    * @param {VirtualRenderConfig} config
    */
@@ -999,30 +1009,79 @@ export class VirtualCanvasRenderer {
 
   /**
    * 渲染Canvas中的元素
-   * TODO: 如何渲染 image
-   * @param {Array} elements
-   * @param {CanvasRenderingContext2D} ctx
-   * @param {number} offsetY
+   * TODO: 添加一个重新加载的功能
+   * @param {Array<ImageElement>} elements - 元素数组
+   * @param {CanvasRenderingContext2D} ctx - Canvas上下文
+   * @param {number} offsetY - Y轴偏移量
    */
   renderCanvasElements(elements, ctx, offsetY) {
-    elements.forEach((element) => {
+    elements.forEach(async (element) => {
       if (element.type === 'image') {
         const canvasY = element.y - offsetY;
-
-        // 绘制图片占位符
-        ctx.strokeStyle = '#ccc';
-        ctx.strokeRect(element.x, canvasY, element.width, element.height);
-
-        // 绘制图片图标或文字
-        ctx.fillStyle = '#999';
-        ctx.font = '14px system-ui';
-        ctx.fillText(
-          element.alt || 'Image',
-          element.x + 10,
-          canvasY + element.height / 2
+        // 显示占位符
+        this.drawImagePlaceholder(
+          ctx,
+          element,
+          canvasY,
+          element.alt || 'Image'
         );
+        // 懒加载：检查图片是否已在缓存中
+        const cachedImagePromise = this.imageCache.get(element.src);
+        let cachedImage = null;
+        if (cachedImagePromise) {
+          cachedImage = await cachedImagePromise;
+        } else {
+          // 图片还未加载，现在开始懒加载
+          if (element.src) {
+            cachedImage = await this.loadImage(
+              element.src,
+              element.width,
+              element.height
+            );
+          }
+        }
+
+        if (cachedImage && cachedImage.imageElement) {
+          try {
+            ctx.drawImage(
+              cachedImage.imageElement,
+              element.x,
+              canvasY,
+              element.width,
+              element.height
+            );
+
+            // 可选：添加图片边框
+            if (this.theme.showImageBorder) {
+              ctx.strokeStyle = this.theme.imageBorderColor || '#ddd';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(element.x, canvasY, element.width, element.height);
+            }
+          } catch (error) {
+            console.warn('Failed to draw image:', element.src, error);
+            this.drawImagePlaceholder(ctx, element, canvasY, 'Error');
+          }
+        }
       }
     });
+  }
+
+  /**
+   * 绘制图片占位符
+   * @param {CanvasRenderingContext2D} ctx - Canvas上下文
+   * @param {ImageElement} element - 图片元素
+   * @param {number} canvasY - Canvas中的Y坐标
+   * @param {string} text - 显示的文本
+   */
+  drawImagePlaceholder(ctx, element, canvasY, text) {
+    // 绘制图片占位符边框
+    ctx.strokeStyle = '#ccc';
+    ctx.strokeRect(element.x, canvasY, element.width, element.height);
+
+    // 绘制图片图标或文字
+    ctx.fillStyle = '#999';
+    ctx.font = '14px system-ui';
+    // ctx.fillText(text, element.x + 10, canvasY + element.height / 2);
   }
 
   /**
@@ -1222,20 +1281,26 @@ export class VirtualCanvasRenderer {
 
     // 处理特殊元素
     if (node.tag === 'img') {
-      elements.push({
+      // 使用节点中的尺寸信息，如果没有则使用默认值
+      const imageWidth = node.width || this.defaultImageWidth;
+      const imageHeight = node.height || this.defaultImageHeight;
+
+      const imageElement = {
         type: 'image',
         x: x,
         y: y,
-        width: 100, // 默认宽度
-        height: 100, // 默认高度
+        width: imageWidth,
+        height: imageHeight,
         src: node.src,
-        alt: node.alt,
-      });
+        alt: node.alt || '',
+      };
 
-      // 图片后换行
+      elements.push(imageElement);
+
+      // 图片后换行，使用实际的图片高度
       line++;
       x = this.theme.paddingX;
-      y += 120; // 图片高度 + 间距
+      y += imageHeight + 20; // 图片高度 + 间距
     } else if (node.children && node.children.length > 0) {
       // 递归处理子节点
       const result = this.layoutNodes(
@@ -1592,6 +1657,69 @@ export class VirtualCanvasRenderer {
   }
 
   /**
+   * 懒加载图片
+   * @param {string} src - 图片源地址
+   * @param {number} [width] - 期望宽度
+   * @param {number} [height] - 期望高度
+   * @returns {Promise<ImageElement>}
+   */
+  async loadImage(src, width = null, height = null) {
+    // 检查缓存
+    if (this.imageCache.has(src)) {
+      return this.imageCache.get(src);
+    }
+
+    // 开始加载
+    const promise = new Promise((resolve) => {
+      const img = new Image();
+
+      // 创建图片元素对象
+      const imageElement = {
+        type: 'image',
+        x: 0,
+        y: 0,
+        width: width || this.defaultImageWidth,
+        height: height || this.defaultImageHeight,
+        src: src,
+        alt: '',
+        imageElement: img,
+        error: null,
+      };
+
+      img.onload = () => {
+        // 如果没有指定尺寸，使用图片的自然尺寸
+        if (!width && !height) {
+          imageElement.width = img.naturalWidth;
+          imageElement.height = img.naturalHeight;
+        } else if (!width) {
+          // 只指定了高度，按比例计算宽度
+          imageElement.width = (img.naturalWidth / img.naturalHeight) * height;
+        } else if (!height) {
+          // 只指定了宽度，按比例计算高度
+          imageElement.height = (img.naturalHeight / img.naturalWidth) * width;
+        }
+
+        this.imageCache.set(src, imageElement);
+
+        resolve(imageElement);
+      };
+
+      img.onerror = (error) => {
+        imageElement.error = error.message || 'Failed to load image';
+        this.imageCache.set(src, imageElement);
+        imageElement.imageElement = null;
+        resolve(imageElement);
+      };
+
+      // 设置跨域属性（如果需要）
+      img.crossOrigin = 'anonymous';
+      img.src = src;
+    });
+    this.imageCache.set(src, promise);
+    return promise;
+  }
+
+  /**
    * 销毁渲染器
    */
   destroy() {
@@ -1617,6 +1745,9 @@ export class VirtualCanvasRenderer {
     this.measureCtx = null;
     this.renderChunks.clear();
     this.fullLayoutData = null;
+
+    // 清理图片缓存
+    this.imageCache.clear();
 
     window.removeEventListener('resize', this.setupHighDPI.bind(this));
   }

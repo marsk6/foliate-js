@@ -40,6 +40,9 @@ let currentHTML = `
       for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
       Bend
     </p>
+    <div>
+      <img src="http://127.0.0.1:5500/web/server/static/1/image002.jpg" style="width: 297px; height: 400px;"/>
+    </div>
     <p class="calibre1">
       CCCCCfor Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
       for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,for Anne, who loved them too,
