@@ -1,44 +1,16 @@
 /**
  * 虚拟Canvas渲染器
  * 整合Canvas渲染和虚拟滚动功能，实现大内容的高性能渲染
- *
- * 支持两种渲染模式：
- * - vertical: 垂直滚动模式（默认）
- * - horizontal: 横向页面滑动模式
- *
- * 使用示例：
- *
- * // 垂直滚动模式（默认）
- * const renderer = new VirtualCanvasRenderer({
- *   mountPoint: document.getElementById('container'),
- *   mode: 'vertical',
- *   theme: { baseFontSize: 18 }
- * });
- *
- * // 横向滑动模式
- * const horizontalRenderer = new VirtualCanvasRenderer({
- *   mountPoint: document.getElementById('container'),
- *   mode: 'horizontal',
- *   theme: { baseFontSize: 18 }
- * });
- *
- * // 渲染内容
- * renderer.render('<p>Hello World</p>');
- *
- * // 获取和设置模式
- * console.log(renderer.getMode()); // 'vertical' 或 'horizontal'
- * renderer.setMode('horizontal'); // 切换到横向模式
  */
 
 import TransferEngine from './layout-engine.js';
+console.log('🚨🚨🚨👉👉📢', 'virtual-canvas-renderer-01.js');
 
 /**
  * @typedef {Object} VirtualRenderConfig
  * @property {HTMLElement} mountPoint - 挂载点元素
  * @property {number} [poolSize=4] - Canvas池大小
  * @property {Object} [theme] - 主题配置
- * @property {string} [mode='vertical'] - 渲染模式：'vertical' | 'horizontal'
- * @property {boolean} [adjustCrossChunkContent=true] - 是否自动调整跨块内容位置
  */
 
 /**
@@ -74,6 +46,9 @@ import TransferEngine from './layout-engine.js';
  * 负责管理多Canvas的虚拟滚动，模拟Google Docs的实现方式
  */
 class VirtualViewport {
+  /** @type {HTMLElement} 挂载点 */
+  mountPoint;
+
   /** @type {HTMLElement} 滚动容器 */
   container;
 
@@ -519,9 +494,6 @@ export class VirtualCanvasRenderer {
   /** @type {number} Canvas高度 */
   canvasHeight;
 
-  /** @type {string} 渲染模式：'vertical' | 'horizontal' */
-  mode;
-
   // 引擎和数据
   /** @type {TransferEngine} HTML转换引擎实例 */
   transferEngine;
@@ -538,7 +510,7 @@ export class VirtualCanvasRenderer {
   /** @type {string|undefined} 当前HTML内容 */
   currentHTML;
 
-  // 虚拟滚动相关（垂直模式）
+  // 虚拟滚动相关
   /** @type {VirtualViewport} 虚拟视窗管理器 */
   viewport;
 
@@ -563,12 +535,6 @@ export class VirtualCanvasRenderer {
    */
   constructor(config) {
     this.mountPoint = config.mountPoint;
-
-    // 渲染模式配置 - 支持 'vertical' 和 'horizontal'
-    this.mode = config.mode || 'vertical';
-
-    // 布局计算模式 - 是否自动调整跨块内容
-    this.adjustCrossChunkContent = config.adjustCrossChunkContent !== false; // 默认启用
 
     // 主题配置需要先初始化，用于计算行高
     this.theme = {
@@ -609,8 +575,18 @@ export class VirtualCanvasRenderer {
     this.measureCanvas = document.createElement('canvas');
     this.measureCtx = this.measureCanvas.getContext('2d');
 
-    // 初始化垂直模式
-    this.initVerticalMode(config);
+    // 初始化虚拟视窗
+    this.viewport = new VirtualViewport({
+      mountPoint: null, // 不需要挂载点，DOM已经创建
+      container: this.container,
+      canvasList: this.canvasList,
+      scrollContent: this.scrollContent,
+      viewportHeight: this.viewportHeight,
+      viewportWidth: this.viewportWidth,
+      chunkHeight: this.chunkHeight,
+      poolSize: config.poolSize || 4,
+      onViewportChange: this.handleViewportChange.bind(this),
+    });
 
     // 设置高DPI
     this.setupHighDPI();
@@ -714,7 +690,7 @@ export class VirtualCanvasRenderer {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     });
 
-    // 更新管理器配置
+    // 更新虚拟视窗配置
     if (this.viewport) {
       this.viewport.config.viewportWidth = this.viewportWidth;
       this.viewport.config.viewportHeight = this.viewportHeight;
@@ -739,7 +715,7 @@ export class VirtualCanvasRenderer {
     // 2. 应用页面样式
     this.applyPageStyle();
 
-    // 垂直模式：执行完整布局计算（不渲染）
+    // 虚拟滚动模式：执行完整布局计算（不渲染）
     this.calculateFullLayout();
 
     // 设置虚拟内容高度
@@ -764,9 +740,6 @@ export class VirtualCanvasRenderer {
     let x = this.theme.paddingX;
     let y = 0;
     let currentLine = 0;
-
-    // 初始化渲染块管理
-    this.initRenderChunks();
 
     // 使用原有的布局算法计算所有位置
     const result = this.layoutNodes(
@@ -796,198 +769,145 @@ export class VirtualCanvasRenderer {
       totalHeight: scrollContentHeight, // 兼容性，使用滚动容器高度
       totalChunks,
     };
-
-    // 完成渲染块创建
-    this.finalizeRenderChunks();
+    // 分割为块
+    this.createRenderChunks();
   }
 
   /**
-   * 初始化渲染块管理
+   * 创建渲染块（优化版本：避免重复遍历）
    */
-  initRenderChunks() {
+  createRenderChunks() {
+    if (!this.fullLayoutData) return;
+
+    const { words, elements, totalChunks, scrollContentHeight } =
+      this.fullLayoutData;
+    const chunkHeight = this.viewport.config.chunkHeight;
+
     // 清空现有块
     this.renderChunks.clear();
 
-    // 初始化当前块索引
-    this.currentChunkIndex = 0;
-    this.currentChunk = null;
+    let wordStartIndex = 0; // 跟踪下一个要检查的单词索引
+    let elementStartIndex = 0; // 跟踪下一个要检查的元素索引
 
-    // 创建第一个块
-    this.createNewChunk(0);
+    for (let i = 0; i < totalChunks; i++) {
+      const startY = i * chunkHeight;
+      const endY = Math.min((i + 1) * chunkHeight, scrollContentHeight);
+
+      // 优化：使用范围搜索而不是全量过滤
+      const { chunkWords, nextWordIndex } = this.findWordsInRange(
+        words,
+        wordStartIndex,
+        startY,
+        endY
+      );
+
+      const { chunkElements, nextElementIndex } = this.findElementsInRange(
+        elements,
+        elementStartIndex,
+        startY,
+        endY
+      );
+      // 更新起始索引，避免重复检查已分配的内容
+      wordStartIndex = nextWordIndex;
+      elementStartIndex = nextElementIndex;
+
+      this.renderChunks.set(i, {
+        index: i,
+        startY,
+        endY,
+        words: chunkWords,
+        elements: chunkElements,
+        rendered: false,
+      });
+    }
   }
 
   /**
-   * 创建新的渲染块
-   * @param {number} chunkIndex - 块索引
+   * 在指定范围内查找单词（优化版本）
+   * @param {Array} words - 所有单词数组
+   * @param {number} startIndex - 开始搜索的索引
+   * @param {number} startY - 范围开始Y坐标
+   * @param {number} endY - 范围结束Y坐标
+   * @returns {Object} 返回找到的单词和下一个搜索索引
    */
-  createNewChunk(chunkIndex) {
-    const chunkHeight = this.viewport.config.chunkHeight;
-    const startY = chunkIndex * chunkHeight;
-    const endY = (chunkIndex + 1) * chunkHeight;
+  findWordsInRange(words, startIndex, startY, endY) {
+    const chunkWords = [];
+    let i = startIndex;
+    let nextWordIndex = startIndex;
+    let currentLine = 0;
+    // 从startIndex开始搜索，避免重复检查
+    while (i < words.length) {
+      const word = words[i];
+      const lineHeight = this.getLineHeight(word.style);
+      const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
+      const wordTop = word.y - baseline;
+      const wordBottom = wordTop + lineHeight;
 
-    this.currentChunk = {
-      index: chunkIndex,
-      startY,
-      endY,
-      words: [],
-      elements: [],
-      rendered: false,
+      // 如果单词完全在当前范围之前，跳过
+      if (wordBottom <= startY) {
+        i++;
+        continue;
+      }
+
+      // 如果单词完全在当前范围之后，提前终止
+      if (wordTop >= endY) {
+        break;
+      }
+      if (word.line !== currentLine) {
+        currentLine = word.line;
+        nextWordIndex = i;
+      }
+
+      // 单词与当前范围有交集，加入当前块
+      if (wordBottom > startY && wordTop < endY) {
+        chunkWords.push(word);
+      }
+
+      i++;
+    }
+
+    return {
+      chunkWords,
+      nextWordIndex, // 下一个块从这个索引开始搜索
     };
-    this.renderChunks.set(chunkIndex, this.currentChunk);
-  }
-
-    /**
-   * 将单词添加到适当的渲染块
-   * @param {Object} word - 单词对象
-   * @returns {Object} 可能调整后的单词对象
-   */
-  addWordToChunk(word) {
-    const lineHeight = this.getLineHeight(word.style);
-    const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
-    const chunkHeight = this.viewport.config.chunkHeight;
-    
-    let wordTop = word.y - baseline;
-    let wordBottom = wordTop + lineHeight;
-
-    // 如果启用了跨块内容调整
-    if (this.adjustCrossChunkContent) {
-      const wordChunkIndex = Math.floor(wordTop / chunkHeight);
-      const chunkBottom = (wordChunkIndex + 1) * chunkHeight;
-      
-      // 检查单词是否与块底部交叉
-      if (wordBottom > chunkBottom && wordTop < chunkBottom) {
-        // 将单词调整到下一个块的开始
-        const nextChunkStart = chunkBottom;
-        const adjustment = nextChunkStart - wordTop;
-        
-        // 更新单词的y坐标
-        word.y += adjustment;
-        
-        // 重新计算位置
-        wordTop = word.y - baseline;
-        wordBottom = wordTop + lineHeight;
-        
-        console.log(`Adjusted word "${word.text}" from y=${word.y - adjustment} to y=${word.y}`);
-      }
-    }
-
-    // 计算单词所属的块索引（使用调整后的位置）
-    const wordChunkIndex = Math.floor(wordTop / chunkHeight);
-
-    // 如果需要创建新块
-    if (wordChunkIndex > this.currentChunkIndex) {
-      // 创建中间可能缺失的块
-      for (let i = this.currentChunkIndex + 1; i <= wordChunkIndex; i++) {
-        this.createNewChunk(i);
-        this.currentChunkIndex = i;
-      }
-    }
-
-    // 将单词添加到对应的块中
-    const targetChunk = this.renderChunks.get(wordChunkIndex);
-
-    if (targetChunk) {
-      targetChunk.words.push(word);
-    }
-
-    // 检查是否仍然跨越多个块（调整后应该很少发生）
-    const endChunkIndex = Math.floor((wordBottom - 1) / chunkHeight);
-    if (endChunkIndex > wordChunkIndex) {
-      for (let i = wordChunkIndex + 1; i <= endChunkIndex; i++) {
-        if (i > this.currentChunkIndex) {
-          this.createNewChunk(i);
-          this.currentChunkIndex = i;
-        }
-        
-        const chunk = this.renderChunks.get(i);
-        
-        if (chunk) {
-          chunk.words.push(word);
-        }
-      }
-    }
-
-    return word; // 返回可能调整后的单词对象
-  }
-
-    /**
-   * 将元素添加到适当的渲染块
-   * @param {Object} element - 元素对象
-   * @returns {Object} 可能调整后的元素对象
-   */
-  addElementToChunk(element) {
-    const chunkHeight = this.viewport.config.chunkHeight;
-    
-    let elementTop = element.y;
-    let elementBottom = element.y + element.height;
-
-    // 如果启用了跨块内容调整
-    if (this.adjustCrossChunkContent) {
-      const elementChunkIndex = Math.floor(elementTop / chunkHeight);
-      const chunkBottom = (elementChunkIndex + 1) * chunkHeight;
-      
-      // 检查元素是否与块底部交叉
-      if (elementBottom > chunkBottom && elementTop < chunkBottom) {
-        // 将元素调整到下一个块的开始
-        const nextChunkStart = chunkBottom;
-        const adjustment = nextChunkStart - elementTop;
-        
-        // 更新元素的y坐标
-        element.y += adjustment;
-        
-        // 重新计算位置
-        elementTop = element.y;
-        elementBottom = element.y + element.height;
-        
-        console.log(`Adjusted element (${element.type}) from y=${element.y - adjustment} to y=${element.y}`);
-      }
-    }
-
-    // 计算元素所属的块索引（使用调整后的位置）
-    const elementChunkIndex = Math.floor(elementTop / chunkHeight);
-
-    // 如果需要创建新块
-    if (elementChunkIndex > this.currentChunkIndex) {
-      // 创建中间可能缺失的块
-      for (let i = this.currentChunkIndex + 1; i <= elementChunkIndex; i++) {
-        this.createNewChunk(i);
-        this.currentChunkIndex = i;
-      }
-    }
-
-    // 将元素添加到对应的块中
-    const targetChunk = this.renderChunks.get(elementChunkIndex);
-
-    if (targetChunk) {
-      targetChunk.elements.push(element);
-    }
-
-    // 检查是否仍然跨越多个块（调整后应该很少发生）
-    const endChunkIndex = Math.floor((elementBottom - 1) / chunkHeight);
-    if (endChunkIndex > elementChunkIndex) {
-      for (let i = elementChunkIndex + 1; i <= endChunkIndex; i++) {
-        if (i > this.currentChunkIndex) {
-          this.createNewChunk(i);
-          this.currentChunkIndex = i;
-        }
-        
-        const chunk = this.renderChunks.get(i);
-        
-        if (chunk) {
-          chunk.elements.push(element);
-        }
-      }
-    }
-
-    return element; // 返回可能调整后的元素对象
   }
 
   /**
-   * 完成渲染块创建
+   * 在指定范围内查找元素（优化版本）
+   * @param {Array} elements - 所有元素数组
+   * @param {number} startIndex - 开始搜索的索引
+   * @param {number} startY - 范围开始Y坐标
+   * @param {number} endY - 范围结束Y坐标
+   * @returns {Object} 返回找到的元素和下一个搜索索引
    */
-  finalizeRenderChunks() {
-    // 这里可以添加一些最终的优化或清理工作
-    console.log(`Created ${this.currentChunkIndex + 1} render chunks`);
+  findElementsInRange(elements, startIndex, startY, endY) {
+    const chunkElements = [];
+    let i = startIndex;
+
+    // 从startIndex开始搜索，避免重复检查
+    while (i < elements.length) {
+      const element = elements[i];
+
+      // 如果元素完全在当前范围之前，跳过
+      if (element.y < startY) {
+        i++;
+        continue;
+      }
+
+      // 如果元素完全在当前范围之后，提前终止
+      if (element.y >= endY) {
+        break;
+      }
+
+      // 元素在当前范围内，加入当前块
+      chunkElements.push(element);
+      i++;
+    }
+
+    return {
+      chunkElements,
+      nextElementIndex: i, // 下一个块从这个索引开始搜索
+    };
   }
 
   /**
@@ -1376,11 +1296,7 @@ export class VirtualCanvasRenderer {
         alt: node.alt || '',
       };
 
-      // 立即添加到渲染块（可能会调整位置）
-      const adjustedImageElement = this.addElementToChunk(imageElement);
-      
-      // 添加调整后的元素到elements数组
-      elements.push(adjustedImageElement);
+      elements.push(imageElement);
 
       // 图片后换行，使用实际的图片高度
       line++;
@@ -1451,23 +1367,32 @@ export class VirtualCanvasRenderer {
       const segmentWidth = this.measureCtx.measureText(segment.content).width;
 
       // 检查是否需要换行
-      const maxWidth = this.canvasWidth - this.theme.paddingX;
+      const canvasWidth = this.canvasWidth;
 
       let needNewLine = false;
 
       if (segment.type === 'word') {
         // 英文单词：整个单词必须在同一行
-        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
+        if (
+          x + segmentWidth > canvasWidth - this.theme.paddingX &&
+          x > this.theme.paddingX
+        ) {
           needNewLine = true;
         }
       } else if (segment.type === 'cjk' || segment.type === 'punctuation') {
         // 中文字符和标点：可以在任意位置换行
-        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
+        if (
+          x + segmentWidth > canvasWidth - this.theme.paddingX &&
+          x > this.theme.paddingX
+        ) {
           needNewLine = true;
         }
       } else if (segment.type === 'space') {
         // 空格：如果导致换行则不渲染
-        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
+        if (
+          x + segmentWidth > canvasWidth - this.theme.paddingX &&
+          x > this.theme.paddingX
+        ) {
           line++;
           x = this.theme.paddingX;
           y += lineHeight; // 整行高度
@@ -1483,8 +1408,8 @@ export class VirtualCanvasRenderer {
         currentLineY = y + baseline; // 重新计算基线位置
       }
 
-      // 创建单词对象
-      const word = {
+      // 添加到words数组
+      words.push({
         x,
         y: currentLineY, // 使用基线位置作为y坐标
         width: segmentWidth,
@@ -1500,13 +1425,7 @@ export class VirtualCanvasRenderer {
         },
         startIndex: segment.startIndex,
         endIndex: segment.endIndex,
-      };
-
-            // 立即添加到渲染块（可能会调整位置）
-      const adjustedWord = this.addWordToChunk(word);
-      
-      // 添加调整后的单词到words数组
-      words.push(adjustedWord);
+      });
 
       x += segmentWidth;
     }
@@ -1812,10 +1731,9 @@ export class VirtualCanvasRenderer {
       this.container.parentNode.removeChild(this.container);
     }
 
-    // 销毁管理器
+    // 销毁虚拟视窗
     if (this.viewport) {
       this.viewport.destroy();
-      this.viewport = null;
     }
 
     // 清理引用
@@ -1826,8 +1744,6 @@ export class VirtualCanvasRenderer {
     this.canvas = null;
     this.measureCanvas = null;
     this.measureCtx = null;
-
-    // 清理数据
     this.renderChunks.clear();
     this.fullLayoutData = null;
 
@@ -1835,77 +1751,6 @@ export class VirtualCanvasRenderer {
     this.imageCache.clear();
 
     window.removeEventListener('resize', this.setupHighDPI.bind(this));
-  }
-
-  /**
-   * 初始化垂直模式
-   */
-  initVerticalMode(config) {
-    // 初始化虚拟视窗
-    this.viewport = new VirtualViewport({
-      mountPoint: null, // 不需要挂载点，DOM已经创建
-      container: this.container,
-      canvasList: this.canvasList,
-      scrollContent: this.scrollContent,
-      viewportHeight: this.viewportHeight,
-      viewportWidth: this.viewportWidth,
-      chunkHeight: this.chunkHeight,
-      poolSize: config.poolSize || 4,
-      onViewportChange: this.handleViewportChange.bind(this),
-    });
-  }
-
-  /**
-   * 获取容器元素（供外部访问）
-   * @returns {HTMLElement}
-   */
-  getContainer() {
-    return this.container;
-  }
-
-  /**
-   * 设置渲染模式
-   * @param {string} mode - 'vertical' | 'horizontal'
-   */
-  setMode(mode) {
-    // 验证模式参数
-    if (!['vertical', 'horizontal'].includes(mode)) {
-      console.warn(`Invalid mode "${mode}". Mode not changed.`);
-      return;
-    }
-
-    // 如果模式没有变化，直接返回
-    if (this.mode === mode) {
-      return;
-    }
-
-    console.log(`Switching from ${this.mode} mode to ${mode} mode`);
-    this.mode = mode;
-
-    // TODO: 在这里添加模式切换的具体实现
-    // 目前只是更新模式属性，具体的DOM重构和管理器切换将在后续实现
-  }
-
-  /**
-   * 设置跨块内容调整模式
-   * @param {boolean} enabled - 是否启用跨块内容调整
-   */
-  setAdjustCrossChunkContent(enabled) {
-    this.adjustCrossChunkContent = enabled;
-    
-    // 如果有当前内容，重新渲染以应用新设置
-    if (this.currentHTML) {
-      console.log(`Cross-chunk content adjustment ${enabled ? 'enabled' : 'disabled'}, re-rendering...`);
-      this.render(this.currentHTML);
-    }
-  }
-
-  /**
-   * 获取跨块内容调整模式状态
-   * @returns {boolean}
-   */
-  getAdjustCrossChunkContent() {
-    return this.adjustCrossChunkContent;
   }
 }
 

@@ -1,3 +1,4 @@
+// import { VirtualCanvasRenderer } from './virtual-canvas-renderer-01.js';
 import { VirtualCanvasRenderer } from './virtual-canvas-renderer.js';
 /**
  * @type {VirtualCanvasRenderer}
@@ -9,7 +10,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   renderer = new VirtualCanvasRenderer({
     mountPoint: container,
-    mode: 'horizontal',
+    mode: 'vertical',
     theme: {
       backgroundColor: '#fff',
       textColor: '#222',
