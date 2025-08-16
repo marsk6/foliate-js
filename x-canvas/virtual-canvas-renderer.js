@@ -31,6 +31,8 @@
  */
 
 import TransferEngine from './layout-engine.js';
+import { HorizontalSlideManager } from './slide-canvas.js';
+import { VirtualViewport } from './scroll-canvas.js';
 
 /**
  * @typedef {Object} VirtualRenderConfig
@@ -68,373 +70,6 @@ import TransferEngine from './layout-engine.js';
  * @property {number} viewportHeight - 视窗高度
  * @property {number} contentHeight - 内容总高度
  */
-
-/**
- * 虚拟视窗管理器
- * 负责管理多Canvas的虚拟滚动，模拟Google Docs的实现方式
- */
-class VirtualViewport {
-  /** @type {HTMLElement} 滚动容器 */
-  container;
-
-  /** @type {HTMLCanvasElement[]} Canvas池 */
-  canvasList = [];
-
-  /** @type {CanvasRenderingContext2D[]} Canvas上下文池 */
-  ctxList = [];
-
-  /** @type {HTMLElement} 滚动内容容器 */
-  scrollContent;
-
-  /** @type {number} Canvas池大小 */
-  poolSize = 4;
-
-  /** @type {ViewportConfig} 配置 */
-  config;
-
-  /** @type {ViewportState} 当前状态 */
-  state;
-
-  /** @type {CanvasInfo[]} Canvas信息数组 */
-  canvasInfoList = [];
-
-  /** @type {boolean} 是否正在更新 */
-  isUpdating = false;
-
-  /** @type {number} 循环链表头部游标 */
-  headIndex = 0;
-
-  /** @type {number} 循环链表尾部游标 */
-  tailIndex = 3;
-
-  /** @type {number} 上次滚动位置，用于判断滚动方向 */
-  lastScrollTop = 0;
-
-  /** @type {number} 节流定时器ID */
-  scrollThrottleId = null;
-
-  /**
-   * @param {ViewportConfig} config
-   */
-  constructor(config) {
-    this.container = config.container;
-    this.canvasList = config.canvasList;
-    this.scrollContent = config.scrollContent;
-    this.poolSize = config.poolSize || 4;
-    this.config = {
-      viewportHeight: config.viewportHeight, // 默认视窗高度
-      viewportWidth: config.viewportWidth, // 默认视窗宽度
-      chunkHeight: config.chunkHeight, // 每个渲染块高度，应该等于Canvas高度
-      ...config,
-    };
-
-    this.state = {
-      scrollTop: 0,
-      viewportHeight: this.config.viewportHeight,
-      contentHeight: 0,
-    };
-
-    this.initCanvasPool();
-    this.init();
-  }
-
-  /**
-   * 初始化Canvas池
-   */
-  initCanvasPool() {
-    this.canvasInfoList = [];
-
-    for (let i = 0; i < this.poolSize; i++) {
-      const canvas = this.canvasList[i];
-      const ctx = canvas.getContext('2d');
-
-      this.canvasInfoList.push({
-        canvas,
-        ctx,
-        currentTop: i * this.config.chunkHeight, // 初始位置
-        contentStartY: i * this.config.chunkHeight,
-        contentEndY: (i + 1) * this.config.chunkHeight,
-        needsRerender: true, // 初始时需要渲染
-      });
-    }
-
-    // 初始化循环链表游标
-    this.headIndex = 0;
-    this.tailIndex = this.poolSize - 1;
-  }
-
-  /**
-   * 初始化
-   */
-  init() {
-    this.setupContainer();
-    this.bindEvents();
-    this.updateViewport();
-  }
-
-  /**
-   * 设置容器（DOM结构已经传入）
-   */
-  setupContainer() {
-    // 设置所有Canvas的2D上下文缩放
-    const dpr = window.devicePixelRatio || 1;
-
-    this.canvasInfoList.forEach((canvasInfo) => {
-      canvasInfo.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    });
-  }
-
-  /**
-   * 绑定事件
-   */
-  bindEvents() {
-    // 滚动事件（带防抖）
-    this.container.addEventListener('scroll', this.handleScroll.bind(this), {
-      passive: true,
-    });
-
-    // 窗口大小变化
-    window.addEventListener('resize', this.handleResize.bind(this));
-  }
-
-  /**
-   * 处理滚动事件（节流版本）
-   */
-  handleScroll() {
-    if (this.isUpdating) return;
-
-    // 立即更新滚动位置（快速响应）
-    this.updateScrollPosition();
-
-    // 使用requestAnimationFrame进行节流，确保按帧率执行
-    if (this.scrollThrottleId) {
-      return; // 如果已经有待处理的更新，跳过
-    }
-
-    this.scrollThrottleId = requestAnimationFrame(() => {
-      this.scrollThrottleId = null;
-      this.updateViewport();
-      this.notifyViewportChange();
-    });
-  }
-
-  /**
-   * 处理窗口大小变化
-   */
-  handleResize() {
-    // 重新设置所有Canvas的高DPI
-    const dpr = window.devicePixelRatio || 1;
-
-    this.canvasInfoList.forEach((canvasInfo) => {
-      canvasInfo.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    });
-
-    this.updateViewport();
-    this.notifyViewportChange();
-  }
-
-  /**
-   * 更新滚动位置
-   */
-  updateScrollPosition() {
-    this.state.scrollTop = this.container.scrollTop;
-  }
-
-  /**
-   * 更新视窗状态
-   */
-  updateViewport() {
-    this.updateScrollPosition();
-
-    // 更新Canvas池位置
-    this.updateCanvasPositions();
-  }
-
-  /**
-   * 更新Canvas池位置（循环链表方式）
-   * 根据滚动方向决定从头部还是尾部取Canvas进行重定位
-   */
-  updateCanvasPositions() {
-    const { contentHeight, scrollTop } = this.state;
-    const { chunkHeight } = this.config;
-
-    // 判断滚动方向
-    const scrollDirection = scrollTop > this.lastScrollTop ? 'down' : 'up';
-    this.lastScrollTop = scrollTop;
-
-    if (scrollDirection === 'down') {
-      // 向下滚动：检查头部Canvas是否需要移到尾部
-      this.handleDownwardScroll(chunkHeight, contentHeight);
-    } else {
-      // 向上滚动：检查尾部Canvas是否需要移到头部
-      this.handleUpwardScroll(chunkHeight);
-    }
-  }
-
-  /**
-   * 处理向下滚动
-   */
-  handleDownwardScroll(chunkHeight, contentHeight) {
-    const { scrollTop } = this.state;
-    const headCanvas = this.canvasInfoList[this.headIndex];
-
-    // 计算触发重定位的阈值：HEAD Canvas + 下一个Canvas的50%
-    const triggerPoint =
-      headCanvas.contentStartY + chunkHeight + chunkHeight * 0.5;
-
-    // 如果滚动位置超过触发点，需要重定位HEAD Canvas
-    if (scrollTop >= triggerPoint) {
-      // 计算新位置：当前尾部Canvas的下方
-      const tailCanvas = this.canvasInfoList[this.tailIndex];
-      const newPosition = tailCanvas.contentStartY + chunkHeight;
-
-      // 确保不超出内容范围
-      if (newPosition < contentHeight) {
-        this.repositionCanvas(headCanvas, newPosition);
-
-        // 更新游标：头部向前移动，尾部指向刚移动的Canvas
-        this.tailIndex = this.headIndex;
-        this.headIndex = (this.headIndex + 1) % this.poolSize;
-      }
-    }
-  }
-
-  /**
-   * 处理向上滚动
-   */
-  handleUpwardScroll(chunkHeight) {
-    const { scrollTop } = this.state;
-    const headCanvas = this.canvasInfoList[this.headIndex];
-    const tailCanvas = this.canvasInfoList[this.tailIndex];
-
-    // 计算触发重定位的阈值：HEAD Canvas开始位置 + Canvas高度的50%
-    const triggerPoint = headCanvas.contentStartY + chunkHeight * 0.5;
-
-    // 如果滚动位置低于触发点，需要将TAIL Canvas移动到HEAD Canvas前面
-    if (scrollTop < triggerPoint) {
-      // 计算新位置：当前头部Canvas的上方
-      const newPosition = headCanvas.contentStartY - chunkHeight;
-
-      // 确保不超出内容范围
-      if (newPosition >= 0) {
-        this.repositionCanvas(tailCanvas, newPosition);
-
-        // 更新游标：TAIL Canvas变成新的HEAD，TAIL向前移动
-        this.headIndex = this.tailIndex;
-        this.tailIndex = (this.tailIndex - 1 + this.poolSize) % this.poolSize;
-      }
-    }
-  }
-
-  /**
-   * 重定位Canvas到新位置
-   * @param {CanvasInfo} canvasInfo
-   * @param {number} newTop
-   */
-  repositionCanvas(canvasInfo, newTop) {
-    const { chunkHeight } = this.config;
-
-    // 更新Canvas的top位置
-    canvasInfo.canvas.style.top = newTop + 'px';
-    canvasInfo.currentTop = newTop;
-    canvasInfo.contentStartY = newTop;
-    canvasInfo.contentEndY = newTop + chunkHeight;
-
-    // 触发重渲染标记
-    canvasInfo.needsRerender = true;
-  }
-
-  /**
-   * 设置内容总高度
-   * @param {number} height
-   */
-  setContentHeight(height) {
-    if (this.state.contentHeight !== height) {
-      this.state.contentHeight = height;
-
-      // 更新滚动内容的高度
-      this.scrollContent.style.height = height + 'px';
-      this.updateViewport();
-    }
-  }
-
-  /**
-   * 将屏幕坐标转换为内容坐标
-   * @param {number} canvasY - Canvas中的Y坐标
-   * @returns {number} 内容中的Y坐标
-   */
-  canvasToContentY(canvasY) {
-    return canvasY + this.state.scrollTop;
-  }
-
-  /**
-   * 将内容坐标转换为屏幕坐标
-   * @param {number} contentY - 内容中的Y坐标
-   * @returns {number} Canvas中的Y坐标
-   */
-  contentToCanvasY(contentY) {
-    return contentY - this.state.scrollTop;
-  }
-
-  /**
-   * 滚动到指定位置
-   * @param {number} y - 内容中的Y坐标
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  scrollTo(y, smooth = true) {
-    this.container.scrollTo({
-      top: y,
-      behavior: smooth ? 'smooth' : 'instant',
-    });
-  }
-
-  /**
-   * 滚动到指定块
-   * @param {number} chunkIndex
-   * @param {boolean} smooth
-   */
-  scrollToChunk(chunkIndex, smooth = true) {
-    const y = chunkIndex * this.config.chunkHeight;
-    this.scrollTo(y, smooth);
-  }
-
-  /**
-   * 通知视窗变化
-   */
-  notifyViewportChange() {
-    if (this.config.onViewportChange) {
-      this.config.onViewportChange();
-    }
-  }
-
-  /**
-   * 获取当前状态
-   * @returns {ViewportState}
-   */
-  getState() {
-    return { ...this.state };
-  }
-
-  /**
-   * 销毁
-   */
-  destroy() {
-    this.container.removeEventListener('scroll', this.handleScroll);
-    window.removeEventListener('resize', this.handleResize);
-
-    // 清理节流定时器
-    if (this.scrollThrottleId) {
-      cancelAnimationFrame(this.scrollThrottleId);
-      this.scrollThrottleId = null;
-    }
-
-    // 清理引用（DOM由主类管理）
-    this.container = null;
-    this.canvasList = null;
-    this.canvasInfoList = [];
-    this.scrollContent = null;
-  }
-}
 
 /**
  * @typedef {Object} ThemeConfig
@@ -568,7 +203,7 @@ export class VirtualCanvasRenderer {
     this.mode = config.mode || 'vertical';
 
     // 布局计算模式 - 是否自动调整跨块内容
-    this.adjustCrossChunkContent = config.adjustCrossChunkContent !== false; // 默认启用
+    this.adjustCrossChunkContent = this.mode === 'horizontal'; // 默认启用
 
     // 主题配置需要先初始化，用于计算行高
     this.theme = {
@@ -582,8 +217,8 @@ export class VirtualCanvasRenderer {
     };
 
     // 视窗尺寸 - 基于窗口尺寸自动计算
-    this.viewportWidth = window.innerWidth; // 使用窗口宽度作为视窗宽度
-    this.viewportHeight = window.innerHeight; // 使用窗口高度作为视窗高度
+    this.viewportWidth = 390 || window.innerWidth; // 使用窗口宽度作为视窗宽度
+    this.viewportHeight = 600|| window.innerHeight; // 使用窗口高度作为视窗高度
 
     // Canvas尺寸 - 直接使用视窗尺寸
     this.canvasWidth = this.viewportWidth;
@@ -591,6 +226,7 @@ export class VirtualCanvasRenderer {
 
     // 块高度 - 每个渲染块的高度，等于Canvas高度
     this.chunkHeight = this.canvasHeight;
+    this.chunkWidth = this.canvasWidth;
 
     // 创建DOM结构
     this.createDOMStructure();
@@ -610,7 +246,7 @@ export class VirtualCanvasRenderer {
     this.measureCtx = this.measureCanvas.getContext('2d');
 
     // 初始化垂直模式
-    this.initVerticalMode(config);
+    this.initMode(config);
 
     // 设置高DPI
     this.setupHighDPI();
@@ -639,26 +275,31 @@ export class VirtualCanvasRenderer {
     this.scrollContent.style.cssText = `
       position: relative;
       width: 100%;
-      height: 0px;  /* 动态设置为总内容高度 */
+      height: 100%;  /* 动态设置为总内容高度 */
     `;
 
     // 创建Canvas池，作为滚动内容的子元素
     this.canvasList = [];
     const poolSize = 4;
-
+    const baseOffset = this.mode === 'horizontal' ? this.chunkWidth : this.chunkHeight;
     for (let i = 0; i < poolSize; i++) {
       const canvas = document.createElement('canvas');
       canvas.className = `virtual-canvas-${i}`;
       canvas.style.cssText = `
         position: absolute;
-        top: ${i * this.chunkHeight}px;
+        top: 0;
         left: 0;
-        width: 100%;
+        width: ${this.canvasWidth}px;
         height: ${this.canvasHeight}px;
         z-index: 2;
         display: block;
         pointer-events: auto;
       `;
+      if (this.mode === 'horizontal') {
+        canvas.style.left = `${i * baseOffset}px`;
+      } else {
+        canvas.style.top = `${i * baseOffset}px`;
+      }
 
       // 设置Canvas尺寸
       const dpr = window.devicePixelRatio || 1;
@@ -691,8 +332,8 @@ export class VirtualCanvasRenderer {
     const dpr = window.devicePixelRatio || 1;
 
     // 重新计算尺寸（窗口大小可能已变化）
-    this.viewportWidth = window.innerWidth;
-    this.viewportHeight = window.innerHeight;
+    this.viewportWidth = 390 || window.innerWidth;
+    this.viewportHeight = 600 || window.innerHeight;
     this.canvasWidth = this.viewportWidth;
     this.canvasHeight = this.viewportHeight;
     this.chunkHeight = this.canvasHeight;
@@ -719,6 +360,7 @@ export class VirtualCanvasRenderer {
       this.viewport.config.viewportWidth = this.viewportWidth;
       this.viewport.config.viewportHeight = this.viewportHeight;
       this.viewport.config.chunkHeight = this.chunkHeight;
+      this.viewport.config.chunkWidth = this.chunkWidth;
       this.viewport.state.viewportHeight = this.viewportHeight;
     }
   }
@@ -743,7 +385,7 @@ export class VirtualCanvasRenderer {
     this.calculateFullLayout();
 
     // 设置虚拟内容高度
-    this.viewport.setContentHeight(this.fullLayoutData.totalHeight);
+    this.viewport.setContentRange(this.mode === 'vertical' ? this.fullLayoutData.totalHeight : this.fullLayoutData.totalWidth);
 
     // 标记所有Canvas需要重新渲染（因为内容已更改）
     this.viewport.canvasInfoList.forEach((canvasInfo) => {
@@ -783,10 +425,12 @@ export class VirtualCanvasRenderer {
 
     // 计算需要的总块数
     const chunkHeight = this.viewport.config.chunkHeight;
+    const chunkWidth = this.viewport.config.chunkWidth;
     const totalChunks = Math.ceil(contentHeight / chunkHeight);
 
     // scrollContent 的高度基于块数量，而不是内容高度
     const scrollContentHeight = totalChunks * chunkHeight;
+    const scrollContentWidth = totalChunks * chunkWidth;
 
     this.fullLayoutData = {
       words,
@@ -794,6 +438,7 @@ export class VirtualCanvasRenderer {
       contentHeight, // 实际内容高度
       scrollContentHeight, // 滚动容器高度
       totalHeight: scrollContentHeight, // 兼容性，使用滚动容器高度
+      totalWidth: scrollContentWidth,
       totalChunks,
     };
 
@@ -836,16 +481,16 @@ export class VirtualCanvasRenderer {
     this.renderChunks.set(chunkIndex, this.currentChunk);
   }
 
-    /**
-   * 将单词添加到适当的渲染块
-   * @param {Object} word - 单词对象
-   * @returns {Object} 可能调整后的单词对象
-   */
+  /**
+ * 将单词添加到适当的渲染块
+ * @param {Object} word - 单词对象
+ * @returns {Object} 可能调整后的单词对象
+ */
   addWordToChunk(word) {
     const lineHeight = this.getLineHeight(word.style);
     const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
     const chunkHeight = this.viewport.config.chunkHeight;
-    
+
     let wordTop = word.y - baseline;
     let wordBottom = wordTop + lineHeight;
 
@@ -853,21 +498,21 @@ export class VirtualCanvasRenderer {
     if (this.adjustCrossChunkContent) {
       const wordChunkIndex = Math.floor(wordTop / chunkHeight);
       const chunkBottom = (wordChunkIndex + 1) * chunkHeight;
-      
+
       // 检查单词是否与块底部交叉
       if (wordBottom > chunkBottom && wordTop < chunkBottom) {
         // 将单词调整到下一个块的开始
         const nextChunkStart = chunkBottom;
         const adjustment = nextChunkStart - wordTop;
-        
+
         // 更新单词的y坐标
         word.y += adjustment;
-        
+
         // 重新计算位置
         wordTop = word.y - baseline;
         wordBottom = wordTop + lineHeight;
-        
-        console.log(`Adjusted word "${word.text}" from y=${word.y - adjustment} to y=${word.y}`);
+
+
       }
     }
 
@@ -898,9 +543,9 @@ export class VirtualCanvasRenderer {
           this.createNewChunk(i);
           this.currentChunkIndex = i;
         }
-        
+
         const chunk = this.renderChunks.get(i);
-        
+
         if (chunk) {
           chunk.words.push(word);
         }
@@ -910,14 +555,14 @@ export class VirtualCanvasRenderer {
     return word; // 返回可能调整后的单词对象
   }
 
-    /**
-   * 将元素添加到适当的渲染块
-   * @param {Object} element - 元素对象
-   * @returns {Object} 可能调整后的元素对象
-   */
+  /**
+ * 将元素添加到适当的渲染块
+ * @param {Object} element - 元素对象
+ * @returns {Object} 可能调整后的元素对象
+ */
   addElementToChunk(element) {
     const chunkHeight = this.viewport.config.chunkHeight;
-    
+
     let elementTop = element.y;
     let elementBottom = element.y + element.height;
 
@@ -925,21 +570,21 @@ export class VirtualCanvasRenderer {
     if (this.adjustCrossChunkContent) {
       const elementChunkIndex = Math.floor(elementTop / chunkHeight);
       const chunkBottom = (elementChunkIndex + 1) * chunkHeight;
-      
+
       // 检查元素是否与块底部交叉
       if (elementBottom > chunkBottom && elementTop < chunkBottom) {
         // 将元素调整到下一个块的开始
         const nextChunkStart = chunkBottom;
         const adjustment = nextChunkStart - elementTop;
-        
+
         // 更新元素的y坐标
         element.y += adjustment;
-        
+
         // 重新计算位置
         elementTop = element.y;
         elementBottom = element.y + element.height;
-        
-        console.log(`Adjusted element (${element.type}) from y=${element.y - adjustment} to y=${element.y}`);
+
+
       }
     }
 
@@ -970,9 +615,9 @@ export class VirtualCanvasRenderer {
           this.createNewChunk(i);
           this.currentChunkIndex = i;
         }
-        
+
         const chunk = this.renderChunks.get(i);
-        
+
         if (chunk) {
           chunk.elements.push(element);
         }
@@ -987,7 +632,7 @@ export class VirtualCanvasRenderer {
    */
   finalizeRenderChunks() {
     // 这里可以添加一些最终的优化或清理工作
-    console.log(`Created ${this.currentChunkIndex + 1} render chunks`);
+
   }
 
   /**
@@ -1002,7 +647,6 @@ export class VirtualCanvasRenderer {
    */
   renderVisibleContent() {
     if (!this.fullLayoutData) return;
-
     // 多Canvas模式：分别渲染每个Canvas
     this.renderMultiCanvas();
   }
@@ -1068,12 +712,10 @@ export class VirtualCanvasRenderer {
    */
   renderCanvasText(words, ctx, offsetY) {
     let currentFont = '';
-
     words.forEach((word) => {
       const { style } = word;
-      const font = `${style.fontStyle || 'normal'} ${
-        style.fontWeight || 'normal'
-      } ${style.fontSize}px ${this.theme.fontFamily}`;
+      const font = `${style.fontStyle || 'normal'} ${style.fontWeight || 'normal'
+        } ${style.fontSize}px ${this.theme.fontFamily}`;
 
       if (font !== currentFont) {
         ctx.font = font;
@@ -1277,31 +919,6 @@ export class VirtualCanvasRenderer {
   }
 
   /**
-   * 执行布局计算
-   * @param {Array} nodes
-   * @returns {RenderResult}
-   */
-  performLayout(nodes) {
-    const words = [];
-    const elements = [];
-
-    let x = this.theme.paddingX;
-    let y = 0;
-    let currentLine = 0;
-
-    // 遍历节点树进行布局
-    this.layoutNodes(nodes, x, y, currentLine, words, elements);
-
-    const totalHeight = y;
-
-    return {
-      words,
-      elements,
-      totalHeight,
-    };
-  }
-
-  /**
    * 布局节点
    * @param {Array} nodes
    * @param {number} startX
@@ -1378,14 +995,14 @@ export class VirtualCanvasRenderer {
 
       // 立即添加到渲染块（可能会调整位置）
       const adjustedImageElement = this.addElementToChunk(imageElement);
-      
+
       // 添加调整后的元素到elements数组
       elements.push(adjustedImageElement);
 
-      // 图片后换行，使用实际的图片高度
+      // 图片后换行，使用调整后的图片位置和高度
       line++;
       x = this.theme.paddingX;
-      y += imageHeight + 20; // 图片高度 + 间距
+      y = adjustedImageElement.y + adjustedImageElement.height + 20; // 使用调整后的图片高度 + 间距
     } else if (node.children && node.children.length > 0) {
       // 递归处理子节点
       const result = this.layoutNodes(
@@ -1502,9 +1119,30 @@ export class VirtualCanvasRenderer {
         endIndex: segment.endIndex,
       };
 
-            // 立即添加到渲染块（可能会调整位置）
+      // 立即添加到渲染块（可能会调整位置）
       const adjustedWord = this.addWordToChunk(word);
-      
+
+      // 如果单词位置被调整，需要同步更新布局状态
+      if (adjustedWord.y !== currentLineY) {
+        // 重新计算基线位置和行高
+        const newY = adjustedWord.y - baseline;
+        const lineAdjustment = newY - y;
+
+        // 更新布局状态
+        y = newY;
+        currentLineY = adjustedWord.y;
+
+        // 如果调整幅度较大，可能需要更新行号和重置x坐标
+        // if (lineAdjustment >= lineHeight) {
+        //   line += Math.floor(lineAdjustment / lineHeight);
+        //   // 重置x坐标到行首，因为这相当于一个新行的开始
+        //   x = this.theme.paddingX;
+        //   // 更新调整后单词的x坐标
+        //   adjustedWord.x = x;
+        // }
+
+      }
+
       // 添加调整后的单词到words数组
       words.push(adjustedWord);
 
@@ -1626,71 +1264,6 @@ export class VirtualCanvasRenderer {
    */
   clear() {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-  }
-
-  /**
-   * 渲染背景
-   */
-  renderBackground() {
-    this.ctx.fillStyle = this.theme.backgroundColor;
-    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-  }
-
-  /**
-   * 渲染文本
-   */
-  renderText() {
-    if (!this.renderResult) return;
-
-    const { words } = this.renderResult;
-    let currentFont = '';
-
-    words.forEach((word) => {
-      const { style } = word;
-      const font = `${style.fontStyle || 'normal'} ${
-        style.fontWeight || 'normal'
-      } ${style.fontSize}px ${this.theme.fontFamily}`;
-
-      // 优化：只在字体改变时更新
-      if (font !== currentFont) {
-        this.ctx.font = font;
-        currentFont = font;
-      }
-
-      this.ctx.fillStyle = style.color || this.theme.textColor;
-      this.ctx.fillText(word.text, word.x, word.y);
-    });
-  }
-
-  /**
-   * 渲染元素（图片等）
-   */
-  renderElements() {
-    if (!this.renderResult) return;
-
-    const { elements } = this.renderResult;
-
-    elements.forEach((element) => {
-      if (element.type === 'image') {
-        // 绘制图片占位符
-        this.ctx.strokeStyle = '#ccc';
-        this.ctx.strokeRect(
-          element.x,
-          element.y,
-          element.width,
-          element.height
-        );
-
-        // 绘制图片图标或文字
-        this.ctx.fillStyle = '#999';
-        this.ctx.font = '14px system-ui';
-        this.ctx.fillText(
-          element.alt || 'Image',
-          element.x + 10,
-          element.y + element.height / 2
-        );
-      }
-    });
   }
 
   /**
@@ -1837,13 +1410,10 @@ export class VirtualCanvasRenderer {
     window.removeEventListener('resize', this.setupHighDPI.bind(this));
   }
 
-  /**
-   * 初始化垂直模式
-   */
-  initVerticalMode(config) {
+  initMode(config) {
     // 初始化虚拟视窗
-    this.viewport = new VirtualViewport({
-      mountPoint: null, // 不需要挂载点，DOM已经创建
+    let Viewport = config.mode === 'vertical' ? VirtualViewport : HorizontalSlideManager;
+    this.viewport = new Viewport({
       container: this.container,
       canvasList: this.canvasList,
       scrollContent: this.scrollContent,
@@ -1879,7 +1449,7 @@ export class VirtualCanvasRenderer {
       return;
     }
 
-    console.log(`Switching from ${this.mode} mode to ${mode} mode`);
+
     this.mode = mode;
 
     // TODO: 在这里添加模式切换的具体实现
@@ -1892,10 +1462,10 @@ export class VirtualCanvasRenderer {
    */
   setAdjustCrossChunkContent(enabled) {
     this.adjustCrossChunkContent = enabled;
-    
+
     // 如果有当前内容，重新渲染以应用新设置
     if (this.currentHTML) {
-      console.log(`Cross-chunk content adjustment ${enabled ? 'enabled' : 'disabled'}, re-rendering...`);
+
       this.render(this.currentHTML);
     }
   }
