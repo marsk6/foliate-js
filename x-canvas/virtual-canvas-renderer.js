@@ -157,12 +157,12 @@ export class VirtualCanvasRenderer {
   /** @type {string} 渲染模式：'vertical' | 'horizontal' */
   mode;
 
+  /** @type {boolean} 是否启用调试模式 */
+  debug = false;
+
   // 引擎和数据
   /** @type {TransferEngine} HTML转换引擎实例 */
   transferEngine;
-
-  /** @type {RenderResult|null} 渲染结果 */
-  renderResult = null;
 
   /** @type {Array|null} 解析后的节点数据 */
   parsedNodes = null;
@@ -217,8 +217,8 @@ export class VirtualCanvasRenderer {
     };
 
     // 视窗尺寸 - 基于窗口尺寸自动计算
-    this.viewportWidth = 390 || window.innerWidth; // 使用窗口宽度作为视窗宽度
-    this.viewportHeight = 600|| window.innerHeight; // 使用窗口高度作为视窗高度
+    this.viewportWidth = this.debug ? this.mountPoint.clientWidth : window.innerWidth; // 使用窗口宽度作为视窗宽度
+    this.viewportHeight = this.debug ? this.mountPoint.clientHeight : window.innerHeight; // 使用窗口高度作为视窗高度
 
     // Canvas尺寸 - 直接使用视窗尺寸
     this.canvasWidth = this.viewportWidth;
@@ -236,8 +236,6 @@ export class VirtualCanvasRenderer {
     // 转换引擎实例
     this.transferEngine = new TransferEngine();
 
-    // 渲染状态
-    this.renderResult = null;
     this.parsedNodes = null;
     this.pageStyle = null;
 
@@ -332,8 +330,8 @@ export class VirtualCanvasRenderer {
     const dpr = window.devicePixelRatio || 1;
 
     // 重新计算尺寸（窗口大小可能已变化）
-    this.viewportWidth = 390 || window.innerWidth;
-    this.viewportHeight = 600 || window.innerHeight;
+    this.viewportWidth = this.debug ? this.mountPoint.clientWidth : window.innerWidth;
+    this.viewportHeight = this.debug ? this.mountPoint.clientHeight : window.innerHeight;
     this.canvasWidth = this.viewportWidth;
     this.canvasHeight = this.viewportHeight;
     this.chunkHeight = this.canvasHeight;
@@ -442,8 +440,6 @@ export class VirtualCanvasRenderer {
       totalChunks,
     };
 
-    // 完成渲染块创建
-    this.finalizeRenderChunks();
   }
 
   /**
@@ -488,7 +484,7 @@ export class VirtualCanvasRenderer {
  */
   addWordToChunk(word) {
     const lineHeight = this.getLineHeight(word.style);
-    const baseline = this.getTextBaseline(lineHeight, word.style.fontSize);
+    const baseline = this.getTextBaseline(lineHeight);
     const chunkHeight = this.viewport.config.chunkHeight;
 
     let wordTop = word.y - baseline;
@@ -625,14 +621,6 @@ export class VirtualCanvasRenderer {
     }
 
     return element; // 返回可能调整后的元素对象
-  }
-
-  /**
-   * 完成渲染块创建
-   */
-  finalizeRenderChunks() {
-    // 这里可以添加一些最终的优化或清理工作
-
   }
 
   /**
@@ -814,44 +802,75 @@ export class VirtualCanvasRenderer {
    */
 
   /**
-   * 根据坐标获取字符索引（重写）
-   * @param {Object} point
+   * 根据坐标获取字符索引（虚拟滚动支持）
+   * @param {Object} point - 视口坐标
    * @param {number} point.x
    * @param {number} point.y
    * @returns {number|null}
    */
   getCharIndexAt(point) {
     if (!this.fullLayoutData) return null;
-
     const { x: clientX, y: clientY } = point;
-    const rect = this.canvas.getBoundingClientRect();
-    const canvasX = clientX - rect.left;
-    const canvasY = clientY - rect.top;
 
-    // 转换为内容坐标
-    const contentY = this.viewport.canvasToContentY(canvasY);
+    // 1. 获取容器边界矩形（不包含滚动偏移）
+    const containerRect = this.container.getBoundingClientRect();
 
+    // 2. 将视口坐标转换为容器内的相对坐标
+    const containerX = clientX - containerRect.left;
+    const containerY = clientY - containerRect.top;
+
+    // 3. 检查点击是否在容器范围内
+    if (containerX < 0 || containerX > containerRect.width ||
+      containerY < 0 || containerY > containerRect.height) {
+      return null;
+    }
+    // 4. 将容器坐标转换为内容坐标（加上滚动偏移）
+    const contentX = containerX;
+    const contentY = containerY + this.viewport.state.scrollTop;
+
+    // 5. 在所有单词中查找最匹配的
     const { words } = this.fullLayoutData;
     const lineHeight = this.getLineHeight();
-    const baseline = this.getTextBaseline(lineHeight, this.theme.baseFontSize);
+    const baseline = this.getTextBaseline(lineHeight);
+
+    let bestMatchIndex = null;
+    let minDistance = Infinity;
 
     for (let i = 0; i < words.length; i++) {
       const word = words[i];
-      // word.y 现在是基线位置，需要计算行的顶部和底部
-      const lineTop = word.y - baseline;
-      const lineBottom = lineTop + lineHeight;
 
+      // 计算单词的边界
+      const wordTop = word.y - baseline;
+      const wordBottom = wordTop + lineHeight;
+      const wordLeft = word.x;
+      const wordRight = word.x + word.width;
+
+      // 精确匹配：点击在单词范围内
       if (
-        contentY >= lineTop &&
-        contentY <= lineBottom &&
-        canvasX >= word.x &&
-        canvasX <= word.x + word.width
+        contentY >= wordTop &&
+        contentY <= wordBottom &&
+        contentX >= wordLeft &&
+        contentX <= wordRight
       ) {
         return i;
       }
+
+      // 计算到单词中心的距离
+      const wordCenterX = wordLeft + word.width / 2;
+      const wordCenterY = word.y; // 基线位置
+      const distance = Math.sqrt(
+        Math.pow(contentX - wordCenterX, 2) +
+        Math.pow(contentY - wordCenterY, 2)
+      );
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        bestMatchIndex = i;
+      }
     }
 
-    return null;
+    // 返回最近的单词索引
+    return bestMatchIndex;
   }
 
   /**
@@ -868,7 +887,7 @@ export class VirtualCanvasRenderer {
     // 计算字符所在的Y位置
     const wordY =
       word.y -
-      this.getTextBaseline(this.getLineHeight(word.style), word.style.fontSize);
+      this.getTextBaseline(this.getLineHeight(word.style));
 
     // 滚动到该位置，居中显示
     const targetY = wordY - this.viewport.state.viewportHeight / 2;
@@ -1058,7 +1077,7 @@ export class VirtualCanvasRenderer {
     let line = startLine;
 
     // 计算当前行的基线位置
-    const baseline = this.getTextBaseline(lineHeight, fontSize);
+    const baseline = this.getTextBaseline(lineHeight);
     let currentLineY = y + baseline;
 
     // 将文本按照单词和中文字符分割
@@ -1254,7 +1273,7 @@ export class VirtualCanvasRenderer {
    * @param {number} fontSize - 字体大小
    * @returns {number} 基线相对于行顶部的偏移
    */
-  getTextBaseline(lineHeight, fontSize) {
+  getTextBaseline(lineHeight) {
     const ascentRatio = 0.8;
     return lineHeight * ascentRatio;
   }
@@ -1277,38 +1296,6 @@ export class VirtualCanvasRenderer {
     if (this.currentHTML) {
       this.render(this.currentHTML);
     }
-  }
-
-  /**
-   * 获取渲染结果
-   * @returns {RenderResult|null}
-   */
-  getRenderResult() {
-    return this.renderResult;
-  }
-
-  /**
-   * 获取页面样式
-   * @returns {Object|null}
-   */
-  getPageStyle() {
-    return this.pageStyle;
-  }
-
-  /**
-   * 获取Canvas元素（供外部访问）
-   * @returns {HTMLCanvasElement}
-   */
-  getCanvas() {
-    return this.canvas;
-  }
-
-  /**
-   * 获取容器元素（供外部访问）
-   * @returns {HTMLElement}
-   */
-  getContainer() {
-    return this.container;
   }
 
   /**
@@ -1392,7 +1379,6 @@ export class VirtualCanvasRenderer {
     }
 
     // 清理引用
-    this.renderResult = null;
     this.parsedNodes = null;
     this.pageStyle = null;
     this.container = null;
@@ -1424,59 +1410,5 @@ export class VirtualCanvasRenderer {
       onViewportChange: this.handleViewportChange.bind(this),
     });
   }
-
-  /**
-   * 获取容器元素（供外部访问）
-   * @returns {HTMLElement}
-   */
-  getContainer() {
-    return this.container;
-  }
-
-  /**
-   * 设置渲染模式
-   * @param {string} mode - 'vertical' | 'horizontal'
-   */
-  setMode(mode) {
-    // 验证模式参数
-    if (!['vertical', 'horizontal'].includes(mode)) {
-      console.warn(`Invalid mode "${mode}". Mode not changed.`);
-      return;
-    }
-
-    // 如果模式没有变化，直接返回
-    if (this.mode === mode) {
-      return;
-    }
-
-
-    this.mode = mode;
-
-    // TODO: 在这里添加模式切换的具体实现
-    // 目前只是更新模式属性，具体的DOM重构和管理器切换将在后续实现
-  }
-
-  /**
-   * 设置跨块内容调整模式
-   * @param {boolean} enabled - 是否启用跨块内容调整
-   */
-  setAdjustCrossChunkContent(enabled) {
-    this.adjustCrossChunkContent = enabled;
-
-    // 如果有当前内容，重新渲染以应用新设置
-    if (this.currentHTML) {
-
-      this.render(this.currentHTML);
-    }
-  }
-
-  /**
-   * 获取跨块内容调整模式状态
-   * @returns {boolean}
-   */
-  getAdjustCrossChunkContent() {
-    return this.adjustCrossChunkContent;
-  }
 }
-
 export default VirtualCanvasRenderer;

@@ -261,16 +261,13 @@ export class HorizontalSlideManager {
     if (isQuickSwipe || isLongSwipe) {
       if (deltaX > 0) {
         // 向右滑动，显示上一页
-        console.log('尝试上一页');
         this.previousPage();
       } else {
         // 向左滑动，显示下一页
-        console.log('尝试下一页');
         this.nextPage();
       }
     } else {
       // 回弹到当前页面
-      console.log('回弹到当前页面');
       this.snapToCurrentPage();
     }
   }
