@@ -11,8 +11,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
   renderer = new VirtualCanvasRenderer({
     mountPoint: container,
-    // mode: 'horizontal',
-    mode: 'vertical',
+    mode: 'horizontal',
+    // mode: 'vertical',
     theme: {
       backgroundColor: '#fff',
       textColor: '#222',

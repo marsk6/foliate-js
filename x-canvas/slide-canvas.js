@@ -74,7 +74,7 @@ export class HorizontalSlideManager {
     };
 
     this.state = {
-      scrollLeft: 0,
+      scrollTop: 0,
       viewportWidth: this.config.viewportWidth,
       contentWidth: 0,
       totalPages: 0,
@@ -178,6 +178,14 @@ export class HorizontalSlideManager {
       this.config.onViewportChange();
     }
   }
+
+  /**
+   * 更新滚动位置
+   */
+  updateScrollPosition() {
+    this.state.scrollTop = this.state.currentPage * this.config.chunkHeight;
+  }
+
 
   /**
    * 设置内容总宽度和页面数量
@@ -332,6 +340,7 @@ export class HorizontalSlideManager {
 
     // 执行滑动动画
     this.animateToPage(oldPage, pageIndex, () => {
+      this.updateScrollPosition();
       this.state.isAnimating = false;
       this.notifyViewportChange();
     });

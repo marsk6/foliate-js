@@ -126,12 +126,6 @@ export class VirtualCanvasRenderer {
   /** @type {HTMLElement} 滚动容器 */
   container;
 
-  /** @type {HTMLCanvasElement} Canvas元素 */
-  canvas;
-
-  /** @type {CanvasRenderingContext2D} Canvas 2D上下文 */
-  ctx;
-
   /** @type {HTMLCanvasElement} 隐藏的测量canvas */
   measureCanvas;
 
@@ -231,8 +225,6 @@ export class VirtualCanvasRenderer {
     // 创建DOM结构
     this.createDOMStructure();
 
-    this.ctx = this.canvas.getContext('2d');
-
     // 转换引擎实例
     this.transferEngine = new TransferEngine();
 
@@ -307,9 +299,6 @@ export class VirtualCanvasRenderer {
       this.canvasList.push(canvas);
       this.scrollContent.appendChild(canvas); // 关键：Canvas在滚动内容内
     }
-
-    // 主Canvas用于兼容
-    this.canvas = this.canvasList[0];
 
     // 虚拟内容元素已被scrollContent替代
     this.virtualContent = this.scrollContent;
@@ -814,8 +803,7 @@ export class VirtualCanvasRenderer {
 
     // 1. 获取容器边界矩形（不包含滚动偏移）
     const containerRect = this.container.getBoundingClientRect();
-
-    // 2. 将视口坐标转换为容器内的相对坐标
+    // 2. 将视口坐标转换为容器内的相对坐标，都为 0
     const containerX = clientX - containerRect.left;
     const containerY = clientY - containerRect.top;
 
@@ -1279,13 +1267,6 @@ export class VirtualCanvasRenderer {
   }
 
   /**
-   * 清空画布
-   */
-  clear() {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-  }
-
-  /**
    * 设置主题
    * @param {Object} theme
    */
@@ -1365,8 +1346,6 @@ export class VirtualCanvasRenderer {
    * 销毁渲染器
    */
   destroy() {
-    this.clear();
-
     // 移除DOM元素
     if (this.container && this.container.parentNode) {
       this.container.parentNode.removeChild(this.container);
@@ -1382,7 +1361,6 @@ export class VirtualCanvasRenderer {
     this.parsedNodes = null;
     this.pageStyle = null;
     this.container = null;
-    this.canvas = null;
     this.measureCanvas = null;
     this.measureCtx = null;
 
