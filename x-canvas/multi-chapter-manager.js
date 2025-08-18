@@ -46,7 +46,7 @@ import VirtualCanvasRenderer from './virtual-canvas-renderer.js';
 
 /**
  * @typedef {Object} ChapterInstance
- * @property {number} index - 章节索引
+ * @property {number} sectionIndex - 章节索引
  * @property {string} title - 章节标题
  * @property {VirtualCanvasRenderer} renderer - 渲染器实例
  * @property {HTMLElement} container - 章节容器DOM
@@ -153,35 +153,30 @@ export class MultiChapterManager {
   /**
    * @param {MultiChapterConfig} config
    */
-    constructor(config) {
-    this.container = config.container;
+  constructor(config) {
     this.theme = config.theme || {};
     this.mode = config.mode || 'vertical';
-    
-    // 回调函数
-    this.onProgressChange = config.onProgressChange || null;
-    this.onChapterChange = config.onChapterChange || null;
-    this.onChapterLoad = config.onChapterLoad || null;
-    
     // 配置选项
     this.preloadRadius = config.preloadRadius ?? 1;
     this.enableCache = config.enableCache ?? true;
     this.maxCacheSize = config.maxCacheSize ?? 5;
-
     this.setupContainer();
+
   }
 
   /**
    * 设置主容器
    */
   setupContainer() {
+    this.container = document.createElement('div')
     this.container.className = 'multi-chapter-container';
     this.container.style.cssText = `
       position: relative;
       width: 100%;
       height: 100%;
-      overflow: hidden;
+      overflow: auto;
     `;
+    this.config.el.parentNode.replaceChild(this.container, this.config.el);
   }
 
   /**
@@ -198,76 +193,34 @@ export class MultiChapterManager {
     // 创建章节实例（但不立即加载内容）
     for (let i = 0; i < chaptersConfig.length; i++) {
       const config = chaptersConfig[i];
-      await this.createChapterInstance(config, i);
-    }
+      const chapterInstance = {
+        sectionIndex: config.index,
+        title: config.title,
+        renderer: null, // 延迟创建
+        contentHeight: 0,
+        progress: 0,
+        loadContent: config.loadContent,
+        metadata: config.metadata || {},
+      };
 
-    // 加载初始章节（通常是第一章）
-    await this.loadChapter(0);
-    this.setCurrentChapter(0);
+      this.chapters.set(config.index, chapterInstance);
+    }
   }
 
   /**
-   * 创建章节实例
-   * @param {ChapterConfig} config - 章节配置
-   * @param {number} index - 章节索引
+   * 跳转到指定章节和位置
+   * @param {number} chapterIndex - 章节索引
+   * @param {number} progress - 章节内进度(0-1)
+   * @param {boolean} smooth - 是否平滑滚动
    */
-  async createChapterInstance(config, index) {
-    // 创建章节占位符容器，确保DOM中的顺序正确
-    const chapterPlaceholder = document.createElement('div');
-    chapterPlaceholder.className = `chapter-placeholder chapter-${index}`;
-    chapterPlaceholder.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      display: none;
-      background: transparent;
-    `;
+  async goToChapter(chapterIndex, progress = 0, smooth = true) {
+    // 确保章节已加载
+    await this.loadChapter(chapterIndex);
 
-    // 创建章节实例对象（暂时不创建渲染器）
-    const chapterInstance = {
-      index,
-      title: config.title,
-      renderer: null, // 延迟创建
-      container: chapterPlaceholder,
-      loaded: false,
-      visible: false,
-      contentHeight: 0,
-      progress: 0,
-      loadContent: config.loadContent,
-      metadata: config.metadata || {},
-    };
-
-    this.chapters.set(index, chapterInstance);
-    
-    // 按顺序插入占位符容器
-    this.insertChapterContainer(chapterPlaceholder, index);
-  }
-
-  /**
-   * 按顺序插入章节容器
-   * @param {HTMLElement} container - 章节容器
-   * @param {number} index - 章节索引
-   */
-  insertChapterContainer(container, index) {
-    const existingChapters = Array.from(this.container.children);
-    
-    // 找到第一个索引大于当前章节的容器
-    let insertBeforeElement = null;
-    for (const element of existingChapters) {
-      const elementIndex = parseInt(element.className.match(/chapter-(\d+)/)?.[1] || '999999');
-      if (elementIndex > index) {
-        insertBeforeElement = element;
-        break;
-      }
-    }
-
-    // 插入到正确位置
-    if (insertBeforeElement) {
-      this.container.insertBefore(container, insertBeforeElement);
-    } else {
-      this.container.appendChild(container);
+    // 设置章节内进度
+    const chapter = this.chapters.get(chapterIndex);
+    if (chapter && chapter.renderer) {
+      chapter.renderer.setProgress(progress, smooth);
     }
   }
 
@@ -282,18 +235,9 @@ export class MultiChapterManager {
     }
 
     try {
-      // 调用加载回调
-      if (this.onChapterLoad) {
-        this.onChapterLoad(chapterIndex, 'loading');
-      }
-
       // 创建渲染器实例（如果还没有）
       if (!chapter.renderer) {
-        // 创建临时挂载点，VirtualCanvasRenderer会替换它
-        const tempMountPoint = document.createElement('div');
-        
         chapter.renderer = new VirtualCanvasRenderer({
-          mountPoint: tempMountPoint,
           theme: this.theme,
           mode: this.mode,
           onProgressChange: (progressInfo) => {
@@ -304,105 +248,21 @@ export class MultiChapterManager {
 
       // 加载章节内容
       const htmlContent = await chapter.loadContent();
-      
+
       // 渲染章节内容
       chapter.renderer.render(htmlContent);
-      chapter.loaded = true;
       chapter.contentHeight = chapter.renderer.fullLayoutData?.totalHeight || 0;
-      
-      // 将渲染器的容器替换占位符
-      const rendererContainer = chapter.renderer.container;
-      rendererContainer.className = `chapter-container chapter-${chapterIndex}`;
-      rendererContainer.style.display = 'none'; // 默认隐藏
-      
-      // 替换占位符
-      if (chapter.container && chapter.container.parentNode) {
-        chapter.container.parentNode.replaceChild(rendererContainer, chapter.container);
-      }
-      
-      // 更新容器引用
-      chapter.container = rendererContainer;
-      
+
+      chapter.container = chapter.renderer.container;
+
       this.loadedChapters.add(chapterIndex);
-
-      // 更新缓存队列
-      this.updateCacheQueue(chapterIndex);
-
-      // 调用加载完成回调
-      if (this.onChapterLoad) {
-        this.onChapterLoad(chapterIndex, 'loaded');
-      }
+      const nextChapterContainer = this.container.children[chapterIndex + 1];
+      this.container.insertBefore(chapter.container, nextChapterContainer);
     } catch (error) {
       console.error(`Failed to load chapter ${chapterIndex}:`, error);
-
-      // 调用加载失败回调
-      if (this.onChapterLoad) {
-        this.onChapterLoad(chapterIndex, 'error', error);
-      }
     }
   }
 
-  /**
-   * 设置当前章节
-   * @param {number} chapterIndex - 章节索引
-   */
-  setCurrentChapter(chapterIndex) {
-    if (chapterIndex === this.currentChapterIndex) {
-      return;
-    }
-
-    const oldChapter = this.chapters.get(this.currentChapterIndex);
-    const newChapter = this.chapters.get(chapterIndex);
-
-    if (!newChapter) {
-      console.warn(`Chapter ${chapterIndex} not found`);
-      return;
-    }
-
-    // 隐藏当前章节
-    if (oldChapter) {
-      oldChapter.container.style.display = 'none';
-      oldChapter.visible = false;
-    }
-
-    // 显示新章节
-    newChapter.container.style.display = 'block';
-    newChapter.visible = true;
-
-    // 更新当前章节索引
-    this.currentChapterIndex = chapterIndex;
-    this.visibleChapters.clear();
-    this.visibleChapters.add(chapterIndex);
-
-    // 预加载相邻章节
-    this.preloadAdjacentChapters(chapterIndex);
-
-    // 调用章节变化回调
-    if (this.onChapterChange) {
-      this.onChapterChange(chapterIndex, newChapter.title);
-    }
-  }
-
-  /**
-   * 预加载相邻章节
-   * @param {number} centerIndex - 中心章节索引
-   */
-  async preloadAdjacentChapters(centerIndex) {
-    const loadPromises = [];
-
-    for (let i = -this.preloadRadius; i <= this.preloadRadius; i++) {
-      const targetIndex = centerIndex + i;
-      if (
-        targetIndex >= 0 &&
-        targetIndex < this.totalChapters &&
-        !this.loadedChapters.has(targetIndex)
-      ) {
-        loadPromises.push(this.loadChapter(targetIndex));
-      }
-    }
-
-    await Promise.all(loadPromises);
-  }
 
   /**
    * 处理章节进度变化
@@ -419,7 +279,7 @@ export class MultiChapterManager {
 
     // 更新章节进度
     chapter.progress = progressInfo.progress;
-
+    // TODO: 上拉下拉加载更多章节
     // 计算全局进度
     this.updateGlobalProgress();
   }
@@ -500,25 +360,6 @@ export class MultiChapterManager {
     await this.goToChapter(finalChapterIndex, finalChapterProgress, smooth);
   }
 
-  /**
-   * 跳转到指定章节和位置
-   * @param {number} chapterIndex - 章节索引
-   * @param {number} progress - 章节内进度(0-1)
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  async goToChapter(chapterIndex, progress = 0, smooth = true) {
-    // 确保章节已加载
-    await this.loadChapter(chapterIndex);
-
-    // 切换到目标章节
-    this.setCurrentChapter(chapterIndex);
-
-    // 设置章节内进度
-    const chapter = this.chapters.get(chapterIndex);
-    if (chapter && chapter.renderer) {
-      chapter.renderer.setProgress(progress, smooth);
-    }
-  }
 
   /**
    * 下一章
@@ -642,57 +483,6 @@ export class MultiChapterManager {
       if (chapter.loaded && chapter.renderer) {
         chapter.renderer.setTheme(theme);
       }
-    }
-  }
-
-  /**
-   * 更新缓存队列
-   * @param {number} chapterIndex - 章节索引
-   */
-  updateCacheQueue(chapterIndex) {
-    if (!this.enableCache) return;
-
-    // 移除已存在的索引
-    const existingIndex = this.cacheQueue.indexOf(chapterIndex);
-    if (existingIndex > -1) {
-      this.cacheQueue.splice(existingIndex, 1);
-    }
-
-    // 添加到队列末尾
-    this.cacheQueue.push(chapterIndex);
-
-    // 如果超出缓存大小限制，移除最旧的章节
-    while (this.cacheQueue.length > this.maxCacheSize) {
-      const oldestChapter = this.cacheQueue.shift();
-      this.unloadChapter(oldestChapter);
-    }
-  }
-
-  /**
-   * 卸载章节
-   * @param {number} chapterIndex - 章节索引
-   */
-  unloadChapter(chapterIndex) {
-    // 不卸载当前可见的章节和相邻章节
-    if (
-      Math.abs(chapterIndex - this.currentChapterIndex) <= this.preloadRadius
-    ) {
-      return;
-    }
-
-    const chapter = this.chapters.get(chapterIndex);
-    if (chapter && chapter.loaded) {
-      chapter.loaded = false;
-      chapter.contentHeight = 0;
-      chapter.progress = 0;
-
-      // 清理渲染器状态（但保留实例）
-      if (chapter.renderer) {
-        chapter.renderer.fullLayoutData = null;
-        chapter.renderer.renderChunks.clear();
-      }
-
-      this.loadedChapters.delete(chapterIndex);
     }
   }
 
