@@ -20,6 +20,10 @@ export class CanvasTools {
    */
   renderer = null;
 
+  selection = {
+    range: null,
+  };
+
   constructor(renderer) {
     if (CanvasTools.instance) {
       return CanvasTools.instance;
@@ -125,9 +129,76 @@ export class CanvasTools {
     const { renderer, highlightLayer, startIdx, endIdx } = this;
     highlightLayer.innerHTML = '';
     if (startIdx == null || endIdx == null) return;
-    const charPos = renderer.fullLayoutData.words;
+    
+    // 创建 range 对象用于 getCFI
     const min = Math.min(startIdx, endIdx);
     const max = Math.max(startIdx, endIdx);
+    
+    // 从字符位置数据中获取选中的文本
+    const charPos = renderer.fullLayoutData.words;
+    let selectedText = '';
+    for (let i = min; i <= max; i++) {
+      if (i < charPos.length && charPos[i].char) {
+        selectedText += charPos[i].char;
+      }
+    }
+    
+    // 获取选中文本的章节索引
+    // 使用起始位置的章节索引，如果跨章节，则使用起始章节
+    const chapterIndex = renderer.getChapterIndexForChar ? 
+      renderer.getChapterIndexForChar(min) : 
+      (renderer.currentChapterIndex || 0);
+    
+    // 获取在章节内的相对位置（用于创建正确的DOM Range）
+    const startRelative = renderer.getRelativeCharIndex ? 
+      renderer.getRelativeCharIndex(min) : 
+      { chapterIndex, relativeCharIndex: min };
+    const endRelative = renderer.getRelativeCharIndex ? 
+      renderer.getRelativeCharIndex(max) : 
+      { chapterIndex, relativeCharIndex: max };
+    
+    // 创建一个伪造的 range 对象，包含 getCFI 需要的信息
+    const range = {
+      toString: () => selectedText,
+      startContainer: document.body, // 使用 body 作为容器
+      endContainer: document.body,
+      startOffset: startRelative.relativeCharIndex, // 使用章节内相对位置
+      endOffset: endRelative.relativeCharIndex,     // 使用章节内相对位置
+      collapsed: min === max,
+      commonAncestorContainer: document.body,
+      // 添加必要的方法
+      getBoundingClientRect: () => {
+        // 计算选中区域的边界矩形
+        if (min >= charPos.length || max >= charPos.length) {
+          return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+        }
+        const startChar = charPos[min];
+        const endChar = charPos[max];
+        return {
+          left: Math.min(startChar.x, endChar.x),
+          top: Math.min(startChar.y, endChar.y),
+          right: Math.max(startChar.x, endChar.x),
+          bottom: Math.max(startChar.y, endChar.y),
+          width: Math.abs(endChar.x - startChar.x),
+          height: Math.abs(endChar.y - startChar.y),
+        };
+      },
+      // 添加全局位置信息（用于调试和其他用途）
+      _globalStartOffset: min,
+      _globalEndOffset: max,
+    };
+    
+    this.selection = {
+      range: range,
+      text: selectedText,
+      startIdx: min,
+      endIdx: max,
+      chapterIndex: chapterIndex, // 添加章节索引
+      // 添加相对位置信息
+      relativeStartIdx: startRelative.relativeCharIndex,
+      relativeEndIdx: endRelative.relativeCharIndex,
+    };
+
     // 按行分组高亮
     let lineMap = {};
     for (let i = min; i <= max; i++) {
@@ -154,6 +225,10 @@ export class CanvasTools {
       bar.style.height = renderer.theme.baseFontSize + 2 + 'px';
       this.highlightLayer.appendChild(bar);
     });
+  }
+
+  getSelection() {
+    return this.selection;
   }
 
   onNativeEvent() {

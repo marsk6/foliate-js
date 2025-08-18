@@ -12,7 +12,12 @@
  * const renderer = new VirtualCanvasRenderer({
  *   mountPoint: document.getElementById('container'),
  *   mode: 'vertical',
- *   theme: { baseFontSize: 18 }
+ *   theme: { baseFontSize: 18 },
+ *   onProgressChange: (progressInfo) => {
+ *     console.log('Progress changed:', progressInfo.progress);
+ *     document.getElementById('progress-bar').style.width = 
+ *       (progressInfo.progress * 100) + '%';
+ *   }
  * });
  *
  * // 横向滑动模式
@@ -24,6 +29,12 @@
  *
  * // 渲染内容
  * renderer.render('<p>Hello World</p>');
+ *
+ * // 进度操作
+ * console.log('当前进度:', renderer.getProgress()); // 0-1之间的数值
+ * renderer.setProgress(0.5); // 跳转到50%位置
+ * renderer.pageDown(); // 向下翻页
+ * renderer.goToEnd(); // 跳转到结尾
  *
  * // 获取和设置模式
  * console.log(renderer.getMode()); // 'vertical' 或 'horizontal'
@@ -41,6 +52,7 @@ import { VirtualViewport } from './scroll-canvas.js';
  * @property {Object} [theme] - 主题配置
  * @property {string} [mode='vertical'] - 渲染模式：'vertical' | 'horizontal'
  * @property {boolean} [adjustCrossChunkContent=true] - 是否自动调整跨块内容位置
+ * @property {Function} [onProgressChange] - 进度变化回调函数
  */
 
 /**
@@ -118,11 +130,29 @@ import { VirtualViewport } from './scroll-canvas.js';
  * @property {boolean} rendered - 是否已渲染
  */
 
-export class VirtualCanvasRenderer {
-  // 挂载点和容器
-  /** @type {HTMLElement} 挂载点 */
-  mountPoint;
+/**
+ * @typedef {Object} ProgressInfo
+ * @property {number} progress - 当前进度（0-1）
+ * @property {number} oldProgress - 之前的进度（0-1）
+ * @property {number} scrollTop - 当前滚动位置
+ * @property {number} contentHeight - 内容总高度
+ * @property {number} viewportHeight - 视窗高度
+ */
 
+/**
+ * @typedef {Object} DetailedProgressInfo
+ * @property {number} progress - 当前进度（0-1）
+ * @property {number} scrollTop - 当前滚动位置
+ * @property {number} contentHeight - 内容总高度
+ * @property {number} viewportHeight - 视窗高度
+ * @property {number} maxScrollTop - 最大滚动位置
+ * @property {number} scrollableHeight - 可滚动的高度
+ * @property {boolean} isAtTop - 是否在顶部
+ * @property {boolean} isAtBottom - 是否在底部
+ * @property {boolean} canScroll - 是否可以滚动
+ */
+
+export class VirtualCanvasRenderer {
   /** @type {HTMLElement} 滚动容器 */
   container;
 
@@ -153,6 +183,16 @@ export class VirtualCanvasRenderer {
 
   /** @type {boolean} 是否启用调试模式 */
   debug = false;
+
+  // 进度相关
+  /** @type {Function|null} 进度变化回调函数 */
+  onProgressChange = null;
+
+  /** @type {number} 当前进度（0-1之间） */
+  currentProgress = 0;
+
+  /** @type {number} 进度变化防抖定时器 */
+  progressThrottleId = null;
 
   // 引擎和数据
   /** @type {TransferEngine} HTML转换引擎实例 */
@@ -191,13 +231,14 @@ export class VirtualCanvasRenderer {
    * @param {VirtualRenderConfig} config
    */
   constructor(config) {
-    this.mountPoint = config.mountPoint;
-
     // 渲染模式配置 - 支持 'vertical' 和 'horizontal'
     this.mode = config.mode || 'vertical';
 
     // 布局计算模式 - 是否自动调整跨块内容
     this.adjustCrossChunkContent = this.mode === 'horizontal'; // 默认启用
+
+    // 进度回调配置
+    this.onProgressChange = config.onProgressChange || null;
 
     // 主题配置需要先初始化，用于计算行高
     this.theme = {
@@ -211,8 +252,8 @@ export class VirtualCanvasRenderer {
     };
 
     // 视窗尺寸 - 基于窗口尺寸自动计算
-    this.viewportWidth = this.debug ? this.mountPoint.clientWidth : window.innerWidth; // 使用窗口宽度作为视窗宽度
-    this.viewportHeight = this.debug ? this.mountPoint.clientHeight : window.innerHeight; // 使用窗口高度作为视窗高度
+    this.viewportWidth = window.innerWidth; // 使用窗口宽度作为视窗宽度
+    this.viewportHeight = window.innerHeight; // 使用窗口高度作为视窗高度
 
     // Canvas尺寸 - 直接使用视窗尺寸
     this.canvasWidth = this.viewportWidth;
@@ -305,11 +346,6 @@ export class VirtualCanvasRenderer {
 
     // 组装DOM结构
     this.container.appendChild(this.scrollContent);
-
-    // 替换挂载点
-    if (this.mountPoint.parentNode) {
-      this.mountPoint.parentNode.replaceChild(this.container, this.mountPoint);
-    }
   }
 
   /**
@@ -319,8 +355,8 @@ export class VirtualCanvasRenderer {
     const dpr = window.devicePixelRatio || 1;
 
     // 重新计算尺寸（窗口大小可能已变化）
-    this.viewportWidth = this.debug ? this.mountPoint.clientWidth : window.innerWidth;
-    this.viewportHeight = this.debug ? this.mountPoint.clientHeight : window.innerHeight;
+    this.viewportWidth = window.innerWidth;
+    this.viewportHeight = window.innerHeight;
     this.canvasWidth = this.viewportWidth;
     this.canvasHeight = this.viewportHeight;
     this.chunkHeight = this.canvasHeight;
@@ -617,6 +653,9 @@ export class VirtualCanvasRenderer {
    */
   handleViewportChange() {
     this.renderVisibleContent();
+    
+    // 更新进度（防抖处理）
+    this.updateProgress();
   }
 
   /**
@@ -1343,6 +1382,186 @@ export class VirtualCanvasRenderer {
   }
 
   /**
+   * 更新进度（防抖处理）
+   */
+  updateProgress() {
+    // 清除之前的防抖定时器
+    if (this.progressThrottleId) {
+      clearTimeout(this.progressThrottleId);
+    }
+
+    // 设置新的防抖定时器
+    this.progressThrottleId = setTimeout(() => {
+      this.calculateAndNotifyProgress();
+      this.progressThrottleId = null;
+    }, 16); // 约60fps的更新频率
+  }
+
+  /**
+   * 计算并通知进度变化
+   */
+  calculateAndNotifyProgress() {
+    const newProgress = this.getProgress();
+    
+    // 只有进度确实发生变化时才通知
+    if (Math.abs(newProgress - this.currentProgress) > 0.001) { // 0.1%的变化阈值
+      const oldProgress = this.currentProgress;
+      this.currentProgress = newProgress;
+      
+      if (this.onProgressChange) {
+        this.onProgressChange({
+          progress: newProgress,
+          oldProgress: oldProgress,
+          scrollTop: this.viewport.state.scrollTop,
+          contentHeight: this.viewport.state.contentHeight,
+          viewportHeight: this.viewport.state.viewportHeight
+        });
+      }
+    }
+  }
+
+  /**
+   * 获取当前阅读进度
+   * @returns {number} 进度值（0-1之间）
+   */
+  getProgress() {
+    if (!this.viewport || !this.fullLayoutData) {
+      return 0;
+    }
+
+    const { scrollTop, contentHeight, viewportHeight } = this.viewport.state;
+    
+    // 如果内容高度小于等于视窗高度，说明内容全部可见，进度为1
+    if (contentHeight <= viewportHeight) {
+      return 1;
+    }
+
+    // 计算可滚动的最大距离
+    const maxScrollTop = contentHeight - viewportHeight;
+    
+    // 确保滚动位置在合理范围内
+    const clampedScrollTop = Math.max(0, Math.min(scrollTop, maxScrollTop));
+    
+    // 计算进度百分比
+    return maxScrollTop > 0 ? clampedScrollTop / maxScrollTop : 0;
+  }
+
+  /**
+   * 设置阅读进度
+   * @param {number} progress - 进度值（0-1之间）
+   * @param {boolean} smooth - 是否平滑滚动
+   */
+  setProgress(progress, smooth = true) {
+    if (!this.viewport || !this.fullLayoutData) {
+      console.warn('VirtualCanvasRenderer: Cannot set progress before content is rendered');
+      return;
+    }
+
+    // 确保进度值在有效范围内
+    const clampedProgress = Math.max(0, Math.min(1, progress));
+    
+    const { contentHeight, viewportHeight } = this.viewport.state;
+    
+    // 如果内容高度小于等于视窗高度，直接返回
+    if (contentHeight <= viewportHeight) {
+      return;
+    }
+
+    // 计算目标滚动位置
+    const maxScrollTop = contentHeight - viewportHeight;
+    const targetScrollTop = maxScrollTop * clampedProgress;
+    
+    // 滚动到目标位置
+    this.viewport.scrollTo(targetScrollTop, smooth);
+  }
+
+  /**
+   * 设置进度变化回调函数
+   * @param {Function} callback - 回调函数
+   */
+  setProgressChangeCallback(callback) {
+    this.onProgressChange = callback;
+  }
+
+  /**
+   * 获取详细的进度信息
+   * @returns {Object} 包含各种进度相关信息的对象
+   */
+  getProgressInfo() {
+    if (!this.viewport || !this.fullLayoutData) {
+      return {
+        progress: 0,
+        scrollTop: 0,
+        contentHeight: 0,
+        viewportHeight: 0,
+        maxScrollTop: 0,
+        scrollableHeight: 0,
+        isAtTop: true,
+        isAtBottom: false,
+        canScroll: false
+      };
+    }
+
+    const { scrollTop, contentHeight, viewportHeight } = this.viewport.state;
+    const maxScrollTop = Math.max(0, contentHeight - viewportHeight);
+    const progress = this.getProgress();
+    
+    return {
+      progress: progress,
+      scrollTop: scrollTop,
+      contentHeight: contentHeight,
+      viewportHeight: viewportHeight,
+      maxScrollTop: maxScrollTop,
+      scrollableHeight: contentHeight - viewportHeight,
+      isAtTop: scrollTop <= 1,
+      isAtBottom: scrollTop >= maxScrollTop - 1,
+      canScroll: contentHeight > viewportHeight
+    };
+  }
+
+  /**
+   * 跳转到内容的开始
+   * @param {boolean} smooth - 是否平滑滚动
+   */
+  goToStart(smooth = true) {
+    this.setProgress(0, smooth);
+  }
+
+  /**
+   * 跳转到内容的结束
+   * @param {boolean} smooth - 是否平滑滚动
+   */
+  goToEnd(smooth = true) {
+    this.setProgress(1, smooth);
+  }
+
+  /**
+   * 向前翻页（向下滚动一个视窗高度）
+   * @param {boolean} smooth - 是否平滑滚动
+   */
+  pageDown(smooth = true) {
+    if (!this.viewport) return;
+    
+    const { scrollTop, viewportHeight } = this.viewport.state;
+    const targetY = scrollTop + viewportHeight * 0.9; // 90%的视窗高度，保留一些重叠
+    
+    this.viewport.scrollTo(targetY, smooth);
+  }
+
+  /**
+   * 向后翻页（向上滚动一个视窗高度）
+   * @param {boolean} smooth - 是否平滑滚动
+   */
+  pageUp(smooth = true) {
+    if (!this.viewport) return;
+    
+    const { scrollTop, viewportHeight } = this.viewport.state;
+    const targetY = scrollTop - viewportHeight * 0.9; // 90%的视窗高度，保留一些重叠
+    
+    this.viewport.scrollTo(Math.max(0, targetY), smooth);
+  }
+
+  /**
    * 销毁渲染器
    */
   destroy() {
@@ -1357,12 +1576,19 @@ export class VirtualCanvasRenderer {
       this.viewport = null;
     }
 
+    // 清理进度相关定时器
+    if (this.progressThrottleId) {
+      clearTimeout(this.progressThrottleId);
+      this.progressThrottleId = null;
+    }
+
     // 清理引用
     this.parsedNodes = null;
     this.pageStyle = null;
     this.container = null;
     this.measureCanvas = null;
     this.measureCtx = null;
+    this.onProgressChange = null;
 
     // 清理数据
     this.renderChunks.clear();

@@ -18,8 +18,6 @@ body {
   position: relative;
   -webkit-user-select: none;
   user-select: none;
-  /* width: 390px;
-  height: 600px; */
 }
 #renderCanvas {
   width: 100%;

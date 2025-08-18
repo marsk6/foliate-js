@@ -1,4 +1,10 @@
+import { VirtualCanvasRenderer } from './x-canvas/virtual-canvas-renderer.js';
+import { CanvasTools } from './x-canvas/canvas-tools.js';
+
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+/**
+ * @typedef {Promise<{index: number, src: string, anchor: () => number, onLoad: (detail: {doc: Document, index: number}) => void, select: boolean}>} SectionLoad
+ */
 
 const debounce = (f, wait, immediate) => {
     let timeout
@@ -209,12 +215,11 @@ const setStylesImportant = (el, styles) => {
     for (const [k, v] of Object.entries(styles)) style.setProperty(k, v, 'important')
 }
 
-// NOTE: 实际内容渲染处，在一个 div 的 iframe 里，iframe 用多列布局
-class View {
+class CanvasView {
     #observer = new ResizeObserver(() => this.expand())
     // NOTE: 宽度等于屏幕宽度，固定
     #element = document.createElement('div')
-        // NOTE: book 内容的完整宽度，用 css 多列布局
+    // NOTE: book 内容的完整宽度，用 css 多列布局
     #iframe = document.createElement('iframe')
     #contentRange = document.createRange()
     #overlayer
@@ -223,197 +228,31 @@ class View {
     #column = true
     #size
     #layout = {}
-    constructor({ container, onExpand }) {
+    canvasTools = null;
+    renderer = null;
+    constructor({ container, mountPoint }) {
         this.container = container
-        this.onExpand = onExpand
-        this.#iframe.setAttribute('part', 'filter')
-        this.#element.append(this.#iframe)
-        Object.assign(this.#element.style, {
-            boxSizing: 'content-box',
-            position: 'relative',
-            overflow: 'hidden',
-            flex: '0 0 auto',
-            width: '100%', height: '100%',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-        })
-        Object.assign(this.#iframe.style, {
-            overflow: 'hidden',
-            border: '0',
-            display: 'none',
-            width: '100%', height: '100%',
-        })
-        // `allow-scripts` is needed for events because of WebKit bug
-        // https://bugs.webkit.org/show_bug.cgi?id=218086
-        this.#iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
-        this.#iframe.setAttribute('scrolling', 'no')
+
     }
-    get element() {
-        return this.#element
-    }
-    get document() {
-        return this.#iframe.contentDocument
-    }
+
+    /**
+     * 
+     * @param {string} src 是 zipLoader 提供的 blob 链接
+     * @param {Function} afterLoad 
+     * @param {Function} beforeRender 
+     * @returns {Promise<void>}
+     */
     async load(src, afterLoad, beforeRender) {
         if (typeof src !== 'string') throw new Error(`${src} is not string`)
-        return new Promise(resolve => {
-            this.#iframe.addEventListener('load', () => {
-                const doc = this.document
-                afterLoad?.(doc)
-
-                // it needs to be visible for Firefox to get computed style
-                this.#iframe.style.display = 'block'
-                const { vertical, rtl } = getDirection(doc)
-                const background = getBackground(doc)
-                this.#iframe.style.display = 'none'
-
-                this.#vertical = vertical
-                this.#rtl = rtl
-
-                this.#contentRange.selectNodeContents(doc.body)
-                const layout = beforeRender?.({ vertical, rtl, background })
-                this.#iframe.style.display = 'block'
-                this.render(layout)
-                this.#observer.observe(doc.body)
-
-                // the resize observer above doesn't work in Firefox
-                // (see https://bugzilla.mozilla.org/show_bug.cgi?id=1832939)
-                // until the bug is fixed we can at least account for font load
-                doc.fonts.ready.then(() => this.expand())
-
-                resolve()
-            }, { once: true })
-            this.#iframe.src = src
-        })
+        const currentHTML = await fetch(src).then(res => res.text())
+        this.renderer.render(currentHTML);
     }
     render(layout) {
         if (!layout) return
         this.#column = layout.flow !== 'scrolled'
         this.#layout = layout
-        //  NOTE: 横向还是纵向布局
-        if (this.#column) this.columnize(layout)
-        else this.scrolled(layout)
     }
-    scrolled({ gap, columnWidth }) {
-        const vertical = this.#vertical
-        const doc = this.document
-        setStylesImportant(doc.documentElement, {
-            'box-sizing': 'border-box',
-            'padding': vertical ? `${gap}px 0` : `0 ${gap}px`,
-            'column-width': 'auto',
-            'height': 'auto',
-            'width': 'auto',
-        })
-        setStylesImportant(doc.body, {
-            [vertical ? 'max-height' : 'max-width']: `${columnWidth}px`,
-            'margin': 'auto',
-        })
-        this.setImageSize()
-        this.expand()
-    }
-    columnize({ width, height, gap, columnWidth }) {
-        const vertical = this.#vertical
-        this.#size = vertical ? height : width
 
-        const doc = this.document
-        setStylesImportant(doc.documentElement, {
-            'box-sizing': 'border-box',
-            'column-width': `${Math.trunc(columnWidth)}px`,
-            'column-gap': `${gap}px`,
-            'column-fill': 'auto',
-            ...(vertical
-                ? { 'width': `${width}px` }
-                : { 'height': `${height}px` }),
-            'padding': vertical ? `${gap / 2}px 0` : `0 ${gap / 2}px`,
-            'overflow': 'hidden',
-            // force wrap long words
-            'overflow-wrap': 'break-word',
-            // reset some potentially problematic props
-            'position': 'static', 'border': '0', 'margin': '0',
-            'max-height': 'none', 'max-width': 'none',
-            'min-height': 'none', 'min-width': 'none',
-            // fix glyph clipping in WebKit
-            '-webkit-line-box-contain': 'block glyphs replaced',
-        })
-        setStylesImportant(doc.body, {
-            'max-height': 'none',
-            'max-width': 'none',
-            'margin': '0',
-        })
-        this.setImageSize()
-        this.expand()
-    }
-    setImageSize() {
-        const { width, height, margin } = this.#layout
-        const vertical = this.#vertical
-        const doc = this.document
-        for (const el of doc.body.querySelectorAll('img, svg, video')) {
-            // preserve max size if they are already set
-            const { maxHeight, maxWidth } = doc.defaultView.getComputedStyle(el)
-            setStylesImportant(el, {
-                'max-height': vertical
-                    ? (maxHeight !== 'none' && maxHeight !== '0px' ? maxHeight : '100%')
-                    : `${height - margin * 2}px`,
-                'max-width': vertical
-                    ? `${width - margin * 2}px`
-                    : (maxWidth !== 'none' && maxWidth !== '0px' ? maxWidth : '100%'),
-                'object-fit': 'contain',
-                'page-break-inside': 'avoid',
-                'break-inside': 'avoid',
-                'box-sizing': 'border-box',
-            })
-        }
-    }
-    expand() {
-        const { documentElement } = this.document
-        if (this.#column) {
-            const side = this.#vertical ? 'height' : 'width'
-            const otherSide = this.#vertical ? 'width' : 'height'
-            const contentRect = this.#contentRange.getBoundingClientRect()
-            const rootRect = documentElement.getBoundingClientRect()
-            // offset caused by column break at the start of the page
-            // which seem to be supported only by WebKit and only for horizontal writing
-            const contentStart = this.#vertical ? 0
-                : this.#rtl ? rootRect.right - contentRect.right : contentRect.left - rootRect.left
-            const contentSize = contentStart + contentRect[side]
-            const pageCount = Math.ceil(contentSize / this.#size)
-            const expandedSize = pageCount * this.#size
-            this.#element.style.padding = '0'
-            this.#iframe.style[side] = `${expandedSize}px`
-            this.#element.style[side] = `${expandedSize + this.#size * 2}px`
-            this.#iframe.style[otherSide] = '100%'
-            this.#element.style[otherSide] = '100%'
-            documentElement.style[side] = `${this.#size}px`
-            if (this.#overlayer) {
-                this.#overlayer.element.style.margin = '0'
-                this.#overlayer.element.style.left = this.#vertical ? '0' : `${this.#size}px`
-                this.#overlayer.element.style.top = this.#vertical ? `${this.#size}px` : '0'
-                this.#overlayer.element.style[side] = `${expandedSize}px`
-                this.#overlayer.redraw()
-            }
-        } else {
-            const side = this.#vertical ? 'width' : 'height'
-            const otherSide = this.#vertical ? 'height' : 'width'
-            const contentSize = documentElement.getBoundingClientRect()[side]
-            const expandedSize = contentSize
-            const { margin } = this.#layout
-            const padding = this.#vertical ? `0 ${margin}px` : `${margin}px 0`
-            this.#element.style.padding = padding
-            this.#iframe.style[side] = `${expandedSize}px`
-            this.#element.style[side] = `${expandedSize}px`
-            this.#iframe.style[otherSide] = '100%'
-            this.#element.style[otherSide] = '100%'
-            if (this.#overlayer) {
-                this.#overlayer.element.style.margin = padding
-                this.#overlayer.element.style.left = '0'
-                this.#overlayer.element.style.top = '0'
-                this.#overlayer.element.style[side] = `${expandedSize}px`
-                this.#overlayer.redraw()
-            }
-        }
-        this.onExpand()
-    }
     set overlayer(overlayer) {
         this.#overlayer = overlayer
         this.#element.append(overlayer.element)
@@ -422,7 +261,7 @@ class View {
         return this.#overlayer
     }
     destroy() {
-        if (this.document) this.#observer.unobserve(this.document.body)
+        // if (this.document) this.#observer.unobserve(this.document.body)
     }
 }
 
@@ -449,7 +288,7 @@ export class Paginator extends HTMLElement {
     #header
     #footer
     /**
-     * @type {View}
+     * @type {CanvasView}
      */
     #view
     /**
@@ -479,218 +318,101 @@ export class Paginator extends HTMLElement {
     #scrollBounds
     #touchState
     #touchScrolled
+    /**
+     * 上拉
+     */
+    #isPullUp = true
     #lastVisibleRange
     /**
      * 书的章节，或者说目录
+     * @typedef {{id: string, load: () => Promise<SectionLoad>, createDocument: () => Promise<Document>, size: number, linear: string, cfi: string}} EPUBSection
+     * @type {Array<EPUBSection>}
      */
     sections = []
     constructor() {
         super()
-        /**
-         * NOTE:
-         * top 是整个书架的容器，里面包含 background（背景） header（标题） container（book） footer（进度）
-         * 
-         * 
-         * 
-         * 
-         * 
-         * 
-         */
         this.#root.innerHTML = `<style>
-        :host {
-            display: block;
-            container-type: size;
-        }
-        :host, #top {
+        * {
             box-sizing: border-box;
+        }
+        :host {
+            font-family: system-ui, sans-serif;
+            background: #f8f8f8;
+            -webkit-user-select: none; /* 禁止选中文本 */
+            -webkit-touch-callout: none; /* 禁止长按弹出菜单 */
+            touch-action: manipulation; /* 禁止双指缩放、双击放大等 */
+            user-select: none;
+            height: 100vh;
+            margin: 0;
+        }
+        .canvas-wrap {
             position: relative;
-            overflow: hidden;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        #renderCanvas {
             width: 100%;
             height: 100%;
         }
-        #top {
-            --_gap: 7%;
-            --_margin: 48px;
-            --_max-inline-size: 720px;
-            --_max-block-size: 1440px;
-            --_max-column-count: 2;
-            --_max-column-count-portrait: 1;
-            --_max-column-count-spread: var(--_max-column-count);
-            --_half-gap: calc(var(--_gap) / 2);
-            --_max-width: calc(var(--_max-inline-size) * var(--_max-column-count-spread));
-            --_max-height: var(--_max-block-size);
-            display: grid;
-            grid-template-columns:
-                minmax(var(--_half-gap), 1fr)
-                var(--_half-gap)
-                minmax(0, calc(var(--_max-width) - var(--_gap)))
-                var(--_half-gap)
-                minmax(var(--_half-gap), 1fr);
-            grid-template-rows:
-                minmax(var(--_margin), 1fr)
-                minmax(0, var(--_max-height))
-                minmax(var(--_margin), 1fr);
-            &.vertical {
-                --_max-column-count-spread: var(--_max-column-count-portrait);
-                --_max-width: var(--_max-block-size);
-                --_max-height: calc(var(--_max-inline-size) * var(--_max-column-count-spread));
-            }
-            @container (orientation: portrait) {
-                & {
-                    --_max-column-count-spread: var(--_max-column-count-portrait);
-                }
-                &.vertical {
-                    --_max-column-count-spread: var(--_max-column-count);
-                }
-            }
+        .anchor {
+            position: absolute;
+            z-index: 10;
+            pointer-events: auto;
+            background: none;
+            border: none;
+            display: none;
         }
-        #background {
-            grid-column: 1 / -1;
-            grid-row: 1 / -1;
-        }
-        #container {
-            grid-column: 2 / 5;
-            grid-row: 2;
-            overflow: hidden;
-        }
-        :host([flow="scrolled"]) #container {
-            grid-column: 1 / -1;
-            grid-row: 1 / -1;
-            overflow: auto;
-        }
-        #header {
-            grid-column: 3 / 4;
-            grid-row: 1;
-        }
-        #footer {
-            grid-column: 3 / 4;
-            grid-row: 3;
-            align-self: end;
-        }
-        #header, #footer {
-            display: grid;
-            height: var(--_margin);
-        }
-        :is(#header, #footer) > * {
+        .anchor-inner {
+            position: relative;
             display: flex;
+            flex-direction: column;
             align-items: center;
-            min-width: 0;
+            height: 100%;
         }
-        :is(#header, #footer) > * > * {
+        .anchor-line {
+            width: 3px;
+            height: 100%;
+            background: #007aff;
+        }
+        .anchor-dot {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: #007aff;
+            border-radius: 10px;
+        }
+
+        #startAnchor .anchor-dot {
+            top: -10px;
+        }
+
+        #endAnchor .anchor-dot {
+            bottom: -10px;
+        }
+
+        .highlight-bar {
+            position: absolute;
+            background: #007aff;
+            opacity: 0.2;
+            pointer-events: none;
+        }
+        .highlight-layer {
+            position: absolute;
+            left: 0;
+            top: 0;
             width: 100%;
-            overflow: hidden;
-            white-space: nowrap;
-            text-overflow: ellipsis;
-            text-align: center;
-            font-size: .75em;
-            opacity: .6;
+            height: 100%;
+            pointer-events: none;
+            z-index: 2;
         }
+
         </style>
-        <div id="top">
-            <div id="background" part="filter"></div>
-            <div id="header"></div>
-            <div id="container"></div>
-            <div id="footer"></div>
+        <div class="canvas-wrap">
+            <div id="renderCanvas"></div>
         </div>
         `
-
-        this.#top = this.#root.getElementById('top')
-        this.#background = this.#root.getElementById('background')
-        this.#container = this.#root.getElementById('container')
-        this.#header = this.#root.getElementById('header')
-        this.#footer = this.#root.getElementById('footer')
-
-        this.#observer.observe(this.#container)
-        this.#container.addEventListener('scroll', () => this.dispatchEvent(new Event('scroll')))
-        this.#container.addEventListener('scroll', debounce(() => {
-            if (this.scrolled) {
-                if (this.#justAnchored) this.#justAnchored = false
-                else this.#afterScroll('scroll')
-            }
-        }, 250))
-
-        const opts = { passive: false }
-        this.addEventListener('touchstart', this.#onTouchStart.bind(this), opts)
-        this.addEventListener('touchmove', this.#onTouchMove.bind(this), opts)
-        this.addEventListener('touchend', this.#onTouchEnd.bind(this))
-        this.addEventListener('load', ({ detail: { doc } }) => {
-            // NOTE: view 里的 #iframe.contentDocument
-            doc.addEventListener('touchstart', this.#onTouchStart.bind(this), opts)
-            doc.addEventListener('touchmove', this.#onTouchMove.bind(this), opts)
-            doc.addEventListener('touchend', this.#onTouchEnd.bind(this))
-        })
-
-        this.addEventListener('relocate', ({ detail }) => {
-            if (detail.reason === 'highlight') return;
-            if (detail.reason === 'selection') setSelectionTo(this.#anchor, 0)
-            else if (detail.reason === 'navigation') {
-                if (this.#anchor === 1) setSelectionTo(detail.range, 1)
-                else if (typeof this.#anchor === 'number')
-                    setSelectionTo(detail.range, -1)
-                else setSelectionTo(this.#anchor, -1)
-            }
-        })
-        const checkPointerSelection = debounce((range, sel) => {
-            if (!sel.rangeCount) return
-            const selRange = sel.getRangeAt(0)
-            const backward = selectionIsBackward(sel)
-            if (backward && selRange.compareBoundaryPoints(Range.START_TO_START, range) < 0)
-                this.prev()
-            else if (!backward && selRange.compareBoundaryPoints(Range.END_TO_END, range) > 0)
-                this.next()
-        }, 700)
-        this.addEventListener('load', ({ detail: { doc } }) => {
-            // 
-            let isPointerSelecting = false
-            doc.addEventListener('pointerdown', () => isPointerSelecting = true)
-            doc.addEventListener('pointerup', () => isPointerSelecting = false)
-            let isKeyboardSelecting = false
-            doc.addEventListener('keydown', () => isKeyboardSelecting = true)
-            doc.addEventListener('keyup', () => isKeyboardSelecting = false)
-            doc.addEventListener('selectionchange', () => {
-                if (this.scrolled) return
-                const range = this.#lastVisibleRange
-                if (!range) return
-                const sel = doc.getSelection()
-                if (!sel.rangeCount) return
-                if (isPointerSelecting && sel.type === 'Range')
-                    checkPointerSelection(range, sel)
-                else if (isKeyboardSelecting) {
-                    const selRange = sel.getRangeAt(0).cloneRange()
-                    const backward = selectionIsBackward(sel)
-                    if (!backward) selRange.collapse()
-                    this.#scrollToAnchor(selRange)
-                }
-            })
-            doc.addEventListener('focusin', e => this.scrolled ? null :
-                // NOTE: `requestAnimationFrame` is needed in WebKit
-                requestAnimationFrame(() => this.#scrollToAnchor(e.target)))
-        })
-
-        this.#mediaQueryListener = () => {
-            if (!this.#view) return
-            this.#background.style.background = getBackground(this.#view.document)
-        }
-        this.#mediaQuery.addEventListener('change', this.#mediaQueryListener)
     }
-    attributeChangedCallback(name, _, value) {
-        switch (name) {
-            case 'flow':
-                this.render()
-                break
-            case 'gap':
-            case 'margin':
-            case 'max-block-size':
-            case 'max-column-count':
-                this.#top.style.setProperty('--_' + name, value)
-                break
-            case 'max-inline-size':
-                // needs explicit `render()` as it doesn't necessarily resize
-                this.#top.style.setProperty('--_' + name, value)
-                this.render()
-                break
-        }
-    }
+
     open(book) {
         this.bookDir = book.dir
         this.sections = book.sections
@@ -712,99 +434,30 @@ export class Paginator extends HTMLElement {
         })
     }
     #createView() {
-        if (this.#view) {
-            this.#view.destroy()
-            this.#container.removeChild(this.#view.element)
-        }
-        this.#view = new View({
-            container: this,
-            onExpand: () => this.#scrollToAnchor(this.#anchor),
-        })
-        this.#container.append(this.#view.element)
-        return this.#view
+        const mountPoint = this.#root.getElementById('renderCanvas')
+        this.mountPoint = mountPoint
+
+        this.renderer = new VirtualCanvasRenderer({
+            mountPoint: container,
+            mode: 'horizontal',
+            // mode: 'vertical',
+            theme: {
+              backgroundColor: '#fff',
+              textColor: '#222',
+              selectionColor: '#007aff',
+              selectionOpacity: 0.2,
+              highlightColor: '#ffeb3b',
+              highlightOpacity: 0.3,
+            },
+          });
+          this.renderer.render(currentHTML); // TODO: currentHTML 定义
+          this.canvasTools = new CanvasTools(this.renderer);
+        return this.renderer
     }
-    #beforeRender({ vertical, rtl, background }) {
-        this.#vertical = vertical
-        this.#rtl = rtl
-        this.#top.classList.toggle('vertical', vertical)
 
-        // set background to `doc` background
-        // this is needed because the iframe does not fill the whole element
-        this.#background.style.background = background
-
-        const { width, height } = this.#container.getBoundingClientRect()
-        const size = vertical ? height : width
-
-        const style = getComputedStyle(this.#top)
-        const maxInlineSize = parseFloat(style.getPropertyValue('--_max-inline-size'))
-        const maxColumnCount = parseInt(style.getPropertyValue('--_max-column-count-spread'))
-        const margin = parseFloat(style.getPropertyValue('--_margin'))
-        this.#margin = margin
-
-        const g = parseFloat(style.getPropertyValue('--_gap')) / 100
-        // The gap will be a percentage of the #container, not the whole view.
-        // This means the outer padding will be bigger than the column gap. Let
-        // `a` be the gap percentage. The actual percentage for the column gap
-        // will be (1 - a) * a. Let us call this `b`.
-        //
-        // To make them the same, we start by shrinking the outer padding
-        // setting to `b`, but keep the column gap setting the same at `a`. Then
-        // the actual size for the column gap will be (1 - b) * a. Repeating the
-        // process again and again, we get the sequence
-        //     x₁ = (1 - b) * a
-        //     x₂ = (1 - x₁) * a
-        //     ...
-        // which converges to x = (1 - x) * a. Solving for x, x = a / (1 + a).
-        // So to make the spacing even, we must shrink the outer padding with
-        //     f(x) = x / (1 + x).
-        // But we want to keep the outer padding, and make the inner gap bigger.
-        // So we apply the inverse, f⁻¹ = -x / (x - 1) to the column gap.
-        const gap = -g / (g - 1) * size
-
-        const flow = this.getAttribute('flow')
-        if (flow === 'scrolled') {
-            // FIXME: vertical-rl only, not -lr
-            this.setAttribute('dir', vertical ? 'rtl' : 'ltr')
-            this.#top.style.padding = '0'
-            const columnWidth = maxInlineSize
-
-            this.heads = null
-            this.feet = null
-            this.#header.replaceChildren()
-            this.#footer.replaceChildren()
-
-            return { flow, margin, gap, columnWidth }
-        }
-
-        const divisor = Math.min(maxColumnCount, Math.ceil(size / maxInlineSize))
-        const columnWidth = (size / divisor) - gap
-        this.setAttribute('dir', rtl ? 'rtl' : 'ltr')
-
-        const marginalDivisor = vertical
-            ? Math.min(2, Math.ceil(width / maxInlineSize))
-            : divisor
-        const marginalStyle = {
-            gridTemplateColumns: `repeat(${marginalDivisor}, 1fr)`,
-            gap: `${gap}px`,
-            direction: this.bookDir === 'rtl' ? 'rtl' : 'ltr',
-        }
-        Object.assign(this.#header.style, marginalStyle)
-        Object.assign(this.#footer.style, marginalStyle)
-        const heads = makeMarginals(marginalDivisor, 'head')
-        const feet = makeMarginals(marginalDivisor, 'foot')
-        this.heads = heads.map(el => el.children[0])
-        this.feet = feet.map(el => el.children[0])
-        this.#header.replaceChildren(...heads)
-        this.#footer.replaceChildren(...feet)
-
-        return { height, width, margin, gap, columnWidth }
-    }
     render() {
         if (!this.#view) return
-        this.#view.render(this.#beforeRender({
-            vertical: this.#vertical,
-            rtl: this.#rtl,
-        }))
+        this.#view.render()
         this.#scrollToAnchor(this.#anchor)
     }
     /**
@@ -826,42 +479,7 @@ export class Paginator extends HTMLElement {
         return this.#vertical ? (scrolled ? 'width' : 'height')
             : scrolled ? 'height' : 'width'
     }
-    /**
-     * 就是每一页的大小
-     */
-    get size() {
-        return this.#container.getBoundingClientRect()[this.sideProp]
-    }
-    /**
-     * iframe 的大小，即内容的全长
-     */
-    get viewSize() {
-        return this.#view.element.getBoundingClientRect()[this.sideProp]
-    }
-    /**
-     * 某一页的偏移量，某一页的左边
-     */
-    get start() {
-        return Math.abs(this.#container[this.scrollProp])
-    }
-    /**
-     * 某一页的右边
-     */
-    get end() {
-        return this.start + this.size
-    }
-    /**
-     * 当前页码
-     */
-    get page() {
-        return Math.floor(((this.start + this.end) / 2) / this.size)
-    }
-    /**
-     * 总页数
-     */
-    get pages() {
-        return Math.round(this.viewSize / this.size)
-    }
+
     scrollBy(dx, dy) {
         const delta = this.#vertical ? dy : dx
         const element = this.#container
@@ -891,7 +509,7 @@ export class Paginator extends HTMLElement {
 
         this.#scrollToPage(page, 'snap').then(() => {
             const dir = page <= 0 ? -1 : page >= pages - 1 ? 1 : null
-            // NOTE: 回到目录或首页
+            // NOTE: 回到目录或首页，或跳到相邻的一章
             if (dir) return this.#goTo({
                 index: this.#adjacentIndex(dir),
                 anchor: dir < 0 ? () => 1 : () => 0,
@@ -914,12 +532,10 @@ export class Paginator extends HTMLElement {
         // NOTE: pinch 捏，双指缩放屏幕
         if (state.pinched) return
         state.pinched = globalThis.visualViewport.scale > 1
-        if (this.scrolled || state.pinched) return
         if (e.touches.length > 1) {
             if (this.#touchScrolled) e.preventDefault()
-            return
+                return
         }
-        e.preventDefault()
         const touch = e.changedTouches[0]
         const x = touch.screenX
         const y = touch.screenY
@@ -932,12 +548,37 @@ export class Paginator extends HTMLElement {
         state.t = e.timeStamp
         state.vx = dx / dt
         state.vy = dy / dt
+        if (this.scrolled || state.pinched) {
+            if (this.scrolled) {
+                this.#isPullUp = dy > 0
+            }
+            return
+        }
+        e.preventDefault()
         this.#touchScrolled = true
         this.scrollBy(dx, dy)
     }
     #onTouchEnd() {
         this.#touchScrolled = false
-        if (this.scrolled) return
+        if (this.scrolled) {
+            // NOTE: fraction 阅读进度，0.25 = 阅读到 25%
+            // FIXME: 如果是滚动模式，无法滚动到下一章，左右滑动还能滑过来再加载展示，上下滚动无法连续展示
+            const fraction = this.start / this.viewSize
+            if (this.pages > 1) {
+                if (fraction < 0.001 && !this.#isPullUp) {
+                    this.prevSection()
+                } else if (fraction > 0.999 && this.#isPullUp) {
+                    this.nextSection()
+                }
+            } else {
+                if (this.#isPullUp) {
+                    this.nextSection()
+                } else {
+                    this.prevSection()
+                }
+            }
+            return
+        }
 
         // XXX: Firefox seems to report scale as 1... sometimes...?
         // at this point I'm basically throwing `requestAnimationFrame` at
@@ -1044,7 +685,7 @@ export class Paginator extends HTMLElement {
     }
     /**
      * 滚动后触发 relocate 事件
-     * @param {'selection' | 'navigation' | 'anchor'} reason
+     * @param {'selection' | 'navigation' | 'anchor' | 'scroll'} reason
      */
     #afterScroll(reason) {
         const range = this.#getVisibleRange()
@@ -1056,6 +697,7 @@ export class Paginator extends HTMLElement {
 
         const index = this.#index
         const detail = { reason, range, index }
+        // NOTE: fraction 阅读进度，0.25 = 阅读到 25%
         if (this.scrolled) detail.fraction = this.start / this.viewSize
         else if (this.pages > 0) {
             const { page, pages } = this
@@ -1065,41 +707,34 @@ export class Paginator extends HTMLElement {
         }
         this.dispatchEvent(new CustomEvent('relocate', { detail }))
     }
+    /**
+     * 
+     * @param {SectionLoad} promise 
+     * @returns
+     */
     async #display(promise) {
         const { index, src, anchor, onLoad, select } = await promise
         this.#index = index
-        const hasFocus = this.#view?.document?.hasFocus()
         if (src) {
             // NOTE: 创建 container 区域
-            const view = this.#createView()
-            const afterLoad = doc => {
-                if (doc.head) {
-                    const $styleBefore = doc.createElement('style')
-                    doc.head.prepend($styleBefore)
-                    const $style = doc.createElement('style')
-                    doc.head.append($style)
-                    this.#styleMap.set(doc, [$styleBefore, $style])
-                }
-                onLoad?.({ doc, index })
-            }
-            const beforeRender = this.#beforeRender.bind(this)
-            await view.load(src, afterLoad, beforeRender)
+            this.#createView()
+            if (typeof src !== 'string') throw new Error(`${src} is not string`)
+            const currentHTML = await fetch(src).then(res => res.text())
+            this.renderer.render(currentHTML);
             this.dispatchEvent(new CustomEvent('create-overlayer', {
                 detail: {
                     doc: view.document, index,
                     attach: overlayer => view.overlayer = overlayer,
                 },
             }))
-            this.#view = view
         }
-        await this.scrollToAnchor((typeof anchor === 'function'
-            ? anchor(this.#view.document) : anchor) ?? 0, select ? 'selection' : 'navigation')
-        if (hasFocus) this.focusView()
+        // await this.scrollToAnchor((typeof anchor === 'function'
+        //     ? anchor(this.renderer.document) : anchor) ?? 0, select ? 'selection' : 'navigation')
     }
     #canGoToIndex(index) {
         return index >= 0 && index <= this.sections.length - 1
     }
-    async #goTo({ index, anchor, select}) {
+    async #goTo({ index, anchor, select }) {
         if (index === this.#index) await this.#display({ index, anchor, select })
         else {
             const oldIndex = this.#index
@@ -1151,6 +786,11 @@ export class Paginator extends HTMLElement {
     get atEnd() {
         return this.#adjacentIndex(1) == null && this.page >= this.pages - 2
     }
+    /**
+     * adjacent 相邻的章节
+     * @param {number} dir
+     * @returns
+     */
     #adjacentIndex(dir) {
         for (let index = this.#index + dir; this.#canGoToIndex(index); index += dir)
             if (this.sections[index]?.linear !== 'no') return index
@@ -1218,24 +858,11 @@ export class Paginator extends HTMLElement {
             $beforeStyle.textContent = beforeStyle
             $style.textContent = style
         } else $style.textContent = styles
-
-        // NOTE: needs `requestAnimationFrame` in Chromium
-        requestAnimationFrame(() =>
-            this.#background.style.background = getBackground(this.#view.document))
-
-        // needed because the resize observer doesn't work in Firefox
-        this.#view?.document?.fonts?.ready?.then(() => this.#view.expand())
-    }
-    focusView() {
-        this.#view.document.defaultView.focus()
     }
     destroy() {
-        this.#observer.unobserve(this)
         this.#view.destroy()
         this.#view = null
-        this.sections[this.#index]?.unload?.()
-        this.#mediaQuery.removeEventListener('change', this.#mediaQueryListener)
     }
 }
 
-customElements.define('foliate-canvas', Paginator)
+customElements.define('foliate-paginator', Paginator)

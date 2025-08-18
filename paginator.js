@@ -901,7 +901,7 @@ export class Paginator extends HTMLElement {
 
         this.#scrollToPage(page, 'snap').then(() => {
             const dir = page <= 0 ? -1 : page >= pages - 1 ? 1 : null
-            // NOTE: 回到目录或首页
+            // NOTE: 回到目录或首页，或跳到相邻的一章
             if (dir) return this.#goTo({
                 index: this.#adjacentIndex(dir),
                 anchor: dir < 0 ? () => 1 : () => 0,
@@ -1156,6 +1156,11 @@ export class Paginator extends HTMLElement {
                 }))
         }
     }
+    /**
+     * NOTE: 外部渲染入口
+     * @param {*} target 
+     * @returns 
+     */
     async goTo(target) {
         if (this.locked) return
         const resolved = await target
