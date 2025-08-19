@@ -383,34 +383,6 @@ export class Paginator extends HTMLElement {
         })
     }
     #createView() {
-        const mountPoint = this.#root.getElementById('renderCanvas')
-        this.mountPoint = mountPoint
-
-        const chapterManager = new MultiChapterManager({
-            el: container,
-            mode: 'horizontal',
-            // mode: 'vertical',
-            theme: {
-              backgroundColor: '#fff',
-              textColor: '#222',
-              selectionColor: '#007aff',
-              selectionOpacity: 0.2,
-              highlightColor: '#ffeb3b',
-              highlightOpacity: 0.3,
-            },
-          });
-        const chapters = this.sections.map((section, index) => {
-            return {
-                index,
-                loadContent: async () => {
-                    const { src } = await section.load();
-                    const currentHTML = await fetch(src).then(res => res.text())
-                    return currentHTML;
-                },
-            }
-        });
-        chapterManager.initBook(chapters);
-        return chapterManager;
     }
 
     render() {
@@ -698,13 +670,11 @@ export class Paginator extends HTMLElement {
         if (this.locked) return
         const resolved = await target
         if (this.#canGoToIndex(resolved.index)) {
-            const mountPoint = this.#root.getElementById('renderCanvas')
-            this.mountPoint = mountPoint
-    
+            const el = this.#root.getElementById('renderCanvas')
             const chapterManager = new MultiChapterManager({
-                el: container,
-                mode: 'horizontal',
-                // mode: 'vertical',
+                el,
+                // mode: 'horizontal',
+                mode: 'vertical',
                 theme: {
                   backgroundColor: '#fff',
                   textColor: '#222',
@@ -718,14 +688,14 @@ export class Paginator extends HTMLElement {
                 return {
                     index,
                     loadContent: async () => {
-                        const { src } = await section.load();
+                        const src = await section.load();
                         const currentHTML = await fetch(src).then(res => res.text())
                         return currentHTML;
                     },
                 }
             });
             chapterManager.initBook(chapters);
-            chapterManager.goToChapter(resolved.index);
+            chapterManager.goToChapter(2);
             return chapterManager;
         }
     }
@@ -793,6 +763,7 @@ export class Paginator extends HTMLElement {
      * @returns 
      */
     next(distance) {
+        return this.goTo({ index: 0 })
         return this.#turnPage(1, distance)
     }
     prevSection() {

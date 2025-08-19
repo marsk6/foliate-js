@@ -32,8 +32,6 @@ export class CanvasTools {
 
     this.renderer = renderer;
     this.createDOMStructure();
-    this.onNativeEvent();
-    this.setupMessageToNative();
   }
 
   async createDOMStructure() {

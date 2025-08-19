@@ -44,6 +44,7 @@
 import TransferEngine from './layout-engine.js';
 import { HorizontalSlideManager } from './slide-canvas.js';
 import { VirtualViewport } from './scroll-canvas.js';
+import { CanvasTools } from './canvas-tools.js';
 
 /**
  * @typedef {Object} VirtualRenderConfig

@@ -452,7 +452,6 @@ export class MultiChapterManager {
   async goToChapter(chapterIndex, progress = 0, smooth = true) {
     // 确保章节已加载
     await this.loadChapter(chapterIndex);
-
     // 切换到目标章节，确保全局透明层隐藏（允许正常滚动）
     this.hideGlobalOverlayMask();
     this.currentChapterIndex = chapterIndex;

@@ -62,7 +62,7 @@ function main() {
     },
   });
 
-  
+
   const native = new Native(chapterManager);
 
   native.on('longPress', (start, end) => {
