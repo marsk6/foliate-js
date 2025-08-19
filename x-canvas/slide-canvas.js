@@ -137,7 +137,6 @@ export class HorizontalSlideManager {
       will-change: transform;
     `;
 
-
     // 设置Canvas的2D上下文缩放
     const dpr = window.devicePixelRatio || 1;
     this.canvasInfoList.forEach((canvasInfo) => {
@@ -186,7 +185,6 @@ export class HorizontalSlideManager {
     this.state.scrollTop = this.state.currentPage * this.config.chunkHeight;
   }
 
-
   /**
    * 设置内容总宽度和页面数量
    * @param {number} width
@@ -203,7 +201,6 @@ export class HorizontalSlideManager {
       // this.scrollContent.style.width = (totalPages * this.config.viewportWidth) + 'px';
     }
   }
-
 
   /**
    * 处理触摸开始
@@ -265,7 +262,6 @@ export class HorizontalSlideManager {
       deltaTime < this.maxSwipeTime && absDeltaX > this.minSwipeDistance;
     const isLongSwipe = absDeltaX > this.config.viewportWidth * 0.3; // 超过30%宽度
 
-
     if (isQuickSwipe || isLongSwipe) {
       if (deltaX > 0) {
         // 向右滑动，显示上一页
@@ -303,7 +299,16 @@ export class HorizontalSlideManager {
     if (this.state.currentPage < this.state.totalPages - 1) {
       this.goToPage(this.state.currentPage + 1);
     } else {
-      this.snapToCurrentPage();
+      if (!this.config.isLastChapter) {
+        this.config.chapterManager.this.animateToPage(
+          this.state.totalPages + 1
+        );
+        this.config.chapterManager.slideChapter().then(() => {
+          this.config.chapterManager.activateChapter.renderer.viewport.slideContainer();
+        });
+      } else {
+        this.snapToCurrentPage();
+      }
     }
   }
 
@@ -339,7 +344,7 @@ export class HorizontalSlideManager {
     this.state.isAnimating = true;
 
     // 执行滑动动画
-    this.animateToPage(oldPage, pageIndex, () => {
+    this.animateToPage(pageIndex, () => {
       this.updateScrollPosition();
       this.state.isAnimating = false;
       this.notifyViewportChange();
@@ -353,7 +358,10 @@ export class HorizontalSlideManager {
     const tailCanvas = this.canvasInfoList[this.tailIndex];
     const newPage = tailCanvas.page + 1;
 
-    if (newPage <= this.state.totalPages && tailCanvas.page - currentPage === 1) {
+    if (
+      newPage <= this.state.totalPages &&
+      tailCanvas.page - currentPage === 1
+    ) {
       this.repositionCanvas(headCanvas, newPage);
       headCanvas.page = newPage;
       this.tailIndex = this.headIndex;
@@ -375,10 +383,10 @@ export class HorizontalSlideManager {
   }
 
   /**
- * 重定位Canvas到新位置
- * @param {CanvasInfo} canvasInfo
- * @param {number} newLeft
- */
+   * 重定位Canvas到新位置
+   * @param {CanvasInfo} canvasInfo
+   * @param {number} newLeft
+   */
   repositionCanvas(canvasInfo, newPage) {
     const { chunkWidth, chunkHeight } = this.config;
 
@@ -391,7 +399,6 @@ export class HorizontalSlideManager {
     // 触发重渲染标记
     canvasInfo.needsRerender = true;
   }
-
 
   /**
    * 回弹到当前页面
@@ -415,7 +422,18 @@ export class HorizontalSlideManager {
   /**
    * 执行页面切换动画
    */
-  animateToPage(fromPage, toPage, callback) {
+  slideContainer() {
+    // 计算目标页面的偏移位置
+    const targetOffset = this.config.viewportWidth;
+
+    this.container.style.transition = `transform ${this.animationDuration}ms ease-out`;
+    this.container.style.transform = `translateX(${targetOffset}px)`;
+  }
+
+  /**
+   * 执行页面切换动画
+   */
+  animateToPage(toPage, callback) {
     // 计算目标页面的偏移位置
     const targetOffset = -toPage * this.config.viewportWidth;
 
@@ -426,7 +444,7 @@ export class HorizontalSlideManager {
     setTimeout(() => {
       // 动画结束后清除过渡效果
       this.scrollContent.style.transition = '';
-      callback();
+      callback?.();
     }, this.animationDuration);
   }
 

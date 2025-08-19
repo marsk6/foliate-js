@@ -129,11 +129,11 @@ export class CanvasTools {
     const { renderer, highlightLayer, startIdx, endIdx } = this;
     highlightLayer.innerHTML = '';
     if (startIdx == null || endIdx == null) return;
-    
+
     // 创建 range 对象用于 getCFI
     const min = Math.min(startIdx, endIdx);
     const max = Math.max(startIdx, endIdx);
-    
+
     // 从字符位置数据中获取选中的文本
     const charPos = renderer.fullLayoutData.words;
     let selectedText = '';
@@ -142,28 +142,28 @@ export class CanvasTools {
         selectedText += charPos[i].char;
       }
     }
-    
+
     // 获取选中文本的章节索引
     // 使用起始位置的章节索引，如果跨章节，则使用起始章节
-    const chapterIndex = renderer.getChapterIndexForChar ? 
-      renderer.getChapterIndexForChar(min) : 
-      (renderer.currentChapterIndex || 0);
-    
+    const chapterIndex = renderer.getChapterIndexForChar
+      ? renderer.getChapterIndexForChar(min)
+      : renderer.currentChapterIndex || 0;
+
     // 获取在章节内的相对位置（用于创建正确的DOM Range）
-    const startRelative = renderer.getRelativeCharIndex ? 
-      renderer.getRelativeCharIndex(min) : 
-      { chapterIndex, relativeCharIndex: min };
-    const endRelative = renderer.getRelativeCharIndex ? 
-      renderer.getRelativeCharIndex(max) : 
-      { chapterIndex, relativeCharIndex: max };
-    
+    const startRelative = renderer.getRelativeCharIndex
+      ? renderer.getRelativeCharIndex(min)
+      : { chapterIndex, relativeCharIndex: min };
+    const endRelative = renderer.getRelativeCharIndex
+      ? renderer.getRelativeCharIndex(max)
+      : { chapterIndex, relativeCharIndex: max };
+
     // 创建一个伪造的 range 对象，包含 getCFI 需要的信息
     const range = {
       toString: () => selectedText,
       startContainer: document.body, // 使用 body 作为容器
       endContainer: document.body,
       startOffset: startRelative.relativeCharIndex, // 使用章节内相对位置
-      endOffset: endRelative.relativeCharIndex,     // 使用章节内相对位置
+      endOffset: endRelative.relativeCharIndex, // 使用章节内相对位置
       collapsed: min === max,
       commonAncestorContainer: document.body,
       // 添加必要的方法
@@ -187,7 +187,7 @@ export class CanvasTools {
       _globalStartOffset: min,
       _globalEndOffset: max,
     };
-    
+
     this.selection = {
       range: range,
       text: selectedText,
@@ -231,115 +231,62 @@ export class CanvasTools {
     return this.selection;
   }
 
-  onNativeEvent() {
-    const nativeEvent = new NativeEvent();
-
-    nativeEvent.on('longPress', (start, end) => {
-      this.isSelecting = true;
-      this.startIdx = this.renderer.getCharIndexAt(start);
-      this.endIdx = this.renderer.getCharIndexAt(end);
-      this.updateHighlightBar();
-      this.updateAnchors();
-    });
-
-    nativeEvent.on('movePress', (start) => {
-      if (!this.isSelecting) return;
-      requestAnimationFrame(() => {
-        this.endIdx = this.renderer.getCharIndexAt(start);
-        this.updateHighlightBar();
-        this.updateAnchors();
-      });
-    });
-    /**
-     * @param {Point} point
-     * @param {"start" | "end"} type
-     */
-    nativeEvent.on('moveAnchor', (point, type) => {
-      if (type === 'start') {
-        this.startIdx = this.renderer.getCharIndexAt(point);
-      } else {
-        this.endIdx = this.renderer.getCharIndexAt(point);
-      }
-      requestAnimationFrame(() => {
-        this.updateHighlightBar();
-        this.updateAnchors();
-      });
-    });
-
-    nativeEvent.on('touch', () => {
+  handleTouch(e) {
+    if (this.isSelecting) {
       this.isSelecting = false;
       this.startIdx = null;
       this.endIdx = null;
       this.updateHighlightBar();
       this.updateAnchors();
-    });
-    window.nativeEvent = nativeEvent;
+    }
   }
 
-  setupMessageToNative() {
-    const canvasTools = this;
-    document.addEventListener(
-      'touchstart',
-      function (e) {
-        if (canvasTools.isSelecting) {
-          window.nativeEvent.emit('touch');
-          e.preventDefault();
-        }
-        window.native.postMessage('webviewTouch');
+  handleLongPress(start, end) {
+    this.isSelecting = true;
+    this.startIdx = this.renderer.getCharIndexAt(start);
+    this.endIdx = this.renderer.getCharIndexAt(end);
+    this.updateHighlightBar();
+    this.updateAnchors();
+  }
+
+  handleMovePress(start) {
+    if (!this.isSelecting) return;
+    requestAnimationFrame(() => {
+      this.endIdx = this.renderer.getCharIndexAt(start);
+      this.updateHighlightBar();
+      this.updateAnchors();
+    });
+  }
+
+  /**
+   * @param {Point} point
+   * @param {"start" | "end"} type
+   */
+  handleMoveAnchor(point, type) {
+    if (type === 'start') {
+      this.startIdx = this.renderer.getCharIndexAt(point);
+    } else {
+      this.endIdx = this.renderer.getCharIndexAt(point);
+    }
+    requestAnimationFrame(() => {
+      this.updateHighlightBar();
+      this.updateAnchors();
+    });
+  }
+
+  getAnchorPosition() {
+    const anchorDotHeight = 10;
+    const startRect = this.startAnchor.getBoundingClientRect();
+    const endRect = this.endAnchor.getBoundingClientRect();
+    return {
+      start: {
+        x: startRect.left - startRect.width / 2,
+        y: startRect.top - anchorDotHeight,
       },
-      {
-        capture: true,
-      }
-    );
-    window.native = {
-      getAnchorPosition: function () {
-        const anchorDotHeight = 10;
-        const startRect = canvasTools.startAnchor.getBoundingClientRect();
-        const endRect = canvasTools.endAnchor.getBoundingClientRect();
-        return {
-          start: {
-            x: startRect.left - startRect.width / 2,
-            y: startRect.top - anchorDotHeight,
-          },
-          end: {
-            x: endRect.left - endRect.width / 2,
-            y: endRect.top,
-          },
-        };
-      },
-      /**
-       * @param {"moveMagnifier" | "highlightRange" | "webviewTouch"} name
-       * @param {any} params
-       */
-      postMessage: function (name, params) {
-        if (
-          window.webkit &&
-          window.webkit.messageHandlers &&
-          window.webkit.messageHandlers[name]
-        ) {
-          window.webkit.messageHandlers[name].postMessage(params);
-        }
+      end: {
+        x: endRect.left - endRect.width / 2,
+        y: endRect.top,
       },
     };
-  }
-}
-
-class NativeEvent {
-  eventListenerMap = {
-    longPress: [],
-    movePress: [],
-    moveMagnifier: [],
-    highlightRange: [],
-  };
-  on(eventName, callback) {
-    if (!this.eventListenerMap[eventName]) {
-      this.eventListenerMap[eventName] = [];
-    }
-    this.eventListenerMap[eventName].push(callback);
-  }
-  emit(eventName, ...rest) {
-    this.eventListenerMap[eventName].forEach((callback) => {
-      callback(...rest);
-    });
   }
 }

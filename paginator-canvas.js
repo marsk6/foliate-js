@@ -1,5 +1,4 @@
-import { VirtualCanvasRenderer } from './x-canvas/virtual-canvas-renderer.js';
-import { CanvasTools } from './x-canvas/canvas-tools.js';
+import { MultiChapterManager } from './x-canvas/multi-chapter-manager.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 /**
@@ -215,56 +214,6 @@ const setStylesImportant = (el, styles) => {
     for (const [k, v] of Object.entries(styles)) style.setProperty(k, v, 'important')
 }
 
-class CanvasView {
-    #observer = new ResizeObserver(() => this.expand())
-    // NOTE: 宽度等于屏幕宽度，固定
-    #element = document.createElement('div')
-    // NOTE: book 内容的完整宽度，用 css 多列布局
-    #iframe = document.createElement('iframe')
-    #contentRange = document.createRange()
-    #overlayer
-    #vertical = false
-    #rtl = false
-    #column = true
-    #size
-    #layout = {}
-    canvasTools = null;
-    renderer = null;
-    constructor({ container, mountPoint }) {
-        this.container = container
-
-    }
-
-    /**
-     * 
-     * @param {string} src 是 zipLoader 提供的 blob 链接
-     * @param {Function} afterLoad 
-     * @param {Function} beforeRender 
-     * @returns {Promise<void>}
-     */
-    async load(src, afterLoad, beforeRender) {
-        if (typeof src !== 'string') throw new Error(`${src} is not string`)
-        const currentHTML = await fetch(src).then(res => res.text())
-        this.renderer.render(currentHTML);
-    }
-    render(layout) {
-        if (!layout) return
-        this.#column = layout.flow !== 'scrolled'
-        this.#layout = layout
-    }
-
-    set overlayer(overlayer) {
-        this.#overlayer = overlayer
-        this.#element.append(overlayer.element)
-    }
-    get overlayer() {
-        return this.#overlayer
-    }
-    destroy() {
-        // if (this.document) this.#observer.unobserve(this.document.body)
-    }
-}
-
 // NOTE: everything here assumes the so-called "negative scroll type" for RTL
 // NOTE: 整体的布局 header（标题） container（book） footer（进度）
 
@@ -437,8 +386,8 @@ export class Paginator extends HTMLElement {
         const mountPoint = this.#root.getElementById('renderCanvas')
         this.mountPoint = mountPoint
 
-        this.renderer = new VirtualCanvasRenderer({
-            mountPoint: container,
+        const chapterManager = new MultiChapterManager({
+            el: container,
             mode: 'horizontal',
             // mode: 'vertical',
             theme: {
@@ -450,9 +399,18 @@ export class Paginator extends HTMLElement {
               highlightOpacity: 0.3,
             },
           });
-          this.renderer.render(currentHTML); // TODO: currentHTML 定义
-          this.canvasTools = new CanvasTools(this.renderer);
-        return this.renderer
+        const chapters = this.sections.map((section, index) => {
+            return {
+                index,
+                loadContent: async () => {
+                    const { src } = await section.load();
+                    const currentHTML = await fetch(src).then(res => res.text())
+                    return currentHTML;
+                },
+            }
+        });
+        chapterManager.initBook(chapters);
+        return chapterManager;
     }
 
     render() {
@@ -713,23 +671,7 @@ export class Paginator extends HTMLElement {
      * @returns
      */
     async #display(promise) {
-        const { index, src, anchor, onLoad, select } = await promise
-        this.#index = index
-        if (src) {
-            // NOTE: 创建 container 区域
-            this.#createView()
-            if (typeof src !== 'string') throw new Error(`${src} is not string`)
-            const currentHTML = await fetch(src).then(res => res.text())
-            this.renderer.render(currentHTML);
-            this.dispatchEvent(new CustomEvent('create-overlayer', {
-                detail: {
-                    doc: view.document, index,
-                    attach: overlayer => view.overlayer = overlayer,
-                },
-            }))
-        }
-        // await this.scrollToAnchor((typeof anchor === 'function'
-        //     ? anchor(this.renderer.document) : anchor) ?? 0, select ? 'selection' : 'navigation')
+        
     }
     #canGoToIndex(index) {
         return index >= 0 && index <= this.sections.length - 1
@@ -755,7 +697,37 @@ export class Paginator extends HTMLElement {
     async goTo(target) {
         if (this.locked) return
         const resolved = await target
-        if (this.#canGoToIndex(resolved.index)) return this.#goTo(resolved)
+        if (this.#canGoToIndex(resolved.index)) {
+            const mountPoint = this.#root.getElementById('renderCanvas')
+            this.mountPoint = mountPoint
+    
+            const chapterManager = new MultiChapterManager({
+                el: container,
+                mode: 'horizontal',
+                // mode: 'vertical',
+                theme: {
+                  backgroundColor: '#fff',
+                  textColor: '#222',
+                  selectionColor: '#007aff',
+                  selectionOpacity: 0.2,
+                  highlightColor: '#ffeb3b',
+                  highlightOpacity: 0.3,
+                },
+              });
+            const chapters = this.sections.map((section, index) => {
+                return {
+                    index,
+                    loadContent: async () => {
+                        const { src } = await section.load();
+                        const currentHTML = await fetch(src).then(res => res.text())
+                        return currentHTML;
+                    },
+                }
+            });
+            chapterManager.initBook(chapters);
+            chapterManager.goToChapter(resolved.index);
+            return chapterManager;
+        }
     }
     #scrollPrev(distance) {
         if (!this.#view) return true

@@ -227,6 +227,9 @@ export class VirtualCanvasRenderer {
   /** @type {number} 默认图片高度 */
   defaultImageHeight = 150;
 
+  /** @type {CanvasTools} 画布工具 */
+  tools;
+
   /**
    * @param {VirtualRenderConfig} config
    */
@@ -281,6 +284,8 @@ export class VirtualCanvasRenderer {
 
     // 设置高DPI
     this.setupHighDPI();
+
+    this.tools = new CanvasTools(this);
 
     window.addEventListener('resize', this.setupHighDPI.bind(this));
   }

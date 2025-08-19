@@ -23,5 +23,4 @@ window.addEventListener('DOMContentLoaded', () => {
     },
   });
   renderer.render(currentHTML); // 初始渲染
-  const canvasTools = new CanvasTools(renderer);
 });
