@@ -15,7 +15,7 @@
  *   theme: { baseFontSize: 18 },
  *   onProgressChange: (progressInfo) => {
  *     console.log('Progress changed:', progressInfo.progress);
- *     document.getElementById('progress-bar').style.width = 
+ *     document.getElementById('progress-bar').style.width =
  *       (progressInfo.progress * 100) + '%';
  *   }
  * });
@@ -39,6 +39,9 @@
  * // 获取和设置模式
  * console.log(renderer.getMode()); // 'vertical' 或 'horizontal'
  * renderer.setMode('horizontal'); // 切换到横向模式
+ *
+ * // 图片自动居中显示
+ * // 所有图片都会自动居中对齐，超宽图片会自动缩放适应页面宽度
  */
 
 import TransferEngine from './layout-engine.js';
@@ -231,6 +234,9 @@ export class VirtualCanvasRenderer {
   /** @type {CanvasTools} 画布工具 */
   tools;
 
+  /** @type {HTMLCanvasElement[]} Canvas池 */
+  canvasList = [];
+
   /**
    * @param {VirtualRenderConfig} config
    */
@@ -267,9 +273,6 @@ export class VirtualCanvasRenderer {
     this.chunkHeight = this.canvasHeight;
     this.chunkWidth = this.canvasWidth;
 
-    // 创建DOM结构
-    this.createDOMStructure();
-
     // 转换引擎实例
     this.transferEngine = new TransferEngine();
 
@@ -280,13 +283,8 @@ export class VirtualCanvasRenderer {
     this.measureCanvas = document.createElement('canvas');
     this.measureCtx = this.measureCanvas.getContext('2d');
 
-    // 初始化垂直模式
-    this.initMode(config);
-
     // 设置高DPI
     this.setupHighDPI();
-
-    this.tools = new CanvasTools(this);
 
     window.addEventListener('resize', this.setupHighDPI.bind(this));
   }
@@ -296,15 +294,19 @@ export class VirtualCanvasRenderer {
    */
   createDOMStructure() {
     // 创建Google Docs风格的虚拟滚动结构
-    this.container = document.createElement('div');
-    this.container.className = 'virtual-scroll-container';
-    this.container.style.cssText = `
-      width: ${this.viewportWidth}px;
-      height: ${this.viewportHeight}px;
-      position: relative;
-      overflow-y: auto;
-      overflow-x: hidden;
-    `;
+    if (this.container) {
+      this.container.innerHTML = '';
+    } else {
+      this.container = document.createElement('div');
+      this.container.className = 'virtual-scroll-container';
+      this.container.style.cssText = `
+        width: ${this.viewportWidth}px;
+        height: ${this.viewportHeight}px;
+        position: relative;
+        overflow-y: auto;
+        overflow-x: hidden;
+      `;
+    }
 
     // 创建滚动内容容器（关键！）
     this.scrollContent = document.createElement('div');
@@ -316,9 +318,10 @@ export class VirtualCanvasRenderer {
     `;
 
     // 创建Canvas池，作为滚动内容的子元素
-    this.canvasList = [];
-    const poolSize = 4;
-    const baseOffset = this.mode === 'horizontal' ? this.chunkWidth : this.chunkHeight;
+    const poolSize =
+      this.fullLayoutData.totalChunks > 4 ? 4 : this.fullLayoutData.totalChunks;
+    const baseOffset =
+      this.mode === 'horizontal' ? this.chunkWidth : this.chunkHeight;
     for (let i = 0; i < poolSize; i++) {
       const canvas = document.createElement('canvas');
       canvas.className = `virtual-canvas-${i}`;
@@ -352,6 +355,14 @@ export class VirtualCanvasRenderer {
 
     // 组装DOM结构
     this.container.appendChild(this.scrollContent);
+
+    // 创建画布工具
+    this.tools = new CanvasTools(this);
+    // 初始化垂直模式
+    this.initMode({
+      mode: this.mode,
+      poolSize,
+    });
   }
 
   /**
@@ -398,12 +409,11 @@ export class VirtualCanvasRenderer {
    * 渲染HTML内容
    * @param {string} htmlContent
    */
-  render(htmlContent) {
-    this.setupHighDPI();
+  async render(htmlContent) {
     this.currentHTML = htmlContent;
 
     // 1. 解析HTML为数据结构
-    const parseResult = this.transferEngine.parse(htmlContent);
+    const parseResult = await this.transferEngine.parse(htmlContent);
     this.parsedNodes = parseResult.nodes;
     this.pageStyle = parseResult.pageStyle;
 
@@ -413,8 +423,16 @@ export class VirtualCanvasRenderer {
     // 垂直模式：执行完整布局计算（不渲染）
     this.calculateFullLayout();
 
+    // 创建DOM结构
+    // TODO: 根据布局样式，调整 dom 结构
+    this.createDOMStructure();
+
     // 设置虚拟内容高度
-    this.viewport.setContentRange(this.mode === 'vertical' ? this.fullLayoutData.totalHeight : this.fullLayoutData.totalWidth);
+    this.viewport.setContentRange(
+      this.mode === 'vertical'
+        ? this.fullLayoutData.totalHeight
+        : this.fullLayoutData.totalWidth
+    );
 
     // 标记所有Canvas需要重新渲染（因为内容已更改）
     this.viewport.canvasInfoList.forEach((canvasInfo) => {
@@ -453,8 +471,8 @@ export class VirtualCanvasRenderer {
     const contentHeight = result.y;
 
     // 计算需要的总块数
-    const chunkHeight = this.viewport.config.chunkHeight;
-    const chunkWidth = this.viewport.config.chunkWidth;
+    const chunkHeight = this.chunkHeight;
+    const chunkWidth = this.chunkWidth;
     const totalChunks = Math.ceil(contentHeight / chunkHeight);
 
     // scrollContent 的高度基于块数量，而不是内容高度
@@ -470,7 +488,6 @@ export class VirtualCanvasRenderer {
       totalWidth: scrollContentWidth,
       totalChunks,
     };
-
   }
 
   /**
@@ -493,7 +510,7 @@ export class VirtualCanvasRenderer {
    * @param {number} chunkIndex - 块索引
    */
   createNewChunk(chunkIndex) {
-    const chunkHeight = this.viewport.config.chunkHeight;
+    const chunkHeight = this.chunkHeight;
     const startY = chunkIndex * chunkHeight;
     const endY = (chunkIndex + 1) * chunkHeight;
 
@@ -509,14 +526,14 @@ export class VirtualCanvasRenderer {
   }
 
   /**
- * 将单词添加到适当的渲染块
- * @param {Object} word - 单词对象
- * @returns {Object} 可能调整后的单词对象
- */
+   * 将单词添加到适当的渲染块
+   * @param {Object} word - 单词对象
+   * @returns {Object} 可能调整后的单词对象
+   */
   addWordToChunk(word) {
     const lineHeight = this.getLineHeight(word.style);
     const baseline = this.getTextBaseline(lineHeight);
-    const chunkHeight = this.viewport.config.chunkHeight;
+    const chunkHeight = this.chunkHeight;
 
     let wordTop = word.y - baseline;
     let wordBottom = wordTop + lineHeight;
@@ -538,8 +555,6 @@ export class VirtualCanvasRenderer {
         // 重新计算位置
         wordTop = word.y - baseline;
         wordBottom = wordTop + lineHeight;
-
-
       }
     }
 
@@ -583,12 +598,12 @@ export class VirtualCanvasRenderer {
   }
 
   /**
- * 将元素添加到适当的渲染块
- * @param {Object} element - 元素对象
- * @returns {Object} 可能调整后的元素对象
- */
+   * 将元素添加到适当的渲染块
+   * @param {Object} element - 元素对象
+   * @returns {Object} 可能调整后的元素对象
+   */
   addElementToChunk(element) {
-    const chunkHeight = this.viewport.config.chunkHeight;
+    const chunkHeight = this.chunkHeight;
 
     let elementTop = element.y;
     let elementBottom = element.y + element.height;
@@ -610,8 +625,6 @@ export class VirtualCanvasRenderer {
         // 重新计算位置
         elementTop = element.y;
         elementBottom = element.y + element.height;
-
-
       }
     }
 
@@ -659,9 +672,10 @@ export class VirtualCanvasRenderer {
    */
   handleViewportChange() {
     this.renderVisibleContent();
-    
+
     // 更新进度（防抖处理）
-    this.updateProgress();
+    // TODO:
+    // this.updateProgress();
   }
 
   /**
@@ -703,7 +717,7 @@ export class VirtualCanvasRenderer {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // 计算需要渲染的chunk范围
-    const chunkHeight = this.viewport.config.chunkHeight;
+    const chunkHeight = this.chunkHeight;
     const startChunkIndex = Math.floor(contentStartY / chunkHeight);
     const endChunkIndex = Math.floor((contentEndY - 1) / chunkHeight);
 
@@ -736,8 +750,9 @@ export class VirtualCanvasRenderer {
     let currentFont = '';
     words.forEach((word) => {
       const { style } = word;
-      const font = `${style.fontStyle || 'normal'} ${style.fontWeight || 'normal'
-        } ${style.fontSize}px ${this.theme.fontFamily}`;
+      const font = `${style.fontStyle || 'normal'} ${
+        style.fontWeight || 'normal'
+      } ${style.fontSize}px ${this.theme.fontFamily}`;
 
       if (font !== currentFont) {
         ctx.font = font;
@@ -812,6 +827,63 @@ export class VirtualCanvasRenderer {
   }
 
   /**
+   * 计算图片的居中位置
+   * @param {number} imageWidth - 图片宽度
+   * @param {number} containerStart - 容器起始X坐标（默认为paddingX）
+   * @param {number} containerWidth - 容器可用宽度
+   * @returns {number} 图片居中的X坐标
+   */
+  calculateImageCenterPosition(
+    imageWidth,
+    containerStart = this.theme.paddingX,
+    containerWidth = null
+  ) {
+    // 如果没有指定容器宽度，使用默认的可用宽度
+    if (containerWidth === null) {
+      containerWidth = this.canvasWidth - this.theme.paddingX * 2;
+    }
+
+    // 计算居中位置
+    return containerStart + (containerWidth - imageWidth) / 2;
+  }
+
+  /**
+   * 处理图片缩放以适应容器
+   * @param {number} originalWidth - 原始宽度
+   * @param {number} originalHeight - 原始高度
+   * @param {number} maxWidth - 最大宽度
+   * @param {number} maxHeight - 最大高度（可选）
+   * @returns {{width: number, height: number, isScaled: boolean}}
+   */
+  scaleImageToFit(originalWidth, originalHeight, maxWidth, maxHeight = null) {
+    let finalWidth = originalWidth;
+    let finalHeight = originalHeight;
+    let isScaled = false;
+
+    // 宽度缩放
+    if (originalWidth > maxWidth) {
+      const widthScale = maxWidth / originalWidth;
+      finalWidth = maxWidth;
+      finalHeight = originalHeight * widthScale;
+      isScaled = true;
+    }
+
+    // 高度缩放（如果指定了最大高度）
+    if (maxHeight && finalHeight > maxHeight) {
+      const heightScale = maxHeight / finalHeight;
+      finalWidth = finalWidth * heightScale;
+      finalHeight = maxHeight;
+      isScaled = true;
+    }
+
+    return {
+      width: finalWidth,
+      height: finalHeight,
+      isScaled,
+    };
+  }
+
+  /**
    * 绘制图片占位符
    * @param {CanvasRenderingContext2D} ctx - Canvas上下文
    * @param {ImageElement} element - 图片元素
@@ -819,14 +891,51 @@ export class VirtualCanvasRenderer {
    * @param {string} text - 显示的文本
    */
   drawImagePlaceholder(ctx, element, canvasY, text) {
-    // 绘制图片占位符边框
-    ctx.strokeStyle = '#ccc';
+    // 绘制图片占位符边框（浅色边框）
+    ctx.strokeStyle = '#ddd';
+    ctx.lineWidth = 1;
     ctx.strokeRect(element.x, canvasY, element.width, element.height);
 
-    // 绘制图片图标或文字
-    ctx.fillStyle = '#999';
-    ctx.font = '14px system-ui';
-    // ctx.fillText(text, element.x + 10, canvasY + element.height / 2);
+    // 绘制背景填充
+    ctx.fillStyle = '#f8f9fa';
+    ctx.fillRect(
+      element.x + 1,
+      canvasY + 1,
+      element.width - 2,
+      element.height - 2
+    );
+
+    // 绘制图片图标（📷 emoji或简单的相机图标）
+    ctx.fillStyle = '#aaa';
+    ctx.font = '16px system-ui';
+    const iconText = '📷';
+    const iconWidth = ctx.measureText(iconText).width;
+    const iconX = element.x + (element.width - iconWidth) / 2;
+    const iconY = canvasY + element.height / 2 - 10;
+    ctx.fillText(iconText, iconX, iconY);
+
+    // 绘制提示文本（居中显示）
+    if (text && element.height > 40) {
+      ctx.fillStyle = '#666';
+      ctx.font = '12px system-ui';
+      const textWidth = ctx.measureText(text).width;
+      const textX = element.x + (element.width - textWidth) / 2;
+      const textY = canvasY + element.height / 2 + 15;
+      ctx.fillText(text, textX, textY);
+    }
+
+    // 如果图片被缩放，显示缩放提示
+    if (element.isScaled) {
+      ctx.fillStyle = '#888';
+      ctx.font = '10px system-ui';
+      const scaleText = `${element.originalWidth}×${
+        element.originalHeight
+      } → ${Math.round(element.width)}×${Math.round(element.height)}`;
+      const scaleWidth = ctx.measureText(scaleText).width;
+      const scaleX = element.x + (element.width - scaleWidth) / 2;
+      const scaleY = canvasY + element.height - 8;
+      ctx.fillText(scaleText, scaleX, scaleY);
+    }
   }
 
   /**
@@ -853,8 +962,12 @@ export class VirtualCanvasRenderer {
     const containerY = clientY - containerRect.top;
 
     // 3. 检查点击是否在容器范围内
-    if (containerX < 0 || containerX > containerRect.width ||
-      containerY < 0 || containerY > containerRect.height) {
+    if (
+      containerX < 0 ||
+      containerX > containerRect.width ||
+      containerY < 0 ||
+      containerY > containerRect.height
+    ) {
       return null;
     }
     // 4. 将容器坐标转换为内容坐标（加上滚动偏移）
@@ -893,7 +1006,7 @@ export class VirtualCanvasRenderer {
       const wordCenterY = word.y; // 基线位置
       const distance = Math.sqrt(
         Math.pow(contentX - wordCenterX, 2) +
-        Math.pow(contentY - wordCenterY, 2)
+          Math.pow(contentY - wordCenterY, 2)
       );
 
       if (distance < minDistance) {
@@ -918,9 +1031,7 @@ export class VirtualCanvasRenderer {
     const word = this.fullLayoutData.words[charIndex];
 
     // 计算字符所在的Y位置
-    const wordY =
-      word.y -
-      this.getTextBaseline(this.getLineHeight(word.style));
+    const wordY = word.y - this.getTextBaseline(this.getLineHeight(word.style));
 
     // 滚动到该位置，居中显示
     const targetY = wordY - this.viewport.state.viewportHeight / 2;
@@ -1014,11 +1125,17 @@ export class VirtualCanvasRenderer {
     let y = startY;
     let line = startLine;
 
-    // 处理块级元素的上边距
+    // 处理块级元素的上边距和上内边距
     if (this.transferEngine.isBlockElement(node.tag)) {
       const marginTop = this.parseSize(node.style.marginTop);
+      const paddingTop = this.parseSize(node.style.paddingTop);
+
       if (marginTop > 0) {
         y += marginTop;
+      }
+
+      if (paddingTop > 0) {
+        y += paddingTop;
       }
 
       // 块级元素从新行开始
@@ -1027,22 +1144,52 @@ export class VirtualCanvasRenderer {
         x = this.theme.paddingX;
         y += this.getLineHeight(node.style); // 使用完整行高
       }
+
+      // 处理块级元素的左右内边距（影响文本宽度）
+      const paddingLeft = this.parseSize(node.style.paddingLeft);
+      const paddingRight = this.parseSize(node.style.paddingRight);
+
+      if (paddingLeft > 0) {
+        x += paddingLeft;
+      }
+
+      // paddingRight 会在布局文本时影响可用宽度，这里存储以备后用
+      if (paddingRight > 0) {
+        // 可以存储在node.style中供其他方法使用
+        node.style.effectivePaddingRight = paddingRight;
+      }
     }
 
     // 处理特殊元素
     if (node.tag === 'img') {
       // 使用节点中的尺寸信息，如果没有则使用默认值
-      const imageWidth = node.width || this.defaultImageWidth;
-      const imageHeight = node.height || this.defaultImageHeight;
+      const originalWidth = node.width || this.defaultImageWidth;
+      const originalHeight = node.height || this.defaultImageHeight;
+
+      // 计算可用容器宽度
+      const availableWidth = this.canvasWidth - this.theme.paddingX * 2;
+
+      // 处理图片缩放
+      const scaleResult = this.scaleImageToFit(
+        originalWidth,
+        originalHeight,
+        availableWidth
+      );
+
+      // 计算图片居中位置
+      const centeredX = this.calculateImageCenterPosition(scaleResult.width);
 
       const imageElement = {
         type: 'image',
-        x: x,
+        x: centeredX,
         y: y,
-        width: imageWidth,
-        height: imageHeight,
+        width: scaleResult.width,
+        height: scaleResult.height,
         src: node.src,
         alt: node.alt || '',
+        originalWidth: originalWidth,
+        originalHeight: originalHeight,
+        isScaled: scaleResult.isScaled,
       };
 
       // 立即添加到渲染块（可能会调整位置）
@@ -1070,9 +1217,15 @@ export class VirtualCanvasRenderer {
       line = result.line;
     }
 
-    // 处理块级元素的下边距和换行
+    // 处理块级元素的下边距、下内边距和换行
     if (this.transferEngine.isBlockElement(node.tag)) {
       const marginBottom = this.parseSize(node.style.marginBottom);
+      const paddingBottom = this.parseSize(node.style.paddingBottom);
+
+      if (paddingBottom > 0) {
+        y += paddingBottom;
+      }
+
       if (marginBottom > 0) {
         y += marginBottom;
       }
@@ -1102,6 +1255,10 @@ export class VirtualCanvasRenderer {
     const fontStyle = style.fontStyle || 'normal';
     const lineHeight = this.getLineHeight(style);
 
+    // 解析文本对齐样式
+    const textAlign = style.textAlign || 'left';
+    const textIndent = this.parseSize(style.textIndent) || 0;
+
     // 更新测量上下文的字体
     this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.theme.fontFamily}`;
 
@@ -1116,46 +1273,79 @@ export class VirtualCanvasRenderer {
     // 将文本按照单词和中文字符分割
     const segments = this.segmentText(text);
 
+    // 如果需要支持居中或右对齐，需要预先计算每行的内容
+    if (textAlign !== 'left') {
+      return this.layoutTextWithAlignment(
+        segments,
+        style,
+        startX,
+        startY,
+        startLine,
+        words
+      );
+    }
+
+    // 左对齐的简化处理（保持原有逻辑，但支持首行缩进）
+    let isFirstLine = true;
+
     for (const segment of segments) {
       const segmentWidth = this.measureCtx.measureText(segment.content).width;
 
-      // 检查是否需要换行
-      const maxWidth = this.canvasWidth - this.theme.paddingX;
+      // 计算可用宽度（考虑首行缩进和右内边距）
+      const rightPadding = this.parseSize(style.effectivePaddingRight) || 0;
+      const availableWidth =
+        this.canvasWidth - this.theme.paddingX - rightPadding;
+      const effectiveStartX = isFirstLine ? startX + textIndent : startX;
+      const maxWidth = availableWidth - (effectiveStartX - this.theme.paddingX);
 
       let needNewLine = false;
 
       if (segment.type === 'word') {
         // 英文单词：整个单词必须在同一行
-        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
+        if (
+          x + segmentWidth > effectiveStartX + maxWidth &&
+          x > effectiveStartX
+        ) {
           needNewLine = true;
         }
       } else if (segment.type === 'cjk' || segment.type === 'punctuation') {
         // 中文字符和标点：可以在任意位置换行
-        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
+        if (
+          x + segmentWidth > effectiveStartX + maxWidth &&
+          x > effectiveStartX
+        ) {
           needNewLine = true;
         }
       } else if (segment.type === 'space') {
         // 空格：如果导致换行则不渲染
-        if (x + segmentWidth > maxWidth && x > this.theme.paddingX) {
+        if (
+          x + segmentWidth > effectiveStartX + maxWidth &&
+          x > effectiveStartX
+        ) {
           line++;
-          x = this.theme.paddingX;
-          y += lineHeight; // 整行高度
-          currentLineY = y + baseline; // 重新计算基线位置
-          continue; // 跳过这个空格
+          x = startX; // 新行不应用首行缩进
+          y += lineHeight;
+          currentLineY = y + baseline;
+          isFirstLine = false;
+          continue;
         }
       }
 
       if (needNewLine) {
         line++;
-        x = this.theme.paddingX;
-        y += lineHeight; // 整行高度
-        currentLineY = y + baseline; // 重新计算基线位置
+        x = startX; // 新行不应用首行缩进
+        y += lineHeight;
+        currentLineY = y + baseline;
+        isFirstLine = false;
       }
+
+      // 应用首行缩进
+      const finalX = isFirstLine ? x + textIndent : x;
 
       // 创建单词对象
       const word = {
-        x,
-        y: currentLineY, // 使用基线位置作为y坐标
+        x: finalX,
+        y: currentLineY,
         width: segmentWidth,
         height: fontSize,
         line,
@@ -1176,32 +1366,232 @@ export class VirtualCanvasRenderer {
 
       // 如果单词位置被调整，需要同步更新布局状态
       if (adjustedWord.y !== currentLineY) {
-        // 重新计算基线位置和行高
         const newY = adjustedWord.y - baseline;
-        const lineAdjustment = newY - y;
-
-        // 更新布局状态
         y = newY;
         currentLineY = adjustedWord.y;
-
-        // 如果调整幅度较大，可能需要更新行号和重置x坐标
-        // if (lineAdjustment >= lineHeight) {
-        //   line += Math.floor(lineAdjustment / lineHeight);
-        //   // 重置x坐标到行首，因为这相当于一个新行的开始
-        //   x = this.theme.paddingX;
-        //   // 更新调整后单词的x坐标
-        //   adjustedWord.x = x;
-        // }
-
       }
 
       // 添加调整后的单词到words数组
       words.push(adjustedWord);
 
       x += segmentWidth;
+
+      // 第一个非空格字符后，不再是首行
+      if (segment.type !== 'space') {
+        isFirstLine = false;
+      }
     }
 
     return { x, y, line };
+  }
+
+  /**
+   * 处理带有对齐方式的文本布局
+   * @param {Array} segments - 文本段落
+   * @param {Object} style - 样式对象
+   * @param {number} startX - 起始X坐标
+   * @param {number} startY - 起始Y坐标
+   * @param {number} startLine - 起始行号
+   * @param {Array} words - 单词数组
+   * @returns {Object}
+   */
+  layoutTextWithAlignment(segments, style, startX, startY, startLine, words) {
+    const fontSize = this.parseSize(style.fontSize) || this.theme.baseFontSize;
+    const fontWeight = style.fontWeight || 'normal';
+    const fontStyle = style.fontStyle || 'normal';
+    const lineHeight = this.getLineHeight(style);
+    const textAlign = style.textAlign || 'left';
+    const textIndent = this.parseSize(style.textIndent) || 0;
+
+    // 更新测量上下文的字体
+    this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.theme.fontFamily}`;
+
+    let x = startX;
+    let y = startY;
+    let line = startLine;
+
+    const baseline = this.getTextBaseline(lineHeight);
+    let currentLineY = y + baseline;
+
+    // 预计算所有行的内容和宽度
+    const lines = this.calculateTextLines(segments, style, startX, textIndent);
+
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const lineData = lines[lineIndex];
+      const isFirstLine = lineIndex === 0;
+
+      // 计算行的对齐起始位置
+      let lineStartX = this.calculateAlignmentStartX(
+        lineData.width,
+        textAlign,
+        startX,
+        isFirstLine ? textIndent : 0
+      );
+
+      // 渲染这一行的所有段落
+      let currentX = lineStartX;
+      for (const segment of lineData.segments) {
+        const segmentWidth = this.measureCtx.measureText(segment.content).width;
+
+        const word = {
+          x: currentX,
+          y: currentLineY,
+          width: segmentWidth,
+          height: fontSize,
+          line: line,
+          text: segment.content,
+          type: segment.type,
+          style: {
+            fontSize,
+            fontWeight,
+            fontStyle,
+            color: style.color || this.theme.textColor,
+          },
+          startIndex: segment.startIndex,
+          endIndex: segment.endIndex,
+        };
+
+        // 立即添加到渲染块（可能会调整位置）
+        const adjustedWord = this.addWordToChunk(word);
+
+        // 如果单词位置被调整，需要同步更新布局状态
+        if (adjustedWord.y !== currentLineY) {
+          const newY = adjustedWord.y - baseline;
+          y = newY;
+          currentLineY = adjustedWord.y;
+        }
+
+        words.push(adjustedWord);
+        currentX += segmentWidth;
+      }
+
+      // 准备下一行
+      line++;
+      y += lineHeight;
+      currentLineY = y + baseline;
+      x = startX;
+    }
+
+    return { x, y, line };
+  }
+
+  /**
+   * 预计算文本的行分布
+   * @param {Array} segments - 文本段落
+   * @param {Object} style - 样式对象
+   * @param {number} startX - 起始X坐标
+   * @param {number} textIndent - 首行缩进
+   * @returns {Array} 行数据数组
+   */
+  calculateTextLines(segments, style, startX, textIndent) {
+    const lines = [];
+    let currentLine = { segments: [], width: 0 };
+    let x = startX;
+    let isFirstLine = true;
+
+    for (const segment of segments) {
+      const segmentWidth = this.measureCtx.measureText(segment.content).width;
+
+      // 计算可用宽度（考虑首行缩进和右内边距）
+      const rightPadding = this.parseSize(style.effectivePaddingRight) || 0;
+      const availableWidth =
+        this.canvasWidth - this.theme.paddingX - rightPadding;
+      const effectiveStartX = isFirstLine ? startX + textIndent : startX;
+      const maxWidth = availableWidth - (effectiveStartX - this.theme.paddingX);
+
+      let needNewLine = false;
+
+      // 判断是否需要换行（与原逻辑保持一致）
+      if (segment.type === 'word') {
+        if (
+          x + segmentWidth > effectiveStartX + maxWidth &&
+          x > effectiveStartX
+        ) {
+          needNewLine = true;
+        }
+      } else if (segment.type === 'cjk' || segment.type === 'punctuation') {
+        if (
+          x + segmentWidth > effectiveStartX + maxWidth &&
+          x > effectiveStartX
+        ) {
+          needNewLine = true;
+        }
+      } else if (segment.type === 'space') {
+        if (
+          x + segmentWidth > effectiveStartX + maxWidth &&
+          x > effectiveStartX
+        ) {
+          // 完成当前行并开始新行（跳过这个空格）
+          if (currentLine.segments.length > 0) {
+            lines.push(currentLine);
+          }
+          currentLine = { segments: [], width: 0 };
+          x = startX;
+          isFirstLine = false;
+          continue;
+        }
+      }
+
+      if (needNewLine) {
+        // 完成当前行
+        if (currentLine.segments.length > 0) {
+          lines.push(currentLine);
+        }
+        // 开始新行
+        currentLine = { segments: [], width: 0 };
+        x = startX;
+        isFirstLine = false;
+      }
+
+      // 添加段落到当前行
+      currentLine.segments.push(segment);
+      currentLine.width += segmentWidth;
+      x += segmentWidth;
+
+      // 第一个非空格字符后，不再是首行
+      if (segment.type !== 'space') {
+        isFirstLine = false;
+      }
+    }
+
+    // 添加最后一行
+    if (currentLine.segments.length > 0) {
+      lines.push(currentLine);
+    }
+
+    return lines;
+  }
+
+  /**
+   * 根据对齐方式计算行的起始X坐标
+   * @param {number} lineWidth - 行宽度
+   * @param {string} textAlign - 对齐方式
+   * @param {number} startX - 起始X坐标
+   * @param {number} indent - 缩进值（仅用于首行）
+   * @returns {number}
+   */
+  calculateAlignmentStartX(lineWidth, textAlign, startX, indent = 0) {
+    const availableWidth = this.canvasWidth - this.theme.paddingX * 2;
+    const baseStartX = startX + indent;
+
+    switch (textAlign) {
+      case 'center':
+        // 居中对齐：(可用宽度 - 行宽度) / 2 + 左边距
+        return this.theme.paddingX + (availableWidth - lineWidth) / 2;
+
+      case 'right':
+        // 右对齐：右边距 - 行宽度
+        return this.canvasWidth - this.theme.paddingX - lineWidth;
+
+      case 'justify':
+        // 两端对齐：暂时使用左对齐，后续可扩展
+        return baseStartX;
+
+      case 'left':
+      default:
+        // 左对齐：使用基础起始位置 + 缩进
+        return baseStartX;
+    }
   }
 
   /**
@@ -1297,6 +1687,24 @@ export class VirtualCanvasRenderer {
    */
   getLineHeight(style = {}) {
     const fontSize = this.parseSize(style.fontSize) || this.theme.baseFontSize;
+
+    // 如果样式中指定了line-height，使用样式中的值
+    if (style.lineHeight) {
+      const lineHeight = style.lineHeight;
+
+      // 如果是数值（如 1.5），直接乘以字体大小
+      if (typeof lineHeight === 'number' || /^[\d.]+$/.test(lineHeight)) {
+        return fontSize * parseFloat(lineHeight);
+      }
+
+      // 如果是具体单位（如 20px, 1.5em），解析单位
+      const parsedLineHeight = this.parseSize(lineHeight);
+      if (parsedLineHeight > 0) {
+        return parsedLineHeight;
+      }
+    }
+
+    // 默认使用主题的行高倍数
     return fontSize * this.theme.lineHeight;
   }
 
@@ -1398,6 +1806,7 @@ export class VirtualCanvasRenderer {
 
     // 设置新的防抖定时器
     this.progressThrottleId = setTimeout(() => {
+      // TODO: 这里需要优化，因为每次滚动都会触发一次，导致进度变化过于频繁
       this.calculateAndNotifyProgress();
       this.progressThrottleId = null;
     }, 16); // 约60fps的更新频率
@@ -1408,19 +1817,20 @@ export class VirtualCanvasRenderer {
    */
   calculateAndNotifyProgress() {
     const newProgress = this.getProgress();
-    
+
     // 只有进度确实发生变化时才通知
-    if (Math.abs(newProgress - this.currentProgress) > 0.001) { // 0.1%的变化阈值
+    if (Math.abs(newProgress - this.currentProgress) > 0.001) {
+      // 0.1%的变化阈值
       const oldProgress = this.currentProgress;
       this.currentProgress = newProgress;
-      
+
       if (this.onProgressChange) {
         this.onProgressChange({
           progress: newProgress,
           oldProgress: oldProgress,
           scrollTop: this.viewport.state.scrollTop,
           contentHeight: this.viewport.state.contentHeight,
-          viewportHeight: this.viewport.state.viewportHeight
+          viewportHeight: this.viewport.state.viewportHeight,
         });
       }
     }
@@ -1436,7 +1846,7 @@ export class VirtualCanvasRenderer {
     }
 
     const { scrollTop, contentHeight, viewportHeight } = this.viewport.state;
-    
+
     // 如果内容高度小于等于视窗高度，说明内容全部可见，进度为1
     if (contentHeight <= viewportHeight) {
       return 1;
@@ -1444,10 +1854,10 @@ export class VirtualCanvasRenderer {
 
     // 计算可滚动的最大距离
     const maxScrollTop = contentHeight - viewportHeight;
-    
+
     // 确保滚动位置在合理范围内
     const clampedScrollTop = Math.max(0, Math.min(scrollTop, maxScrollTop));
-    
+
     // 计算进度百分比
     return maxScrollTop > 0 ? clampedScrollTop / maxScrollTop : 0;
   }
@@ -1459,15 +1869,17 @@ export class VirtualCanvasRenderer {
    */
   setProgress(progress, smooth = true) {
     if (!this.viewport || !this.fullLayoutData) {
-      console.warn('VirtualCanvasRenderer: Cannot set progress before content is rendered');
+      console.warn(
+        'VirtualCanvasRenderer: Cannot set progress before content is rendered'
+      );
       return;
     }
 
     // 确保进度值在有效范围内
     const clampedProgress = Math.max(0, Math.min(1, progress));
-    
+
     const { contentHeight, viewportHeight } = this.viewport.state;
-    
+
     // 如果内容高度小于等于视窗高度，直接返回
     if (contentHeight <= viewportHeight) {
       return;
@@ -1476,7 +1888,7 @@ export class VirtualCanvasRenderer {
     // 计算目标滚动位置
     const maxScrollTop = contentHeight - viewportHeight;
     const targetScrollTop = maxScrollTop * clampedProgress;
-    
+
     // 滚动到目标位置
     this.viewport.scrollTo(targetScrollTop, smooth);
   }
@@ -1504,14 +1916,14 @@ export class VirtualCanvasRenderer {
         scrollableHeight: 0,
         isAtTop: true,
         isAtBottom: false,
-        canScroll: false
+        canScroll: false,
       };
     }
 
     const { scrollTop, contentHeight, viewportHeight } = this.viewport.state;
     const maxScrollTop = Math.max(0, contentHeight - viewportHeight);
     const progress = this.getProgress();
-    
+
     return {
       progress: progress,
       scrollTop: scrollTop,
@@ -1521,7 +1933,7 @@ export class VirtualCanvasRenderer {
       scrollableHeight: contentHeight - viewportHeight,
       isAtTop: scrollTop <= 1,
       isAtBottom: scrollTop >= maxScrollTop - 1,
-      canScroll: contentHeight > viewportHeight
+      canScroll: contentHeight > viewportHeight,
     };
   }
 
@@ -1547,10 +1959,10 @@ export class VirtualCanvasRenderer {
    */
   pageDown(smooth = true) {
     if (!this.viewport) return;
-    
+
     const { scrollTop, viewportHeight } = this.viewport.state;
     const targetY = scrollTop + viewportHeight * 0.9; // 90%的视窗高度，保留一些重叠
-    
+
     this.viewport.scrollTo(targetY, smooth);
   }
 
@@ -1560,10 +1972,10 @@ export class VirtualCanvasRenderer {
    */
   pageUp(smooth = true) {
     if (!this.viewport) return;
-    
+
     const { scrollTop, viewportHeight } = this.viewport.state;
     const targetY = scrollTop - viewportHeight * 0.9; // 90%的视窗高度，保留一些重叠
-    
+
     this.viewport.scrollTo(Math.max(0, targetY), smooth);
   }
 
@@ -1606,9 +2018,10 @@ export class VirtualCanvasRenderer {
     window.removeEventListener('resize', this.setupHighDPI.bind(this));
   }
 
-  initMode(config) {
+  initMode({ mode, poolSize }) {
     // 初始化虚拟视窗
-    let Viewport = config.mode === 'vertical' ? VirtualViewport : HorizontalSlideManager;
+    const Viewport =
+      mode === 'vertical' ? VirtualViewport : HorizontalSlideManager;
     this.viewport = new Viewport({
       container: this.container,
       canvasList: this.canvasList,
@@ -1616,7 +2029,7 @@ export class VirtualCanvasRenderer {
       viewportHeight: this.viewportHeight,
       viewportWidth: this.viewportWidth,
       chunkHeight: this.chunkHeight,
-      poolSize: config.poolSize || 4,
+      poolSize,
       onViewportChange: this.handleViewportChange.bind(this),
     });
   }

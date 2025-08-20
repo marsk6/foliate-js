@@ -180,6 +180,9 @@ export class MultiChapterManager {
   /** @type {Map<number, HTMLElement>} 章节边界哨兵映射 */
   chapterSentinels = new Map();
 
+  /** @type {Set<number>} 已经出现过的哨兵索引（用于区分真正的消失和初次插入） */
+  appearedSentinels = new Set();
+
   /** @type {HTMLElement} 全局透明层覆盖 */
   globalOverlayMask = null;
 
@@ -222,12 +225,21 @@ export class MultiChapterManager {
   setupContainer() {
     this.container = document.createElement('div');
     this.container.className = 'multi-chapter-container';
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
     this.container.style.cssText = `
       position: relative;
-      width: 100%;
-      height: 100%;
+      width: ${viewportWidth}px;
+      height: ${viewportHeight}px;
       overflow: auto;
     `;
+    this.scrollWrapper = document.createElement('div');
+    this.scrollWrapper.className = 'scroll-wrapper';
+    this.scrollWrapper.style.cssText = `
+      position: relative;
+      width: 100%;
+    `;
+    this.container.appendChild(this.scrollWrapper);
     this.config.el.parentNode.replaceChild(this.container, this.config.el);
   }
 
@@ -247,21 +259,28 @@ export class MultiChapterManager {
     this.chapterObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
+          console.log('🚨🚨🚨👉👉📢', 'entry', entry);
           const chapterIndex = parseInt(entry.target.dataset.chapterIndex);
 
           if (entry.isIntersecting) {
             // 哨兵出现 → 到达章节边界，需要切换控制权
+            this.appearedSentinels.add(chapterIndex); // 记录这个哨兵已经出现过
             this.handleChapterBoundaryVisible(chapterIndex);
+            this.preloadNextChapter(this.currentChapterIndex);
           } else {
-            // 哨兵消失 → 离开边界，恢复正常滚动
-            this.handleChapterBoundaryHidden(chapterIndex);
+            // 哨兵消失 → 只有之前出现过的哨兵消失才触发处理
+            // 这避免了新插入的哨兵（!isIntersecting）错误触发隐藏事件
+            if (this.appearedSentinels.has(chapterIndex)) {
+              this.handleChapterBoundaryHidden(chapterIndex);
+              this.appearedSentinels.delete(chapterIndex); // 清除记录，为下次出现做准备
+            }
           }
         });
       },
       {
         root: this.container,
         rootMargin: '0px',
-        threshold: 0,
+        threshold: 0.5,
       }
     );
   }
@@ -305,16 +324,15 @@ export class MultiChapterManager {
       position: absolute;
       top: 0;
       left: 0;
-      width: 100%;
-      height: 100%;
+      bottom: 0;
+      right: 0;
       background: transparent;
       z-index: 999;
       pointer-events: auto;
       display: none;
     `;
-
     // 覆盖在整个 multi-chapter-container 上
-    this.container.appendChild(overlay);
+    this.scrollWrapper.appendChild(overlay);
     this.globalOverlayMask = overlay;
 
     return overlay;
@@ -400,6 +418,7 @@ export class MultiChapterManager {
     // 隐藏全局透明层，恢复该章节的VirtualCanvasRenderer内层滚动
 
     // 切换活跃章节
+    // FIXME: 这里需要优化，因为滚动到边界时，会触发两次，导致章节切换不准确
     this.currentChapterIndex = chapterIndex;
 
     // 隐藏全局透明层，恢复所有VirtualCanvasRenderer内层滚动
@@ -419,7 +438,7 @@ export class MultiChapterManager {
     this.totalChapters = chaptersConfig.length;
 
     // 清理现有章节
-    this.clearAllChapters();
+    // this.clearAllChapters();
 
     // 创建章节实例（但不立即加载内容）
     for (let i = 0; i < chaptersConfig.length; i++) {
@@ -493,7 +512,7 @@ export class MultiChapterManager {
       const htmlContent = await chapter.loadContent();
 
       // 渲染章节内容
-      chapter.renderer.render(htmlContent);
+      await chapter.renderer.render(htmlContent);
       chapter.contentHeight = chapter.renderer.fullLayoutData?.totalHeight || 0;
 
       // chapter.container 就是 VirtualCanvasRenderer 的 container
@@ -507,11 +526,13 @@ export class MultiChapterManager {
 
       chapter.loaded = true;
       this.loadedChapters.add(chapterIndex);
-      const nextChapterContainer = this.container.children[chapterIndex + 1];
+      const nextChapterContainer = this.chapters.get(
+        chapterIndex + 1
+      )?.container;
       const fragment = document.createDocumentFragment();
       fragment.appendChild(chapter.container);
       fragment.appendChild(sentinel);
-      this.container.insertBefore(fragment, nextChapterContainer);
+      this.scrollWrapper.insertBefore(fragment, nextChapterContainer);
 
       if (this.onChapterLoad) {
         this.onChapterLoad(chapterIndex);
@@ -773,6 +794,7 @@ export class MultiChapterManager {
 
     // 清理滚动隔离相关（只在垂直模式下存在）
     this.chapterSentinels.clear();
+    this.appearedSentinels.clear();
     this.preloadingChapters.clear();
 
     // 清理全局透明层（只在垂直模式下存在）
@@ -806,6 +828,10 @@ export class MultiChapterManager {
     this.onProgressChange = null;
     this.onChapterChange = null;
     this.onChapterLoad = null;
+
+    // 清理滚动隔离状态
+    this.appearedSentinels.clear();
+    this.preloadingChapters.clear();
 
     // 清理引用
     this.container = null;
