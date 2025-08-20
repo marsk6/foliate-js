@@ -2,6 +2,7 @@
 /**
  * 虚拟视窗管理器
  * 负责管理多Canvas的虚拟滚动，模拟Google Docs的实现方式
+ * 现在由外部统一管理滚动事件，内部只负责Canvas位置管理
  */
 export class VirtualViewport {
   /** @type {HTMLElement} 滚动容器 */
@@ -40,7 +41,10 @@ export class VirtualViewport {
   /** @type {number} 上次滚动位置，用于判断滚动方向 */
   lastScrollTop = 0;
 
-  /** @type {number} 节流定时器ID */
+  /** @type {boolean} 是否由外部管理滚动（新增） */
+  externalScrollManaged = false;
+
+  /** @type {number} 节流定时器ID（仅非外部管理模式使用） */
   scrollThrottleId = null;
 
   /**
@@ -51,6 +55,8 @@ export class VirtualViewport {
     this.canvasList = config.canvasList;
     this.scrollContent = config.scrollContent;
     this.poolSize = config.poolSize || 4;
+    this.externalScrollManaged = config.externalScrollManaged || false;
+    
     this.config = {
       viewportHeight: config.viewportHeight, // 默认视窗高度
       viewportWidth: config.viewportWidth, // 默认视窗宽度
@@ -98,7 +104,12 @@ export class VirtualViewport {
    */
   init() {
     this.setupContainer();
-    this.bindEvents();
+    
+    // 只有在非外部管理滚动时才绑定事件
+    if (!this.externalScrollManaged) {
+      this.bindEvents();
+    }
+    
     this.updateViewport();
   }
 
@@ -115,7 +126,7 @@ export class VirtualViewport {
   }
 
   /**
-   * 绑定事件
+   * 绑定事件（仅在非外部管理模式下使用）
    */
   bindEvents() {
     // 滚动事件（带防抖）
@@ -128,10 +139,29 @@ export class VirtualViewport {
   }
 
   /**
-   * 处理滚动事件（节流版本）
+   * 外部设置滚动状态（新方法）
+   * @param {number} scrollTop - 滚动位置
+   * @param {number} [viewportHeight] - 视窗高度（可选）
+   */
+  setScrollState(scrollTop, viewportHeight) {
+    // 更新状态
+    this.state.scrollTop = scrollTop;
+    if (viewportHeight !== undefined) {
+      this.state.viewportHeight = viewportHeight;
+    }
+    
+    // 更新Canvas位置
+    this.updateCanvasPositions();
+    
+    // 通知视窗变化
+    this.notifyViewportChange();
+  }
+
+  /**
+   * 处理滚动事件（节流版本）- 仅在非外部管理模式下使用
    */
   handleScroll() {
-    if (this.isUpdating) return;
+    if (this.isUpdating || this.externalScrollManaged) return;
 
     // 立即更新滚动位置（快速响应）
     this.updateScrollPosition();
@@ -164,17 +194,21 @@ export class VirtualViewport {
   }
 
   /**
-   * 更新滚动位置
+   * 更新滚动位置（仅在非外部管理模式下使用）
    */
   updateScrollPosition() {
-    this.state.scrollTop = this.container.scrollTop;
+    if (!this.externalScrollManaged) {
+      this.state.scrollTop = this.container.scrollTop;
+    }
   }
 
   /**
    * 更新视窗状态
    */
   updateViewport() {
-    this.updateScrollPosition();
+    if (!this.externalScrollManaged) {
+      this.updateScrollPosition();
+    }
 
     // 更新Canvas池位置
     this.updateCanvasPositions();
@@ -348,8 +382,11 @@ export class VirtualViewport {
    * 销毁
    */
   destroy() {
-    this.container.removeEventListener('scroll', this.handleScroll);
-    window.removeEventListener('resize', this.handleResize);
+    // 只在非外部管理模式下移除事件监听器
+    if (!this.externalScrollManaged) {
+      this.container.removeEventListener('scroll', this.handleScroll);
+      window.removeEventListener('resize', this.handleResize);
+    }
 
     // 清理节流定时器
     if (this.scrollThrottleId) {

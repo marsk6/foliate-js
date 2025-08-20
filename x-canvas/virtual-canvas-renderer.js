@@ -301,10 +301,10 @@ export class VirtualCanvasRenderer {
       this.container.className = 'virtual-scroll-container';
       this.container.style.cssText = `
         width: ${this.viewportWidth}px;
-        height: ${this.viewportHeight}px;
+        height: auto;
+        min-height: ${this.viewportHeight}px;
         position: relative;
-        overflow-y: auto;
-        overflow-x: hidden;
+        overflow: visible;
       `;
     }
 
@@ -672,10 +672,7 @@ export class VirtualCanvasRenderer {
    */
   handleViewportChange() {
     this.renderVisibleContent();
-
-    // 更新进度（防抖处理）
-    // TODO:
-    // this.updateProgress();
+    // 进度更新现在由MultiChapterManager统一处理
   }
 
   /**
@@ -2018,6 +2015,35 @@ export class VirtualCanvasRenderer {
     window.removeEventListener('resize', this.setupHighDPI.bind(this));
   }
 
+  /**
+   * 外部设置滚动状态（由MultiChapterManager调用）
+   * @param {number} scrollTop - 相对于当前章节的滚动位置
+   * @param {number} [viewportHeight] - 视窗高度（可选）
+   */
+  setScrollState(scrollTop, viewportHeight) {
+    if (this.viewport && this.viewport.setScrollState) {
+      this.viewport.setScrollState(scrollTop, viewportHeight);
+    }
+  }
+
+  /**
+   * 获取当前章节的内容边界信息
+   * @returns {Object}
+   */
+  getBoundingInfo() {
+    if (!this.fullLayoutData) {
+      return {
+        contentHeight: 0,
+        scrollableHeight: 0,
+      };
+    }
+
+    return {
+      contentHeight: this.fullLayoutData.totalHeight,
+      scrollableHeight: Math.max(0, this.fullLayoutData.totalHeight - this.viewportHeight),
+    };
+  }
+
   initMode({ mode, poolSize }) {
     // 初始化虚拟视窗
     const Viewport =
@@ -2030,6 +2056,7 @@ export class VirtualCanvasRenderer {
       viewportWidth: this.viewportWidth,
       chunkHeight: this.chunkHeight,
       poolSize,
+      externalScrollManaged: true, // 启用外部滚动管理
       onViewportChange: this.handleViewportChange.bind(this),
     });
   }

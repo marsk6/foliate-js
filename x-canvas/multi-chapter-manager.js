@@ -2,29 +2,17 @@
  * 多章节管理器
  * 管理多个VirtualCanvasRenderer实例，实现跨章节的阅读体验
  *
- * 核心原理（垂直滚动模式）：
- * - 利用浏览器原生的"滚动链"机制
- * - 当VirtualCanvasRenderer滚动到底时，浏览器自动让外层容器滚动
- * - 使用全局透明层和哨兵机制控制滚动事件的接收者
- * - 章节分界点哨兵出现时，显示全局透明层阻止所有章节滚动
- * - 哨兵消失时，隐藏全局透明层恢复正常滚动
- *
  * 功能特性：
  * - 章节元数据管理
  * - 多渲染器实例协调
- * - 全局透明层滚动事件隔离（仅垂直模式）
- * - 章节边界检测和切换（仅垂直模式）
- * - 智能预加载（可配置阈值触发下一章节）
  * - 全局进度计算和同步
  * - 跨章节导航和搜索
  * - 动态章节加载
  * - 统一的进度和位置管理
  *
  * 使用示例：
- * // 垂直滚动模式（支持滚动隔离）
- * const verticalManager = new MultiChapterManager({
+ * const manager = new MultiChapterManager({
  *   container: document.getElementById('book-container'),
- *   mode: 'vertical',
  *   theme: { baseFontSize: 18 },
  *   onProgressChange: (info) => {
  *     console.log('全书进度:', info.globalProgress);
@@ -32,13 +20,6 @@
  *   onChapterChange: (chapterIndex) => {
  *     console.log('当前章节:', chapterIndex);
  *   }
- * });
- *
- * // 横向滑动模式（不启用滚动隔离）
- * const horizontalManager = new MultiChapterManager({
- *   container: document.getElementById('book-container'),
- *   mode: 'horizontal',
- *   theme: { baseFontSize: 18 }
  * });
  *
  * // 初始化书籍
@@ -99,7 +80,7 @@ import VirtualCanvasRenderer from './virtual-canvas-renderer.js';
  * @typedef {Object} MultiChapterConfig
  * @property {HTMLElement} container - 主容器元素
  * @property {Object} [theme] - 全局主题配置
- * @property {string} [mode='vertical'] - 渲染模式：'vertical' | 'horizontal'，滚动隔离仅在vertical模式下生效
+ * @property {string} [mode='vertical'] - 渲染模式：'vertical' | 'horizontal'
  * @property {Function} [onProgressChange] - 全局进度变化回调
  * @property {Function} [onChapterChange] - 章节变化回调
  * @property {Function} [onChapterLoad] - 章节加载回调
@@ -173,27 +154,17 @@ export class MultiChapterManager {
   /** @type {number} 进度更新防抖定时器 */
   progressUpdateTimer = null;
 
-  // 透明层滚动隔离机制
-  /** @type {IntersectionObserver} 章节边界观察器 */
-  chapterObserver = null;
+  // 统一滚动管理（新增）
+  /** @type {number} 滚动事件节流定时器 */
+  scrollThrottleId = null;
 
-  /** @type {Map<number, HTMLElement>} 章节边界哨兵映射 */
-  chapterSentinels = new Map();
+  /** @type {Map<number, number>} 章节起始位置映射 */
+  chapterOffsets = new Map();
 
-  /** @type {Set<number>} 已经出现过的哨兵索引（用于区分真正的消失和初次插入） */
-  appearedSentinels = new Set();
-
-  /** @type {HTMLElement} 全局透明层覆盖 */
-  globalOverlayMask = null;
-
-  /** @type {boolean} 是否启用全局透明层 */
-  isGlobalMaskActive = false;
-
-  /** @type {Set<number>} 已开始预加载的章节索引 */
-  preloadingChapters = new Set();
+  /** @type {number} 全局滚动位置 */
+  globalScrollTop = 0;
 
   get activeChapter() {
-    // TODO: 交叉处，返回实际操作的章节
     return this.chapters.get(this.currentChapterIndex);
   }
 
@@ -215,8 +186,8 @@ export class MultiChapterManager {
     this.preloadThreshold = config.preloadThreshold ?? 0.95;
     this.enableCache = config.enableCache ?? true;
     this.maxCacheSize = config.maxCacheSize ?? 5;
+    
     this.setupContainer();
-    this.setupScrollIsolation();
   }
 
   /**
@@ -233,129 +204,107 @@ export class MultiChapterManager {
       height: ${viewportHeight}px;
       overflow: auto;
     `;
-    this.scrollWrapper = document.createElement('div');
-    this.scrollWrapper.className = 'scroll-wrapper';
-    this.scrollWrapper.style.cssText = `
-      position: relative;
-      width: 100%;
-    `;
-    this.container.appendChild(this.scrollWrapper);
     this.config.el.parentNode.replaceChild(this.container, this.config.el);
+    
+    // 绑定统一的滚动事件监听
+    this.bindScrollEvents();
   }
 
   /**
-   * 设置滚动隔离系统
+   * 绑定滚动事件
    */
-  setupScrollIsolation() {
-    // 只在垂直滚动模式下启用滚动隔离系统
-    if (this.mode !== 'vertical') {
+  bindScrollEvents() {
+    this.container.addEventListener('scroll', this.handleGlobalScroll.bind(this), {
+      passive: true,
+    });
+    let lastTouchY = 0;
+    let lastScrollTop = 0;
+    this.container.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      const touchY = e.touches[0].clientY;
+      if (touchY > lastTouchY && this.container.scrollTop === lastScrollTop) {
+        this.preloadNextChapter(this.currentChapterIndex);
+      }
+      lastTouchY = touchY;
+      lastScrollTop = this.container.scrollTop;
+    });
+  }
+
+  /**
+   * 处理全局滚动事件
+   */
+  handleGlobalScroll() {
+    // 节流处理
+    if (this.scrollThrottleId) {
       return;
     }
 
-    // 创建全局透明覆盖层
-    this.createGlobalOverlayMask();
+    this.scrollThrottleId = requestAnimationFrame(() => {
+      this.scrollThrottleId = null;
+      this.updateGlobalScrollState();
+    });
+  }
 
-    // 创建 IntersectionObserver 来监听章节边界
-    this.chapterObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          console.log('🚨🚨🚨👉👉📢', 'entry', entry);
-          const chapterIndex = parseInt(entry.target.dataset.chapterIndex);
+  /**
+   * 更新全局滚动状态
+   */
+  updateGlobalScrollState() {
+    this.globalScrollTop = this.container.scrollTop;
 
-          if (entry.isIntersecting) {
-            // 哨兵出现 → 到达章节边界，需要切换控制权
-            this.appearedSentinels.add(chapterIndex); // 记录这个哨兵已经出现过
-            this.handleChapterBoundaryVisible(chapterIndex);
-            this.preloadNextChapter(this.currentChapterIndex);
-          } else {
-            // 哨兵消失 → 只有之前出现过的哨兵消失才触发处理
-            // 这避免了新插入的哨兵（!isIntersecting）错误触发隐藏事件
-            if (this.appearedSentinels.has(chapterIndex)) {
-              this.handleChapterBoundaryHidden(chapterIndex);
-              this.appearedSentinels.delete(chapterIndex); // 清除记录，为下次出现做准备
-            }
-          }
-        });
-      },
-      {
-        root: this.container,
-        rootMargin: '0px',
-        threshold: 0.5,
+    // 计算当前应该活跃的章节
+    const activeChapterIndex = this.calculateActiveChapter(this.globalScrollTop);
+    
+    // 如果章节发生变化，更新当前章节
+    if (activeChapterIndex !== this.currentChapterIndex) {
+      this.currentChapterIndex = activeChapterIndex;
+      if (this.onChapterChange) {
+        this.onChapterChange(activeChapterIndex);
       }
-    );
-  }
-
-  /**
-   * 为章节创建哨兵元素
-   * @param {number} chapterIndex - 章节索引
-   */
-  createChapterSentinel(chapterIndex) {
-    // 创建边界哨兵（作为VirtualCanvasRenderer的兄弟元素）
-    const sentinel = document.createElement('div');
-    sentinel.className = 'chapter-boundary-sentinel';
-    sentinel.dataset.chapterIndex = chapterIndex.toString();
-    sentinel.style.cssText = `
-      position: relative;
-      width: 100%;
-      height: 1px;
-      pointer-events: none;
-      opacity: 0;
-      background: transparent;
-    `;
-
-    // 添加到观察器
-    this.chapterObserver.observe(sentinel);
-
-    // 存储哨兵引用
-    this.chapterSentinels.set(chapterIndex, sentinel);
-
-    return sentinel;
-  }
-
-  /**
-   * 创建全局透明覆盖层
-   */
-  createGlobalOverlayMask() {
-    if (this.globalOverlayMask) return;
-
-    const overlay = document.createElement('div');
-    overlay.className = 'global-scroll-mask';
-    overlay.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      bottom: 0;
-      right: 0;
-      background: transparent;
-      z-index: 999;
-      pointer-events: auto;
-      display: none;
-    `;
-    // 覆盖在整个 multi-chapter-container 上
-    this.scrollWrapper.appendChild(overlay);
-    this.globalOverlayMask = overlay;
-
-    return overlay;
-  }
-
-  /**
-   * 显示全局透明覆盖层（阻止所有VirtualCanvasRenderer接收滚动事件）
-   */
-  showGlobalOverlayMask() {
-    if (this.globalOverlayMask && !this.isGlobalMaskActive) {
-      this.globalOverlayMask.style.display = 'block';
-      this.isGlobalMaskActive = true;
     }
+
+    // 将滚动状态传递给当前活跃的章节
+    this.distributeScrollState(activeChapterIndex, this.globalScrollTop);
+
+    // 更新全局进度
+    this.updateGlobalProgress();
   }
 
   /**
-   * 隐藏全局透明覆盖层（恢复所有VirtualCanvasRenderer接收滚动事件）
+   * 根据全局滚动位置计算当前活跃的章节
+   * @param {number} globalScrollTop - 全局滚动位置
+   * @returns {number} 章节索引
    */
-  hideGlobalOverlayMask() {
-    if (this.globalOverlayMask && this.isGlobalMaskActive) {
-      this.globalOverlayMask.style.display = 'none';
-      this.isGlobalMaskActive = false;
+  calculateActiveChapter(globalScrollTop) {
+    let activeChapterIndex = 0;
+
+    for (const [chapterIndex, offset] of this.chapterOffsets) {
+      if (globalScrollTop >= offset) {
+        activeChapterIndex = chapterIndex;
+      } else {
+        break;
+      }
     }
+
+    return activeChapterIndex;
+  }
+
+  /**
+   * 将滚动状态分发给相应的章节
+   * @param {number} activeChapterIndex - 活跃章节索引
+   * @param {number} globalScrollTop - 全局滚动位置
+   */
+  distributeScrollState(activeChapterIndex, globalScrollTop) {
+    const activeChapter = this.chapters.get(activeChapterIndex);
+    if (!activeChapter || !activeChapter.renderer) {
+      return;
+    }
+
+    // 计算相对于当前章节的滚动位置
+    const chapterOffset = this.chapterOffsets.get(activeChapterIndex) || 0;
+    const relativeScrollTop = globalScrollTop - chapterOffset;
+
+    // 传递滚动状态给当前活跃的章节渲染器
+    activeChapter.renderer.setScrollState(relativeScrollTop, window.innerHeight);
   }
 
   /**
@@ -365,67 +314,17 @@ export class MultiChapterManager {
   async preloadNextChapter(currentChapterIndex) {
     const nextChapterIndex = currentChapterIndex + 1;
 
-    // 检查是否有下一章节、未加载、且未开始预加载
+    // 检查是否有下一章节且未加载
     if (
       nextChapterIndex < this.totalChapters &&
-      !this.loadedChapters.has(nextChapterIndex) &&
-      !this.preloadingChapters.has(nextChapterIndex)
+      !this.loadedChapters.has(nextChapterIndex)
     ) {
-      // 标记开始预加载，避免重复调用
-      this.preloadingChapters.add(nextChapterIndex);
-
       try {
         // 异步预加载下一章节，不阻塞当前滚动
         await this.loadChapter(nextChapterIndex);
       } catch (error) {
         console.error(`预加载章节 ${nextChapterIndex} 失败:`, error);
-      } finally {
-        // 无论成功还是失败，都从预加载集合中移除
-        this.preloadingChapters.delete(nextChapterIndex);
       }
-    }
-  }
-
-  /**
-   * 处理章节边界哨兵出现
-   * @param {number} chapterIndex - 章节索引
-   */
-  handleChapterBoundaryVisible(chapterIndex) {
-    // 只在垂直滚动模式下处理边界事件
-    if (this.mode !== 'vertical') {
-      return;
-    }
-
-    // 哨兵出现说明滚动到了章节分界点
-    // 当前章节的VirtualCanvasRenderer已滚动到底，浏览器开始外层滚动
-    // 此时显示全局透明层，强制让外层容器接管所有滚动事件
-
-    // 显示全局透明层，阻止所有VirtualCanvasRenderer接收滚动事件
-    this.showGlobalOverlayMask();
-  }
-
-  /**
-   * 处理章节边界哨兵消失
-   * @param {number} chapterIndex - 章节索引
-   */
-  handleChapterBoundaryHidden(chapterIndex) {
-    // 只在垂直滚动模式下处理边界事件
-    if (this.mode !== 'vertical') {
-      return;
-    }
-
-    // 哨兵消失说明完全进入了新章节
-    // 隐藏全局透明层，恢复该章节的VirtualCanvasRenderer内层滚动
-
-    // 切换活跃章节
-    // FIXME: 这里需要优化，因为滚动到边界时，会触发两次，导致章节切换不准确
-    this.currentChapterIndex = chapterIndex;
-
-    // 隐藏全局透明层，恢复所有VirtualCanvasRenderer内层滚动
-    this.hideGlobalOverlayMask();
-
-    if (this.onChapterChange) {
-      this.onChapterChange(chapterIndex);
     }
   }
 
@@ -436,9 +335,6 @@ export class MultiChapterManager {
   async initBook(chaptersConfig) {
     this.chapterConfigs = chaptersConfig;
     this.totalChapters = chaptersConfig.length;
-
-    // 清理现有章节
-    // this.clearAllChapters();
 
     // 创建章节实例（但不立即加载内容）
     for (let i = 0; i < chaptersConfig.length; i++) {
@@ -471,15 +367,28 @@ export class MultiChapterManager {
   async goToChapter(chapterIndex, progress = 0, smooth = true) {
     // 确保章节已加载
     await this.loadChapter(chapterIndex);
-    // 切换到目标章节，确保全局透明层隐藏（允许正常滚动）
-    this.hideGlobalOverlayMask();
-    this.currentChapterIndex = chapterIndex;
-
-    // 设置章节内进度
+    
+    // 获取章节偏移量
+    const chapterOffset = this.chapterOffsets.get(chapterIndex) || 0;
+    
+    // 计算章节内的目标位置
     const chapter = this.chapters.get(chapterIndex);
-    if (chapter && chapter.renderer) {
-      chapter.renderer.setProgress(progress, smooth);
-    }
+    if (!chapter) return;
+    
+    const chapterHeight = chapter.contentHeight || 0;
+    const targetOffsetInChapter = chapterHeight * progress;
+    
+    // 计算全局滚动位置
+    const globalScrollTop = chapterOffset + targetOffsetInChapter;
+    
+    // 滚动到目标位置
+    this.container.scrollTo({
+      top: globalScrollTop,
+      behavior: smooth ? 'smooth' : 'instant'
+    });
+
+    // 手动更新当前章节索引（因为滚动事件可能还没触发）
+    this.currentChapterIndex = chapterIndex;
 
     if (this.onChapterChange) {
       this.onChapterChange(chapterIndex);
@@ -518,27 +427,42 @@ export class MultiChapterManager {
       // chapter.container 就是 VirtualCanvasRenderer 的 container
       chapter.container = chapter.renderer.container;
 
-      // 只在垂直滚动模式下创建边界哨兵
-      let sentinel = null;
-      if (this.mode === 'vertical') {
-        sentinel = this.createChapterSentinel(chapterIndex);
-      }
-
       chapter.loaded = true;
       this.loadedChapters.add(chapterIndex);
-      const nextChapterContainer = this.chapters.get(
-        chapterIndex + 1
-      )?.container;
-      const fragment = document.createDocumentFragment();
-      fragment.appendChild(chapter.container);
-      fragment.appendChild(sentinel);
-      this.scrollWrapper.insertBefore(fragment, nextChapterContainer);
+      
+      // 计算并更新章节偏移量
+      this.updateChapterOffsets(chapterIndex);
+      
+      const nextChapterContainer = this.chapters.get(chapterIndex + 1)?.container;
+      this.container.insertBefore(chapter.container, nextChapterContainer);
 
       if (this.onChapterLoad) {
         this.onChapterLoad(chapterIndex);
       }
     } catch (error) {
       console.error(`Failed to load chapter ${chapterIndex}:`, error);
+    }
+  }
+
+  /**
+   * 更新章节偏移量映射
+   * @param {number} loadedChapterIndex - 刚加载的章节索引
+   */
+  updateChapterOffsets(loadedChapterIndex) {
+    // 重新计算所有章节的偏移量
+    let currentOffset = 0;
+    
+    for (let i = 0; i < this.totalChapters; i++) {
+      this.chapterOffsets.set(i, currentOffset);
+      
+      const chapter = this.chapters.get(i);
+      if (chapter && chapter.loaded) {
+        currentOffset += chapter.contentHeight;
+      } else {
+        // 对于未加载的章节，使用估计高度或默认高度
+        const estimatedHeight = chapter?.metadata?.estimatedHeight || window.innerHeight;
+        currentOffset += estimatedHeight;
+      }
     }
   }
 
@@ -559,7 +483,6 @@ export class MultiChapterManager {
     chapter.progress = progressInfo.progress;
 
     // 当章节进度达到预设阈值时，预加载下一章节
-    // 注意：垂直和横向模式都支持预加载
     if (progressInfo.progress >= this.preloadThreshold) {
       this.preloadNextChapter(chapterIndex);
     }
@@ -617,6 +540,7 @@ export class MultiChapterManager {
       }
     }
   }
+
   /**
    * 设置全局进度
    * @param {number} progress - 全局进度(0-1)
@@ -772,11 +696,6 @@ export class MultiChapterManager {
    * 清理所有章节
    */
   clearAllChapters() {
-    // 清理观察器（只在垂直模式下存在）
-    if (this.chapterObserver) {
-      this.chapterObserver.disconnect();
-    }
-
     // 销毁所有渲染器
     for (const chapter of this.chapters.values()) {
       if (chapter.renderer) {
@@ -791,18 +710,6 @@ export class MultiChapterManager {
     this.loadedChapters.clear();
     this.visibleChapters.clear();
     this.cacheQueue = [];
-
-    // 清理滚动隔离相关（只在垂直模式下存在）
-    this.chapterSentinels.clear();
-    this.appearedSentinels.clear();
-    this.preloadingChapters.clear();
-
-    // 清理全局透明层（只在垂直模式下存在）
-    if (this.globalOverlayMask && this.globalOverlayMask.parentNode) {
-      this.globalOverlayMask.parentNode.removeChild(this.globalOverlayMask);
-    }
-    this.globalOverlayMask = null;
-    this.isGlobalMaskActive = false;
   }
 
   /**
@@ -815,10 +722,15 @@ export class MultiChapterManager {
       this.progressUpdateTimer = null;
     }
 
-    // 清理观察器
-    if (this.chapterObserver) {
-      this.chapterObserver.disconnect();
-      this.chapterObserver = null;
+    // 清理滚动节流定时器
+    if (this.scrollThrottleId) {
+      cancelAnimationFrame(this.scrollThrottleId);
+      this.scrollThrottleId = null;
+    }
+
+    // 移除滚动事件监听器
+    if (this.container) {
+      this.container.removeEventListener('scroll', this.handleGlobalScroll);
     }
 
     // 清理所有章节
@@ -829,9 +741,9 @@ export class MultiChapterManager {
     this.onChapterChange = null;
     this.onChapterLoad = null;
 
-    // 清理滚动隔离状态
-    this.appearedSentinels.clear();
-    this.preloadingChapters.clear();
+    // 清理滚动管理相关数据
+    this.chapterOffsets.clear();
+    this.globalScrollTop = 0;
 
     // 清理引用
     this.container = null;
