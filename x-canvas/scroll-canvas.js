@@ -1,8 +1,7 @@
-
 /**
  * 虚拟视窗管理器
  * 负责管理多Canvas的虚拟滚动，模拟Google Docs的实现方式
- * 现在由外部统一管理滚动事件，内部只负责Canvas位置管理
+ * 完全由外部统一管理滚动事件，内部只负责Canvas位置管理
  */
 export class VirtualViewport {
   /** @type {HTMLElement} 滚动容器 */
@@ -41,12 +40,6 @@ export class VirtualViewport {
   /** @type {number} 上次滚动位置，用于判断滚动方向 */
   lastScrollTop = 0;
 
-  /** @type {boolean} 是否由外部管理滚动（新增） */
-  externalScrollManaged = false;
-
-  /** @type {number} 节流定时器ID（仅非外部管理模式使用） */
-  scrollThrottleId = null;
-
   /**
    * @param {ViewportConfig} config
    */
@@ -55,8 +48,7 @@ export class VirtualViewport {
     this.canvasList = config.canvasList;
     this.scrollContent = config.scrollContent;
     this.poolSize = config.poolSize || 4;
-    this.externalScrollManaged = config.externalScrollManaged || false;
-    
+
     this.config = {
       viewportHeight: config.viewportHeight, // 默认视窗高度
       viewportWidth: config.viewportWidth, // 默认视窗宽度
@@ -104,12 +96,6 @@ export class VirtualViewport {
    */
   init() {
     this.setupContainer();
-    
-    // 只有在非外部管理滚动时才绑定事件
-    if (!this.externalScrollManaged) {
-      this.bindEvents();
-    }
-    
     this.updateViewport();
   }
 
@@ -126,56 +112,17 @@ export class VirtualViewport {
   }
 
   /**
-   * 绑定事件（仅在非外部管理模式下使用）
-   */
-  bindEvents() {
-    // 滚动事件（带防抖）
-    this.container.addEventListener('scroll', this.handleScroll.bind(this), {
-      passive: true,
-    });
-
-    // 窗口大小变化
-    window.addEventListener('resize', this.handleResize.bind(this));
-  }
-
-  /**
-   * 外部设置滚动状态（新方法）
+   * 外部设置滚动状态
    * @param {number} scrollTop - 滚动位置
-   * @param {number} [viewportHeight] - 视窗高度（可选）
    */
-  setScrollState(scrollTop, viewportHeight) {
+  setScrollState(scrollTop) {
     // 更新状态
     this.state.scrollTop = scrollTop;
-    if (viewportHeight !== undefined) {
-      this.state.viewportHeight = viewportHeight;
-    }
-    
     // 更新Canvas位置
     this.updateCanvasPositions();
-    
+
     // 通知视窗变化
     this.notifyViewportChange();
-  }
-
-  /**
-   * 处理滚动事件（节流版本）- 仅在非外部管理模式下使用
-   */
-  handleScroll() {
-    if (this.isUpdating || this.externalScrollManaged) return;
-
-    // 立即更新滚动位置（快速响应）
-    this.updateScrollPosition();
-
-    // 使用requestAnimationFrame进行节流，确保按帧率执行
-    if (this.scrollThrottleId) {
-      return; // 如果已经有待处理的更新，跳过
-    }
-
-    this.scrollThrottleId = requestAnimationFrame(() => {
-      this.scrollThrottleId = null;
-      this.updateViewport();
-      this.notifyViewportChange();
-    });
   }
 
   /**
@@ -194,22 +141,9 @@ export class VirtualViewport {
   }
 
   /**
-   * 更新滚动位置（仅在非外部管理模式下使用）
-   */
-  updateScrollPosition() {
-    if (!this.externalScrollManaged) {
-      this.state.scrollTop = this.container.scrollTop;
-    }
-  }
-
-  /**
    * 更新视窗状态
    */
   updateViewport() {
-    if (!this.externalScrollManaged) {
-      this.updateScrollPosition();
-    }
-
     // 更新Canvas池位置
     this.updateCanvasPositions();
   }
@@ -342,23 +276,21 @@ export class VirtualViewport {
   /**
    * 滚动到指定位置
    * @param {number} y - 内容中的Y坐标
-   * @param {boolean} smooth - 是否平滑滚动
    */
-  scrollTo(y, smooth = true) {
+  scrollTo(y) {
     this.container.scrollTo({
       top: y,
-      behavior: smooth ? 'smooth' : 'instant',
+      behavior: 'instant',
     });
   }
 
   /**
    * 滚动到指定块
    * @param {number} chunkIndex
-   * @param {boolean} smooth
    */
-  scrollToChunk(chunkIndex, smooth = true) {
+  scrollToChunk(chunkIndex) {
     const y = chunkIndex * this.config.chunkHeight;
-    this.scrollTo(y, smooth);
+    this.scrollTo(y);
   }
 
   /**
@@ -382,18 +314,6 @@ export class VirtualViewport {
    * 销毁
    */
   destroy() {
-    // 只在非外部管理模式下移除事件监听器
-    if (!this.externalScrollManaged) {
-      this.container.removeEventListener('scroll', this.handleScroll);
-      window.removeEventListener('resize', this.handleResize);
-    }
-
-    // 清理节流定时器
-    if (this.scrollThrottleId) {
-      cancelAnimationFrame(this.scrollThrottleId);
-      this.scrollThrottleId = null;
-    }
-
     // 清理引用（DOM由主类管理）
     this.container = null;
     this.canvasList = null;
@@ -401,4 +321,3 @@ export class VirtualViewport {
     this.scrollContent = null;
   }
 }
-

@@ -55,7 +55,7 @@ import { CanvasTools } from './canvas-tools.js';
  * @property {number} [poolSize=4] - Canvas池大小
  * @property {Object} [theme] - 主题配置
  * @property {string} [mode='vertical'] - 渲染模式：'vertical' | 'horizontal'
- * @property {boolean} [adjustCrossChunkContent=true] - 是否自动调整跨块内容位置
+ * @property {boolean} [adjustCrossChunkContent=true] - 是否自动调整跨块内容
  * @property {Function} [onProgressChange] - 进度变化回调函数
  */
 
@@ -192,12 +192,6 @@ export class VirtualCanvasRenderer {
   /** @type {Function|null} 进度变化回调函数 */
   onProgressChange = null;
 
-  /** @type {number} 当前进度（0-1之间） */
-  currentProgress = 0;
-
-  /** @type {number} 进度变化防抖定时器 */
-  progressThrottleId = null;
-
   // 引擎和数据
   /** @type {TransferEngine} HTML转换引擎实例 */
   transferEngine;
@@ -246,9 +240,6 @@ export class VirtualCanvasRenderer {
 
     // 布局计算模式 - 是否自动调整跨块内容
     this.adjustCrossChunkContent = this.mode === 'horizontal'; // 默认启用
-
-    // 进度回调配置
-    this.onProgressChange = config.onProgressChange || null;
 
     // 主题配置需要先初始化，用于计算行高
     this.theme = {
@@ -672,7 +663,9 @@ export class VirtualCanvasRenderer {
    */
   handleViewportChange() {
     this.renderVisibleContent();
-    // 进度更新现在由MultiChapterManager统一处理
+    
+    // 通知外部进行进度更新
+    this.calculateAndNotifyProgress();
   }
 
   /**
@@ -1792,45 +1785,13 @@ export class VirtualCanvasRenderer {
     return promise;
   }
 
-  /**
-   * 更新进度（防抖处理）
-   */
-  updateProgress() {
-    // 清除之前的防抖定时器
-    if (this.progressThrottleId) {
-      clearTimeout(this.progressThrottleId);
-    }
 
-    // 设置新的防抖定时器
-    this.progressThrottleId = setTimeout(() => {
-      // TODO: 这里需要优化，因为每次滚动都会触发一次，导致进度变化过于频繁
-      this.calculateAndNotifyProgress();
-      this.progressThrottleId = null;
-    }, 16); // 约60fps的更新频率
-  }
 
   /**
    * 计算并通知进度变化
    */
   calculateAndNotifyProgress() {
-    const newProgress = this.getProgress();
-
-    // 只有进度确实发生变化时才通知
-    if (Math.abs(newProgress - this.currentProgress) > 0.001) {
-      // 0.1%的变化阈值
-      const oldProgress = this.currentProgress;
-      this.currentProgress = newProgress;
-
-      if (this.onProgressChange) {
-        this.onProgressChange({
-          progress: newProgress,
-          oldProgress: oldProgress,
-          scrollTop: this.viewport.state.scrollTop,
-          contentHeight: this.viewport.state.contentHeight,
-          viewportHeight: this.viewport.state.viewportHeight,
-        });
-      }
-    }
+    const currentProgress = this.getProgress();
   }
 
   /**
@@ -1991,12 +1952,6 @@ export class VirtualCanvasRenderer {
       this.viewport = null;
     }
 
-    // 清理进度相关定时器
-    if (this.progressThrottleId) {
-      clearTimeout(this.progressThrottleId);
-      this.progressThrottleId = null;
-    }
-
     // 清理引用
     this.parsedNodes = null;
     this.pageStyle = null;
@@ -2016,17 +1971,6 @@ export class VirtualCanvasRenderer {
   }
 
   /**
-   * 外部设置滚动状态（由MultiChapterManager调用）
-   * @param {number} scrollTop - 相对于当前章节的滚动位置
-   * @param {number} [viewportHeight] - 视窗高度（可选）
-   */
-  setScrollState(scrollTop, viewportHeight) {
-    if (this.viewport && this.viewport.setScrollState) {
-      this.viewport.setScrollState(scrollTop, viewportHeight);
-    }
-  }
-
-  /**
    * 获取当前章节的内容边界信息
    * @returns {Object}
    */
@@ -2040,7 +1984,10 @@ export class VirtualCanvasRenderer {
 
     return {
       contentHeight: this.fullLayoutData.totalHeight,
-      scrollableHeight: Math.max(0, this.fullLayoutData.totalHeight - this.viewportHeight),
+      scrollableHeight: Math.max(
+        0,
+        this.fullLayoutData.totalHeight - this.viewportHeight
+      ),
     };
   }
 
@@ -2048,7 +1995,8 @@ export class VirtualCanvasRenderer {
     // 初始化虚拟视窗
     const Viewport =
       mode === 'vertical' ? VirtualViewport : HorizontalSlideManager;
-    this.viewport = new Viewport({
+
+    const config = {
       container: this.container,
       canvasList: this.canvasList,
       scrollContent: this.scrollContent,
@@ -2056,9 +2004,9 @@ export class VirtualCanvasRenderer {
       viewportWidth: this.viewportWidth,
       chunkHeight: this.chunkHeight,
       poolSize,
-      externalScrollManaged: true, // 启用外部滚动管理
       onViewportChange: this.handleViewportChange.bind(this),
-    });
+    };
+    this.viewport = new Viewport(config);
   }
 }
 export default VirtualCanvasRenderer;

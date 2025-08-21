@@ -162,8 +162,8 @@ export class Paginator extends HTMLElement {
                 },
             }
         });
-        chapterManager.initBook(chapters);
-        chapterManager.goToChapter(0);
+        chapterManager.addBook(chapters);
+        chapterManager.startRead();
         return chapterManager;
     }
 
