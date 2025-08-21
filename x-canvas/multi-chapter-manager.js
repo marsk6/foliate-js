@@ -158,9 +158,14 @@ export class MultiChapterManager {
    */
   constructor(config) {
     this.config = config;
+    this.state = {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
     this.theme = config.theme || {};
     this.mode = config.mode || 'vertical';
     this.setupContainer();
+    window.CM = this;
   }
 
   /**
@@ -253,7 +258,6 @@ export class MultiChapterManager {
       chapter.progress.currentPage = 1;
 
       chapter.loaded = true;
-      this.currentChapterIndex = chapterIndex;
 
       if (chapterIndex === 0) {
         chapter.baseScrollOffset = 0;
@@ -266,8 +270,8 @@ export class MultiChapterManager {
 
       const nextChapterContainer = this.chapters.get(chapterIndex + 1).renderer
         ?.container;
-
-      this.readMode.container.insertBefore(
+      chapter.renderer.container.dataset.chapterIndex = chapterIndex;
+      this.readMode.insertChapter(
         chapter.renderer.container,
         nextChapterContainer
       );
@@ -284,16 +288,10 @@ export class MultiChapterManager {
   /**
    * 更新全局进度
    */
-  updateGlobalProgress(currentPage, scrollOffset) {
-    const nextChapter = this.chapters.get(this.currentChapterIndex + 1);
-    if (nextChapter) {
-      if (nextChapter.loaded && scrollOffset >= nextChapter.baseScrollOffset) {
-        this.currentChapterIndex = nextChapter.sectionIndex;
-      }
-      const faction = currentPage / this.activeChapter.progress.totalPages;
-      if (faction > 0.9) {
-        this.nextChapter();
-      }
+  updateGlobalProgress(currentPage) {
+    const faction = currentPage / this.activeChapter.progress.totalPages;
+    if (faction > 0.9) {
+      this.loadChapter(this.currentChapterIndex + 1);
     }
   }
 
@@ -402,10 +400,12 @@ class ScrollManager extends ReadMode {
   /** @type {MultiChapterManager} 管理器 */
   manager = null;
 
+  observer = null;
+
   constructor(manager) {
     super();
     this.manager = manager;
-    this.baseOffset = manager.config.viewportHeight;
+    this.baseOffset = manager.state.viewportHeight;
     this.scrollThrottleId = null;
     this.globalScrollTop = 0;
     this.chapterOffsets = new Map();
@@ -415,14 +415,33 @@ class ScrollManager extends ReadMode {
   setupContainer() {
     this.container = document.createElement('div');
     this.container.className = 'multi-chapter-container';
-    const { viewportWidth, viewportHeight } = this.manager.config;
+    const { viewportWidth, viewportHeight } = this.manager.state;
     this.container.style.cssText = `
       position: relative;
       width: ${viewportWidth}px;
       height: ${viewportHeight}px;
       overflow: auto;
     `;
+    this.observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        console.log('🚨🚨🚨👉👉📢', 'entry', entry);
+        if (entry.isIntersecting) {
+          const chapterIndex = +entry.target.dataset.chapterIndex;
+          this.manager.currentChapterIndex = chapterIndex;
+        }
+      });
+    }, {
+      root: this.container,
+      threshold: 0.5,
+    });
+    this.observer.observe(this.container);
+
     this.bindScrollEvents();
+  }
+
+  insertChapter(chapter, nextChapter) {
+    this.container.insertBefore(chapter, nextChapter);
+    this.observer.observe(chapter);
   }
 
   /**
@@ -455,11 +474,10 @@ class ScrollManager extends ReadMode {
 
       const relativeScrollTop =
         this.globalScrollTop - this.manager.activeChapter.baseScrollOffset;
-
       // 将滚动状态传递给当前活跃的章节
       const currentPage = Math.ceil(relativeScrollTop / this.baseOffset);
 
-      this.manager.updateGlobalProgress(currentPage, relativeScrollTop);
+      this.manager.updateGlobalProgress(currentPage);
       // 传递滚动状态给当前活跃的章节渲染器
       this.manager.activeChapter.renderer.viewport.setScrollState(
         relativeScrollTop
@@ -520,7 +538,7 @@ class SlideManager extends ReadMode {
   constructor(manager) {
     super();
     this.manager = manager;
-    this.baseOffset = manager.config.viewportWidth;
+    this.baseOffset = manager.state.viewportWidth;
 
     this.touchStartX = 0;
     this.touchStartTime = 0;
@@ -532,7 +550,7 @@ class SlideManager extends ReadMode {
   setupContainer() {
     this.container = document.createElement('div');
     this.container.className = 'multi-chapter-container';
-    const { viewportWidth } = this.manager.config;
+    const { viewportWidth } = this.manager.state;
     this.container.style.cssText = `
         position: relative;
         height: 100%;
@@ -541,6 +559,11 @@ class SlideManager extends ReadMode {
         will-change: transform;
     `;
     this.bindSlideEvents();
+  }
+
+
+  insertChapter(chapter, nextChapter) {
+    this.container.insertBefore(chapter, nextChapter);
   }
 
   /**
@@ -628,7 +651,7 @@ class SlideManager extends ReadMode {
     const maxSwipeTime = 300;
     const isQuickSwipe =
       deltaTime < maxSwipeTime && absDeltaX > minSwipeDistance;
-    const isLongSwipe = absDeltaX > this.manager.config.viewportWidth * 0.3; // 超过30%宽度
+    const isLongSwipe = absDeltaX > this.manager.state.viewportWidth * 0.3; // 超过30%宽度
 
     if (isQuickSwipe || isLongSwipe) {
       if (deltaX > 0) {
@@ -651,12 +674,12 @@ class SlideManager extends ReadMode {
    * @param {number} deltaX - X轴偏移量
    */
   updateContainerTransform(deltaX) {
-    const maxDelta = this.manager.config.viewportWidth * 0.5; // 最大拖拽距离
+    const maxDelta = this.manager.state.viewportWidth * 0.5; // 最大拖拽距离
     const clampedDelta = Math.max(-maxDelta, Math.min(maxDelta, deltaX));
 
     // 计算当前章节的基础偏移
     const baseOffset =
-      -this.manager.currentChapterIndex * this.manager.config.viewportWidth;
+      -this.manager.currentChapterIndex * this.manager.state.viewportWidth;
     const totalOffset = baseOffset + clampedDelta;
 
     // 对整个 Manager 容器应用变换
@@ -670,7 +693,7 @@ class SlideManager extends ReadMode {
    */
   animateContainerToChapter(targetChapter, callback) {
     const animationDuration = 300;
-    const targetOffset = -targetChapter * this.manager.config.viewportWidth;
+    const targetOffset = -targetChapter * this.manager.state.viewportWidth;
 
     // 对容器应用过渡动画
     this.manager.container.style.transition = `transform ${animationDuration}ms ease-out`;
