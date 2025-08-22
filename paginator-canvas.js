@@ -163,7 +163,7 @@ export class Paginator extends HTMLElement {
             }
         });
         chapterManager.addBook(chapters);
-        chapterManager.startRead();
+        chapterManager.startRead(2, 0.4);
         return chapterManager;
     }
 

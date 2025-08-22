@@ -170,6 +170,27 @@ export class VirtualViewport {
   }
 
   /**
+   * 设置初始滚动位置并初始化canvas池
+   * @param {number} targetScrollTop - 目标滚动位置
+   */
+  setProgress(targetScrollTop) {
+    const { chunkHeight } = this.config;
+    const step = chunkHeight;
+    if (this.state.scrollTop < targetScrollTop) {
+      while (this.state.scrollTop < targetScrollTop) {
+        this.state.scrollTop += step;
+        this.handleDownwardScroll(chunkHeight, this.state.contentHeight);
+      }
+    } else {
+      while (this.state.scrollTop > targetScrollTop) {
+        this.state.scrollTop -= step;
+        this.handleUpwardScroll(chunkHeight);
+      }
+    }
+    this.state.scrollTop = targetScrollTop;
+  }
+
+  /**
    * 处理向下滚动
    */
   handleDownwardScroll(chunkHeight, contentHeight) {
@@ -271,26 +292,6 @@ export class VirtualViewport {
    */
   contentToCanvasY(contentY) {
     return contentY - this.state.scrollTop;
-  }
-
-  /**
-   * 滚动到指定位置
-   * @param {number} y - 内容中的Y坐标
-   */
-  scrollTo(y) {
-    this.container.scrollTo({
-      top: y,
-      behavior: 'instant',
-    });
-  }
-
-  /**
-   * 滚动到指定块
-   * @param {number} chunkIndex
-   */
-  scrollToChunk(chunkIndex) {
-    const y = chunkIndex * this.config.chunkHeight;
-    this.scrollTo(y);
   }
 
   /**

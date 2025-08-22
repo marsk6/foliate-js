@@ -397,10 +397,10 @@ export class VirtualCanvasRenderer {
   }
 
   /**
-   * 渲染HTML内容
+   * 布局HTML内容
    * @param {string} htmlContent
    */
-  async render(htmlContent) {
+  async layout(htmlContent) {
     this.currentHTML = htmlContent;
 
     // 1. 解析HTML为数据结构
@@ -429,8 +429,9 @@ export class VirtualCanvasRenderer {
     this.viewport.canvasInfoList.forEach((canvasInfo) => {
       canvasInfo.needsRerender = true;
     });
+  }
 
-    // 渲染当前可视区域
+  render() {
     this.renderVisibleContent();
   }
 
