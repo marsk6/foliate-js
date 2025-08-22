@@ -664,9 +664,6 @@ export class VirtualCanvasRenderer {
    */
   handleViewportChange() {
     this.renderVisibleContent();
-    
-    // 通知外部进行进度更新
-    this.calculateAndNotifyProgress();
   }
 
   /**
@@ -1786,158 +1783,6 @@ export class VirtualCanvasRenderer {
     return promise;
   }
 
-
-
-  /**
-   * 计算并通知进度变化
-   */
-  calculateAndNotifyProgress() {
-    const currentProgress = this.getProgress();
-  }
-
-  /**
-   * 获取当前阅读进度
-   * @returns {number} 进度值（0-1之间）
-   */
-  getProgress() {
-    if (!this.viewport || !this.fullLayoutData) {
-      return 0;
-    }
-
-    const { scrollTop, contentHeight, viewportHeight } = this.viewport.state;
-
-    // 如果内容高度小于等于视窗高度，说明内容全部可见，进度为1
-    if (contentHeight <= viewportHeight) {
-      return 1;
-    }
-
-    // 计算可滚动的最大距离
-    const maxScrollTop = contentHeight - viewportHeight;
-
-    // 确保滚动位置在合理范围内
-    const clampedScrollTop = Math.max(0, Math.min(scrollTop, maxScrollTop));
-
-    // 计算进度百分比
-    return maxScrollTop > 0 ? clampedScrollTop / maxScrollTop : 0;
-  }
-
-  /**
-   * 设置阅读进度
-   * @param {number} progress - 进度值（0-1之间）
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  setProgress(progress, smooth = true) {
-    if (!this.viewport || !this.fullLayoutData) {
-      console.warn(
-        'VirtualCanvasRenderer: Cannot set progress before content is rendered'
-      );
-      return;
-    }
-
-    // 确保进度值在有效范围内
-    const clampedProgress = Math.max(0, Math.min(1, progress));
-
-    const { contentHeight, viewportHeight } = this.viewport.state;
-
-    // 如果内容高度小于等于视窗高度，直接返回
-    if (contentHeight <= viewportHeight) {
-      return;
-    }
-
-    // 计算目标滚动位置
-    const maxScrollTop = contentHeight - viewportHeight;
-    const targetScrollTop = maxScrollTop * clampedProgress;
-
-    // 滚动到目标位置
-    this.viewport.scrollTo(targetScrollTop, smooth);
-  }
-
-  /**
-   * 设置进度变化回调函数
-   * @param {Function} callback - 回调函数
-   */
-  setProgressChangeCallback(callback) {
-    this.onProgressChange = callback;
-  }
-
-  /**
-   * 获取详细的进度信息
-   * @returns {Object} 包含各种进度相关信息的对象
-   */
-  getProgressInfo() {
-    if (!this.viewport || !this.fullLayoutData) {
-      return {
-        progress: 0,
-        scrollTop: 0,
-        contentHeight: 0,
-        viewportHeight: 0,
-        maxScrollTop: 0,
-        scrollableHeight: 0,
-        isAtTop: true,
-        isAtBottom: false,
-        canScroll: false,
-      };
-    }
-
-    const { scrollTop, contentHeight, viewportHeight } = this.viewport.state;
-    const maxScrollTop = Math.max(0, contentHeight - viewportHeight);
-    const progress = this.getProgress();
-
-    return {
-      progress: progress,
-      scrollTop: scrollTop,
-      contentHeight: contentHeight,
-      viewportHeight: viewportHeight,
-      maxScrollTop: maxScrollTop,
-      scrollableHeight: contentHeight - viewportHeight,
-      isAtTop: scrollTop <= 1,
-      isAtBottom: scrollTop >= maxScrollTop - 1,
-      canScroll: contentHeight > viewportHeight,
-    };
-  }
-
-  /**
-   * 跳转到内容的开始
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  goToStart(smooth = true) {
-    this.setProgress(0, smooth);
-  }
-
-  /**
-   * 跳转到内容的结束
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  goToEnd(smooth = true) {
-    this.setProgress(1, smooth);
-  }
-
-  /**
-   * 向前翻页（向下滚动一个视窗高度）
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  pageDown(smooth = true) {
-    if (!this.viewport) return;
-
-    const { scrollTop, viewportHeight } = this.viewport.state;
-    const targetY = scrollTop + viewportHeight * 0.9; // 90%的视窗高度，保留一些重叠
-
-    this.viewport.scrollTo(targetY, smooth);
-  }
-
-  /**
-   * 向后翻页（向上滚动一个视窗高度）
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  pageUp(smooth = true) {
-    if (!this.viewport) return;
-
-    const { scrollTop, viewportHeight } = this.viewport.state;
-    const targetY = scrollTop - viewportHeight * 0.9; // 90%的视窗高度，保留一些重叠
-
-    this.viewport.scrollTo(Math.max(0, targetY), smooth);
-  }
-
   /**
    * 销毁渲染器
    */
@@ -1969,27 +1814,6 @@ export class VirtualCanvasRenderer {
     this.imageCache.clear();
 
     window.removeEventListener('resize', this.setupHighDPI.bind(this));
-  }
-
-  /**
-   * 获取当前章节的内容边界信息
-   * @returns {Object}
-   */
-  getBoundingInfo() {
-    if (!this.fullLayoutData) {
-      return {
-        contentHeight: 0,
-        scrollableHeight: 0,
-      };
-    }
-
-    return {
-      contentHeight: this.fullLayoutData.totalHeight,
-      scrollableHeight: Math.max(
-        0,
-        this.fullLayoutData.totalHeight - this.viewportHeight
-      ),
-    };
   }
 
   initMode({ mode, poolSize }) {

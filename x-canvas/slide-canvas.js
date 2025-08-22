@@ -50,7 +50,6 @@ export class HorizontalSlideManager {
       contentWidth: 0,
       totalPages: 0,
       currentPage: 0,
-      isAnimating: false,
     };
 
     this.initCanvasPool();
@@ -110,9 +109,9 @@ export class HorizontalSlideManager {
   }
 
   /**
-   * 更新滚动位置
+   * 更新滚动位置，模拟垂直滚动的位置
    */
-  updateScrollPosition() {
+  updateVirtualScrollPosition() {
     this.state.scrollTop = this.state.currentPage * this.config.chunkHeight;
   }
 
@@ -232,6 +231,7 @@ export class HorizontalSlideManager {
    */
   setCurrentPage(pageIndex, oldPage) {
     this.state.currentPage = pageIndex;
+    this.state.scrollTop = this.state.currentPage * this.config.chunkHeight;
 
     // 处理Canvas重定位
     if (pageIndex > oldPage) {
@@ -239,27 +239,7 @@ export class HorizontalSlideManager {
     } else {
       this.handleSwipeRight();
     }
-  }
-
-  /**
-   * 设置动画状态（供外部调用）
-   * @param {boolean} isAnimating
-   */
-  setAnimating(isAnimating) {
-    this.state.isAnimating = isAnimating;
-  }
-
-  /**
-   * 检查是否可以翻页
-   * @param {number} pageIndex - 目标页面索引
-   * @returns {boolean}
-   */
-  canGoToPage(pageIndex) {
-    return !(
-      pageIndex < 0 ||
-      pageIndex >= this.state.totalPages ||
-      this.state.isAnimating
-    );
+    this.notifyViewportChange();
   }
 
   /**
