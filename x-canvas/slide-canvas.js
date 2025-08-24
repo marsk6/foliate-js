@@ -130,6 +130,29 @@ export class HorizontalSlideManager {
   }
 
   /**
+   * 设置初始滚动位置并初始化canvas池
+   * @param {number} targetScrollTop - 目标滚动位置
+   */
+  setProgress(targetScrollLeft) {
+    const targetPage = targetScrollLeft / this.config.chunkWidth + 1;
+    let { currentPage } = this.state;
+    if (targetPage < currentPage) {
+      while (targetPage < currentPage) {
+        currentPage--;
+        this.state.currentPage = currentPage;
+        this.handleSwipeRight();
+      }
+    } else {
+      while (targetPage > currentPage) {
+        currentPage++
+        this.state.currentPage = currentPage;
+        this.handleSwipeLeft();
+      }
+    }
+    this.notifyViewportChange();
+  }
+
+  /**
    * 处理窗口大小变化
    */
   handleResize() {
@@ -139,14 +162,6 @@ export class HorizontalSlideManager {
 
     // 重新渲染当前页面
     this.notifyViewportChange();
-  }
-
-  /**
-   * 更新滚动内容变换（实时预览）
-   * 通过外部回调来实现滑动效果
-   */
-  updateScrollContentTransform(deltaX) {
-
   }
 
   /**

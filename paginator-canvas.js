@@ -144,15 +144,22 @@ export class Paginator extends HTMLElement {
             // mode: 'horizontal',
             mode: 'vertical',
             theme: {
-              backgroundColor: '#fff',
-              textColor: '#222',
-              selectionColor: '#007aff',
-              selectionOpacity: 0.2,
-              highlightColor: '#ffeb3b',
-              highlightOpacity: 0.3,
+                backgroundColor: '#fff',
+                textColor: '#222',
+                selectionColor: '#007aff',
+                selectionOpacity: 0.2,
+                highlightColor: '#ffeb3b',
+                highlightOpacity: 0.3,
             },
-          });
-        const chapters = this.sections.map((section, index) => {
+        });
+        const sections = [
+            {
+                load: async () => {
+                    return "http://127.0.0.1:5500/web/foliate-js/x-canvas/1.html";
+                }
+            }
+        ]
+        const chapters = sections.map((section, index) => {
             return {
                 index,
                 loadContent: async () => {
@@ -163,7 +170,7 @@ export class Paginator extends HTMLElement {
             }
         });
         chapterManager.addBook(chapters);
-        chapterManager.startRead(2, 0.4);
+        chapterManager.startRead(0, 0);
         return chapterManager;
     }
 

@@ -257,7 +257,7 @@ export class MultiChapterManager {
       this.reCalculateBaseScrollOffset();
 
       chapter.renderer.render();
-      const nextChapterContainer = this.chapters.get(chapterIndex + 1).renderer
+      const nextChapterContainer = this.chapters.get(chapterIndex + 1)?.renderer
         ?.container;
 
       this.readMode.insertChapter(
@@ -269,41 +269,6 @@ export class MultiChapterManager {
       console.error(`Failed to load chapter ${chapterIndex}:`, error);
     }
   }
-
-  /**
-   * 下一章
-   */
-  async nextChapter() {
-    if (this.activeChapter.sectionIndex + 1 < this.totalChapters) {
-      await this.goToChapter(this.currentChapterIndex + 1, 0);
-    }
-  }
-
-  /**
-   * 上一章
-   */
-  async previousChapter() {
-    if (this.activeChapter.sectionIndex > 0) {
-      await this.goToChapter(this.activeChapter.sectionIndex - 1, 1);
-    }
-  }
-
-  /**
-   * 跳转到书籍开头
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  async goToStart(smooth = true) {
-    await this.goToChapter(0, 0, smooth);
-  }
-
-  /**
-   * 跳转到书籍结尾
-   * @param {boolean} smooth - 是否平滑滚动
-   */
-  async goToEnd(smooth = true) {
-    await this.goToChapter(this.totalChapters - 1, 1, smooth);
-  }
-
   /**
    * 设置主题
    * @param {Object} theme - 主题配置
@@ -459,6 +424,59 @@ class ScrollManager extends ReadMode {
   }
 
   /**
+   * 设置章节哨兵
+   * @param {number} chapterIndex - 章节索引
+   * @param {HTMLElement} chapterContainer - 章节容器
+   */
+  setSentinel(chapterIndex, chapterContainer) {
+    const loadTopSentinel = document.createElement('div');
+    const loadBottomSentinel = document.createElement('div');
+    loadTopSentinel.dataset.chapterIndex = chapterIndex;
+    loadTopSentinel.dataset.type = 'top';
+    loadTopSentinel.style.cssText = `
+        position: absolute;
+        top: ${this.baseOffset / 2}px;
+        left: 0;
+        width: 100%;
+        height: ${this.baseOffset / 2}px;
+        background-color: transparent;
+        z-index: 9999;
+        pointer-events: none;
+      `;
+    loadBottomSentinel.dataset.chapterIndex = chapterIndex;
+    loadBottomSentinel.dataset.type = 'bottom';
+    loadBottomSentinel.style.cssText = `
+        position: absolute;
+        bottom: ${this.baseOffset / 2}px;
+        left: 0;
+        width: 100%;
+        height: ${this.baseOffset / 2}px;
+        background-color: transparent;
+        z-index: 9999;
+        pointer-events: none;
+      `;
+    chapterContainer.appendChild(loadTopSentinel);
+    this.loadObserver.observe(loadTopSentinel);
+    chapterContainer.appendChild(loadBottomSentinel);
+    this.loadObserver.observe(loadBottomSentinel);
+
+    const activeSentinel = document.createElement('div');
+    activeSentinel.dataset.chapterIndex = chapterIndex;
+    activeSentinel.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 1px;
+        background-color: transparent;
+        z-index: 9999;
+        pointer-events: none;
+      `;
+    chapterContainer.appendChild(activeSentinel);
+    this.activeObserver.observe(activeSentinel);
+  }
+
+  /**
    * 插入章节
    * @param {number} chapterIndex - 章节索引
    * @param {HTMLElement} chapterContainer - 章节容器
@@ -502,7 +520,6 @@ class ScrollManager extends ReadMode {
 
       const relativeScrollTop =
         this.globalScrollTop - this.manager.activeChapter.baseScrollOffset;
-
       const { activeChapter } = this.manager;
 
       // 将滚动状态传递给当前活跃的章节
@@ -526,7 +543,7 @@ class ScrollManager extends ReadMode {
   }
 
   setOffset(offset) {
-    this.container.scrollTo(0, offset);
+    this.container.scrollTop = offset;
   }
 
   /**
@@ -730,17 +747,21 @@ class SlideManager extends ReadMode {
   animateContainerToChapter() {
     const animationDuration = 300;
     const { currentPage } = this.activeChapter.progress;
-    const targetOffset =
-      currentPage * this.baseOffset + this.activeChapter.baseScrollOffset;
+    const scrollLeft =
+      (currentPage - 1) * this.baseOffset + this.activeChapter.baseScrollOffset;
 
     // 对容器应用过渡动画
     this.manager.container.style.transition = `transform ${animationDuration}ms ease-out`;
-    this.manager.container.style.transform = `translateX(${targetOffset}px)`;
+    this.manager.container.style.transform = `translateX(${scrollLeft}px)`;
 
     setTimeout(() => {
       // 动画结束后清除过渡效果
       this.manager.container.style.transition = '';
     }, animationDuration);
+  }
+
+  setOffset(offset) {
+    this.container.style.transform = `translateX(${offset}px)`;
   }
 
   /**
@@ -753,38 +774,43 @@ class SlideManager extends ReadMode {
   /**
    * 下一页
    */
-  nextPage() {
+  async nextPage() {
     const activeChapter = this.manager.activeChapter;
 
     const { currentPage, totalPages } = activeChapter.progress;
-
-    if (currentPage < totalPages - 1) {
-      // 在当前章节内翻页
-      this.goToPage(currentPage + 1);
-      if (currentPage + 1 === totalPages) {
-        this.manager.loadChapter(this.manager.currentChapterIndex + 1, 0);
+    const nextPage = currentPage + 1;
+    if (currentPage === totalPages) {
+      if (activeChapter.sectionIndex < this.manager.totalChapters - 1) {
+        this.manager.currentChapterIndex++;
+        await this.manager.loadChapter(this.manager.currentChapterIndex, 0);
+        this.goToPage(1);
+      } else {
+        this.snapToCurrentChapter();
       }
-    } else {
-      this.snapToCurrentChapter();
+      return;
     }
+    this.goToPage(nextPage);
   }
 
   /**
    * 上一页
    */
-  previousPage() {
+  async previousPage() {
     const activeChapter = this.manager.activeChapter;
-    const { currentPage } = activeChapter.progress;
+    const { currentPage, totalPages } = activeChapter.progress;
 
-    if (currentPage > 0) {
-      // 在当前章节内翻页
-      this.goToPage(currentPage - 1);
-      if (currentPage - 1 === 1) {
-        this.manager.loadChapter(this.manager.currentChapterIndex - 1, 1);
+    const previousPage = currentPage - 1;
+    if (currentPage === 1) {
+      if (activeChapter.sectionIndex > 0) {
+        this.manager.currentChapterIndex--;
+        await this.manager.loadChapter(this.manager.currentChapterIndex, 1);
+        this.goToPage(totalPages);
+      } else {
+        this.snapToCurrentChapter();
       }
-    } else {
-      this.snapToCurrentChapter();
+      return;
     }
+    this.goToPage(previousPage);
   }
 
   /**
@@ -798,11 +824,23 @@ class SlideManager extends ReadMode {
 
     activeChapter.progress.currentPage = pageIndex;
 
+    activeChapter.progress.faction =
+      (pageIndex * this.baseOffset) /
+      activeChapter.progress.scrollLength;
+
+    activeChapter.progress.scrollOffset = oldPage * this.baseOffset;
     // 设置页面状态和Canvas重定位
     activeChapter.renderer.viewport.setCurrentPage(pageIndex, oldPage);
 
     // 执行页面切换动画
     this.animateContainerToChapter();
+
+    if (totalPages - currentPage < 2) {
+      this.manager.loadChapter(this.manager.currentChapterIndex + 1, 0);
+    }
+    if (currentPage < 2) {
+      this.manager.loadChapter(this.manager.currentChapterIndex - 1, 1);
+    }
   }
 
   /**
