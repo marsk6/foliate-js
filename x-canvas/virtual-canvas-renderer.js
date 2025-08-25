@@ -44,7 +44,7 @@
  * // 所有图片都会自动居中对齐，超宽图片会自动缩放适应页面宽度
  */
 
-import TransferEngine from './layout-engine.js';
+import HTMLParser from './html-parser.js';
 import { HorizontalSlideManager } from './slide-canvas.js';
 import { VirtualViewport } from './scroll-canvas.js';
 import { CanvasTools } from './canvas-tools.js';
@@ -193,8 +193,8 @@ export class VirtualCanvasRenderer {
   onProgressChange = null;
 
   // 引擎和数据
-  /** @type {TransferEngine} HTML转换引擎实例 */
-  transferEngine;
+  /** @type {HTMLParser} HTML转换引擎实例 */
+  htmlParser;
 
   /** @type {Array|null} 解析后的节点数据 */
   parsedNodes = null;
@@ -265,7 +265,7 @@ export class VirtualCanvasRenderer {
     this.chunkWidth = this.canvasWidth;
 
     // 转换引擎实例
-    this.transferEngine = new TransferEngine();
+    this.htmlParser = new HTMLParser();
 
     this.parsedNodes = null;
     this.pageStyle = null;
@@ -404,7 +404,7 @@ export class VirtualCanvasRenderer {
     this.currentHTML = htmlContent;
 
     // 1. 解析HTML为数据结构
-    const parseResult = await this.transferEngine.parse(htmlContent);
+    const parseResult = await this.htmlParser.parse(htmlContent);
     this.parsedNodes = parseResult.nodes;
     this.pageStyle = parseResult.pageStyle;
 
@@ -1114,7 +1114,7 @@ export class VirtualCanvasRenderer {
     let line = startLine;
 
     // 处理块级元素的上边距和上内边距
-    if (this.transferEngine.isBlockElement(node.tag)) {
+    if (this.htmlParser.isBlockElement(node.tag)) {
       const marginTop = this.parseSize(node.style.marginTop);
       const paddingTop = this.parseSize(node.style.paddingTop);
 
@@ -1206,7 +1206,7 @@ export class VirtualCanvasRenderer {
     }
 
     // 处理块级元素的下边距、下内边距和换行
-    if (this.transferEngine.isBlockElement(node.tag)) {
+    if (this.htmlParser.isBlockElement(node.tag)) {
       const marginBottom = this.parseSize(node.style.marginBottom);
       const paddingBottom = this.parseSize(node.style.paddingBottom);
 

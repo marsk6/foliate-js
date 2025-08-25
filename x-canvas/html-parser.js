@@ -53,7 +53,7 @@
  * @property {Object} pageStyle - 页面级样式（从head中提取）
  */
 
-export class TransferEngine {
+export class HTMLParser {
   constructor() {
     // 默认样式映射
     this.defaultStyles = {
@@ -607,4 +607,4 @@ export class TransferEngine {
   }
 }
 
-export default TransferEngine;
+export default HTMLParser;
