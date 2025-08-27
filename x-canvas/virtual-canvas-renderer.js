@@ -1084,11 +1084,21 @@ export class VirtualCanvasRenderer {
     let y = startY;
     let line = startLine;
 
-    for (const node of nodes) {
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      
       const result = this.layoutNode(node, x, y, line, words, elements);
-      x = result.x;
+      
+      // 更新坐标
       y = result.y;
       line = result.line;
+      
+      // X坐标的处理：
+      // - 如果当前节点是块级元素，它已经在layoutNode中处理了换行，
+      //   result.x 应该是 paddingX（新行的开始）
+      // - 如果当前节点是内联元素，result.x 是当前行的结束位置
+      // - 无论哪种情况，都直接使用 result.x，因为 layoutNode 已经正确处理了
+      x = result.x;
     }
 
     return { x, y, line };
@@ -1311,7 +1321,7 @@ export class VirtualCanvasRenderer {
           x > effectiveStartX
         ) {
           line++;
-          x = startX; // 新行不应用首行缩进
+          x = this.theme.paddingX; // 新行从左边距开始
           y += lineHeight;
           currentLineY = y + baseline;
           isFirstLine = false;
@@ -1321,7 +1331,7 @@ export class VirtualCanvasRenderer {
 
       if (needNewLine) {
         line++;
-        x = startX; // 新行不应用首行缩进
+        x = this.theme.paddingX; // 新行从左边距开始
         y += lineHeight;
         currentLineY = y + baseline;
         isFirstLine = false;
@@ -1457,7 +1467,7 @@ export class VirtualCanvasRenderer {
       line++;
       y += lineHeight;
       currentLineY = y + baseline;
-      x = startX;
+      x = this.theme.paddingX; // 文本块结束后从左边距开始
     }
 
     return { x, y, line };
@@ -1514,7 +1524,7 @@ export class VirtualCanvasRenderer {
             lines.push(currentLine);
           }
           currentLine = { segments: [], width: 0 };
-          x = startX;
+          x = this.theme.paddingX; // 新行从左边距开始
           isFirstLine = false;
           continue;
         }
@@ -1527,7 +1537,7 @@ export class VirtualCanvasRenderer {
         }
         // 开始新行
         currentLine = { segments: [], width: 0 };
-        x = startX;
+        x = this.theme.paddingX; // 新行从左边距开始
         isFirstLine = false;
       }
 
