@@ -199,9 +199,6 @@ export class VirtualCanvasRenderer {
   /** @type {Array|null} 解析后的节点数据 */
   parsedNodes = null;
 
-  /** @type {Object|null} 从head中提取的页面样式 */
-  pageStyle = null;
-
   /** @type {string|undefined} 当前HTML内容 */
   currentHTML;
 
@@ -268,7 +265,6 @@ export class VirtualCanvasRenderer {
     this.htmlParser = new HTMLParser();
 
     this.parsedNodes = null;
-    this.pageStyle = null;
 
     // 创建隐藏的canvas用于测量文本
     this.measureCanvas = document.createElement('canvas');
@@ -406,10 +402,6 @@ export class VirtualCanvasRenderer {
     // 1. 解析HTML为数据结构
     const parseResult = await this.htmlParser.parse(htmlContent);
     this.parsedNodes = parseResult.nodes;
-    this.pageStyle = parseResult.pageStyle;
-
-    // 2. 应用页面样式
-    this.applyPageStyle();
 
     // 垂直模式：执行完整布局计算（不渲染）
     this.calculateFullLayout();
@@ -449,6 +441,14 @@ export class VirtualCanvasRenderer {
     // 初始化渲染块管理
     this.initRenderChunks();
 
+    // 设置初始的继承样式（从主题中获取）
+    const initialInheritedStyle = {
+      color: this.theme.textColor,
+      fontFamily: this.theme.fontFamily,
+      fontSize: this.theme.baseFontSize,
+      lineHeight: this.theme.lineHeight
+    };
+
     // 使用原有的布局算法计算所有位置
     const result = this.layoutNodes(
       this.parsedNodes,
@@ -456,7 +456,8 @@ export class VirtualCanvasRenderer {
       y,
       currentLine,
       words,
-      elements
+      elements,
+      initialInheritedStyle
     );
 
     // 📐 正确的总高度计算方式：使用实际的Y坐标
@@ -470,7 +471,7 @@ export class VirtualCanvasRenderer {
     // scrollContent 的高度基于块数量，而不是内容高度
     const scrollContentHeight = totalChunks * chunkHeight;
     const scrollContentWidth = totalChunks * chunkWidth;
-
+    console.log('🚨🚨🚨👉👉📢', 'scrollContentWidth', words);
     this.fullLayoutData = {
       words,
       elements,
@@ -1038,35 +1039,71 @@ export class VirtualCanvasRenderer {
     }
   }
 
+
+
   /**
-   * 应用从head中提取的页面样式
+   * CSS可继承属性列表
    */
-  applyPageStyle() {
-    if (!this.pageStyle) return;
+  inheritableProperties = new Set([
+    'color',
+    'fontFamily',
+    'fontSize', 
+    'fontStyle',
+    'fontWeight',
+    'lineHeight',
+    'textAlign',
+    'textIndent',
+    'letterSpacing',
+    'wordSpacing',
+    'textTransform',
+    'whiteSpace',
+    'direction',
+    'visibility'
+  ]);
 
-    // 应用页面边距 - 已移除paddingY支持
+  /**
+   * 合并继承的样式
+   * @param {Object} parentStyle - 父元素样式
+   * @param {Object} currentStyle - 当前元素样式
+   * @returns {Object} 合并后的样式
+   */
+  mergeInheritedStyle(parentStyle = {}, currentStyle = {}) {
+    const mergedStyle = { ...parentStyle };
+    
+    // 当前元素的样式覆盖继承的样式
+    Object.keys(currentStyle).forEach(prop => {
+      mergedStyle[prop] = currentStyle[prop];
+    });
+    
+    return mergedStyle;
+  }
 
-    if (this.pageStyle.marginBottom) {
-      const marginBottom = this.parseSize(this.pageStyle.marginBottom);
-      // 可以用于计算页面底部空间
-    }
+  /**
+   * 提取可继承的样式
+   * @param {Object} style - 样式对象
+   * @returns {Object} 可继承的样式
+   */
+  extractInheritableStyle(style) {
+    const inheritableStyle = {};
+    
+    this.inheritableProperties.forEach(prop => {
+      if (style && style[prop] !== undefined) {
+        inheritableStyle[prop] = style[prop];
+      }
+    });
+    
+    return inheritableStyle;
+  }
 
-    // 应用其他页面级样式
-    if (this.pageStyle.fontFamily) {
-      this.theme.fontFamily = this.pageStyle.fontFamily;
-    }
-
-    if (this.pageStyle.fontSize) {
-      this.theme.baseFontSize = this.parseSize(this.pageStyle.fontSize);
-    }
-
-    if (this.pageStyle.color) {
-      this.theme.textColor = this.pageStyle.color;
-    }
-
-    if (this.pageStyle.backgroundColor) {
-      this.theme.backgroundColor = this.pageStyle.backgroundColor;
-    }
+  /**
+   * 判断是否为块级元素（通过样式判断）
+   * @param {Object} style - 样式对象
+   * @returns {boolean}
+   */
+  isBlockElement(style = {}) {
+    const display = style.display || 'inline';
+    // 块级显示类型包括：block, list-item, table等
+    return display === 'block' || display === 'list-item' || display === 'table';
   }
 
   /**
@@ -1077,9 +1114,10 @@ export class VirtualCanvasRenderer {
    * @param {number} startLine
    * @param {Array} words
    * @param {Array} elements
+   * @param {Object} inheritedStyle - 从父元素继承的样式
    * @returns {Object}
    */
-  layoutNodes(nodes, startX, startY, startLine, words, elements) {
+  layoutNodes(nodes, startX, startY, startLine, words, elements, inheritedStyle = {}) {
     let x = startX;
     let y = startY;
     let line = startLine;
@@ -1087,7 +1125,7 @@ export class VirtualCanvasRenderer {
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
       
-      const result = this.layoutNode(node, x, y, line, words, elements);
+      const result = this.layoutNode(node, x, y, line, words, elements, inheritedStyle);
       
       // 更新坐标
       y = result.y;
@@ -1112,21 +1150,27 @@ export class VirtualCanvasRenderer {
    * @param {number} startLine
    * @param {Array} words
    * @param {Array} elements
+   * @param {Object} inheritedStyle - 从父元素继承的样式
    * @returns {Object}
    */
-  layoutNode(node, startX, startY, startLine, words, elements) {
-    if (node.tag === 'text') {
-      return this.layoutText(node.text, {}, startX, startY, startLine, words);
+  layoutNode(node, startX, startY, startLine, words, elements, inheritedStyle = {}) {
+    if (node.type === 'text') {
+      // 对于文本节点，使用继承的样式
+      const textStyle = this.mergeInheritedStyle(inheritedStyle, {});
+      return this.layoutText(node.text, textStyle, startX, startY, startLine, words);
     }
 
     let x = startX;
     let y = startY;
     let line = startLine;
 
+    // 合并当前节点的样式和继承的样式
+    const currentNodeStyle = this.mergeInheritedStyle(inheritedStyle, node.style || {});
+
     // 处理块级元素的上边距和上内边距
-    if (this.htmlParser.isBlockElement(node.tag)) {
-      const marginTop = this.parseSize(node.style.marginTop);
-      const paddingTop = this.parseSize(node.style.paddingTop);
+    if (this.isBlockElement(currentNodeStyle)) {
+      const marginTop = this.parseSize(currentNodeStyle.marginTop);
+      const paddingTop = this.parseSize(currentNodeStyle.paddingTop);
 
       if (marginTop > 0) {
         y += marginTop;
@@ -1140,12 +1184,12 @@ export class VirtualCanvasRenderer {
       if (x > this.theme.paddingX) {
         line++;
         x = this.theme.paddingX;
-        y += this.getLineHeight(node.style); // 使用完整行高
+        y += this.getLineHeight(currentNodeStyle); // 使用完整行高
       }
 
       // 处理块级元素的左右内边距（影响文本宽度）
-      const paddingLeft = this.parseSize(node.style.paddingLeft);
-      const paddingRight = this.parseSize(node.style.paddingRight);
+      const paddingLeft = this.parseSize(currentNodeStyle.paddingLeft);
+      const paddingRight = this.parseSize(currentNodeStyle.paddingRight);
 
       if (paddingLeft > 0) {
         x += paddingLeft;
@@ -1153,13 +1197,13 @@ export class VirtualCanvasRenderer {
 
       // paddingRight 会在布局文本时影响可用宽度，这里存储以备后用
       if (paddingRight > 0) {
-        // 可以存储在node.style中供其他方法使用
-        node.style.effectivePaddingRight = paddingRight;
+        // 可以存储在currentNodeStyle中供其他方法使用
+        currentNodeStyle.effectivePaddingRight = paddingRight;
       }
     }
 
     // 处理特殊元素
-    if (node.tag === 'img') {
+    if (node.type === 'image') {
       // 使用节点中的尺寸信息，如果没有则使用默认值
       const originalWidth = node.width || this.defaultImageWidth;
       const originalHeight = node.height || this.defaultImageHeight;
@@ -1201,14 +1245,16 @@ export class VirtualCanvasRenderer {
       x = this.theme.paddingX;
       y = adjustedImageElement.y + adjustedImageElement.height + 20; // 使用调整后的图片高度 + 间距
     } else if (node.children && node.children.length > 0) {
-      // 递归处理子节点
+      // 递归处理子节点，传递可继承的样式
+      const inheritableStyleForChildren = this.extractInheritableStyle(currentNodeStyle);
       const result = this.layoutNodes(
         node.children,
         x,
         y,
         line,
         words,
-        elements
+        elements,
+        inheritableStyleForChildren
       );
       x = result.x;
       y = result.y;
@@ -1216,9 +1262,9 @@ export class VirtualCanvasRenderer {
     }
 
     // 处理块级元素的下边距、下内边距和换行
-    if (this.htmlParser.isBlockElement(node.tag)) {
-      const marginBottom = this.parseSize(node.style.marginBottom);
-      const paddingBottom = this.parseSize(node.style.paddingBottom);
+    if (this.isBlockElement(currentNodeStyle)) {
+      const marginBottom = this.parseSize(currentNodeStyle.marginBottom);
+      const paddingBottom = this.parseSize(currentNodeStyle.paddingBottom);
 
       if (paddingBottom > 0) {
         y += paddingBottom;
@@ -1231,7 +1277,7 @@ export class VirtualCanvasRenderer {
       // 块级元素后换行
       line++;
       x = this.theme.paddingX;
-      y += this.getLineHeight(node.style); // 使用完整行高
+      y += this.getLineHeight(currentNodeStyle); // 使用完整行高
     }
 
     return { x, y, line };
@@ -1810,7 +1856,6 @@ export class VirtualCanvasRenderer {
 
     // 清理引用
     this.parsedNodes = null;
-    this.pageStyle = null;
     this.container = null;
     this.measureCanvas = null;
     this.measureCtx = null;

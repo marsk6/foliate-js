@@ -6,14 +6,14 @@
 
 /**
  * @typedef {Object} TextNode
- * @property {string} tag - 'text'
+ * @property {string} type - 'text'
  * @property {string} text - 文本内容
  */
 
 /**
  * @typedef {Object} ImageNode
- * @property {string} tag - 'img'
- * @property {Object} style - 样式对象
+ * @property {string} type - 'image'
+ * @property {Object} style - 样式对象（包含display属性）
  * @property {string} src - 图片源地址
  * @property {string} alt - 图片描述文字
  * @property {number} [width] - 图片宽度（可选，从样式或属性中解析）
@@ -23,10 +23,11 @@
 
 /**
  * @typedef {Object} ElementNode
- * @property {string} tag - 标签名
- * @property {Object} style - 样式对象（不包含默认样式）
- * @property {string} [src] - 图片源（仅img标签）
- * @property {string} [alt] - 图片描述（仅img标签）
+ * @property {string} type - 'element'
+ * @property {string} tagName - 原始标签名（保留用于调试）
+ * @property {Object} style - 样式对象（包含display属性：block/inline/inline-block等）
+ * @property {string} [src] - 图片源（仅image类型）
+ * @property {string} [alt] - 图片描述（仅image类型）
  * @property {number} [width] - 元素宽度（可选）
  * @property {number} [height] - 元素高度（可选）
  * @property {(ElementNode|TextNode|ImageNode)[]} children - 子节点
@@ -50,7 +51,6 @@
 /**
  * @typedef {Object} ParseResult
  * @property {ElementNode[]} nodes - 解析后的节点树
- * @property {Object} pageStyle - 页面级样式（从head中提取）
  */
 
 export class HTMLParser {
@@ -101,10 +101,31 @@ export class HTMLParser {
       },
       p: { display: 'block', marginTop: '1em', marginBottom: '1em' },
       div: { display: 'block' },
-      strong: { fontWeight: 'bold' },
-      b: { fontWeight: 'bold' },
-      em: { fontStyle: 'italic' },
-      i: { fontStyle: 'italic' },
+      // 列表元素
+      ul: { display: 'block', marginTop: '1em', marginBottom: '1em' },
+      ol: { display: 'block', marginTop: '1em', marginBottom: '1em' },
+      li: { display: 'list-item' },
+      // 其他块级元素
+      blockquote: { display: 'block', marginTop: '1em', marginBottom: '1em' },
+      pre: { display: 'block', marginTop: '1em', marginBottom: '1em' },
+      hr: { display: 'block', marginTop: '0.5em', marginBottom: '0.5em' },
+      // HTML5语义化元素
+      section: { display: 'block' },
+      article: { display: 'block' },
+      header: { display: 'block' },
+      footer: { display: 'block' },
+      nav: { display: 'block' },
+      main: { display: 'block' },
+      // 内联元素
+      span: { display: 'inline' },
+      strong: { display: 'inline', fontWeight: 'bold' },
+      b: { display: 'inline', fontWeight: 'bold' },
+      em: { display: 'inline', fontStyle: 'italic' },
+      i: { display: 'inline', fontStyle: 'italic' },
+      a: { display: 'inline' },
+      code: { display: 'inline' },
+      small: { display: 'inline' },
+      // 特殊元素
       img: { display: 'inline-block' },
     };
 
@@ -124,48 +145,28 @@ export class HTMLParser {
     // 重置类样式映射
     this.epubClassStyles = {};
 
-    // 提取head中的样式
-    const pageStyle = await this.extractHeadStyles(doc);
+    // 提取head中的CSS类样式
+    await this.extractClassStyles(doc);
 
     // 转换body节点
     const bodyNode = this.convertNode(doc.body);
 
     return {
       nodes: bodyNode.children || [],
-      pageStyle: pageStyle,
     };
   }
 
   /**
-   * 提取head中的样式信息
+   * 提取head中的CSS类样式
    * @param {Document} doc
-   * @returns {Promise<Object>}
+   * @returns {Promise<void>}
    */
-  async extractHeadStyles(doc) {
-    const pageStyle = {};
-
-    // 提取style标签中的CSS
+  async extractClassStyles(doc) {
+    // 提取style标签中的CSS类
     const styleElements = doc.head.querySelectorAll('style');
     styleElements.forEach((styleEl) => {
       const cssText = styleEl.textContent;
-
-      // 解析@page规则
-      const pageMatch = cssText.match(/@page\s*\{([^}]+)\}/);
-      if (pageMatch) {
-        const pageRules = pageMatch[1];
-        const rules = this.parseCSSRules(pageRules);
-        Object.assign(pageStyle, rules);
-      }
-
-      // 解析body选择器
-      const bodyMatch = cssText.match(/body\s*\{([^}]+)\}/);
-      if (bodyMatch) {
-        const bodyRules = bodyMatch[1];
-        const rules = this.parseCSSRules(bodyRules);
-        Object.assign(pageStyle, rules);
-      }
-
-      // 解析其他CSS类
+      // 解析CSS类样式
       this.parseClassStyles(cssText, false);
     });
 
@@ -187,8 +188,6 @@ export class HTMLParser {
         }
       }
     }
-
-    return pageStyle;
   }
 
   /**
@@ -240,7 +239,7 @@ export class HTMLParser {
   /**
    * 转换DOM节点为数据结构
    * @param {Node} node
-   * @returns {ElementNode|TextNode|null}
+   * @returns {ElementNode|TextNode|ImageNode|null}
    */
   convertNode(node) {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -248,7 +247,7 @@ export class HTMLParser {
       if (!text) return null;
 
       return {
-        tag: 'text',
+        type: 'text',
         text: text,
       };
     }
@@ -260,21 +259,43 @@ export class HTMLParser {
       // 获取元素自身的样式（不包含默认样式）
       const elementStyle = this.getElementStyle(element);
 
-      // 创建节点
-      const nodeData = {
-        tag: tagName,
-        style: elementStyle,
-        children: [],
+      // 获取默认样式并合并display属性
+      const defaultStyle = this.getDefaultStyle(tagName);
+      const mergedStyle = {
+        ...defaultStyle,
+        ...elementStyle, // 元素样式覆盖默认样式
       };
 
       // 处理特殊标签
       if (tagName === 'img') {
-        this.handleImgElement(nodeData, element, elementStyle);
+        // 图片节点
+        const imageNode = {
+          type: 'image',
+          tagName: tagName,
+          style: mergedStyle,
+          children: [],
+        };
+        this.handleImgElement(imageNode, element, mergedStyle);
+        return imageNode;
       } else if (tagName === 'svg') {
-        // 处理SVG元素，检查是否包含image子节点
-        this.handleSvgElement(nodeData, element, elementStyle);
-        return nodeData;
+        // SVG元素，检查是否包含image子节点
+        const svgNode = {
+          type: 'element',
+          tagName: tagName,
+          style: mergedStyle,
+          children: [],
+        };
+        this.handleSvgElement(svgNode, element, mergedStyle);
+        return svgNode;
       }
+
+      // 普通元素节点
+      const nodeData = {
+        type: 'element',
+        tagName: tagName,
+        style: mergedStyle,
+        children: [],
+      };
 
       // 递归处理子节点
       for (const child of node.childNodes) {
@@ -331,8 +352,9 @@ export class HTMLParser {
     const svgWidth = this.parseDimension(svgElement.getAttribute('width'));
     const svgHeight = this.parseDimension(svgElement.getAttribute('height'));
     const viewBox = svgElement.getAttribute('viewBox');
-    let viewBoxWidth = null, viewBoxHeight = null;
-    
+    let viewBoxWidth = null,
+      viewBoxHeight = null;
+
     if (viewBox) {
       const parts = viewBox.split(/\s+|,/);
       if (parts.length >= 4) {
@@ -343,17 +365,21 @@ export class HTMLParser {
 
     // 查找SVG中的image元素
     const imageElements = svgElement.querySelectorAll('image');
-    
+
     for (const imageEl of imageElements) {
-      // 将SVG image转换为img节点
+      // 将SVG image转换为image节点
       const imgNode = {
-        tag: 'img',
-        style: {},
+        type: 'image',
+        tagName: 'img',
+        style: { display: 'inline-block' }, // 图片默认为inline-block
         children: [],
       };
 
       // 获取图片源，SVG使用xlink:href或href属性
-      const xlinkHref = imageEl.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+      const xlinkHref = imageEl.getAttributeNS(
+        'http://www.w3.org/1999/xlink',
+        'href'
+      );
       const href = imageEl.getAttribute('href');
       imgNode.src = xlinkHref || href || '';
       imgNode.alt = imageEl.getAttribute('alt') || '';
@@ -361,7 +387,7 @@ export class HTMLParser {
       // 处理尺寸属性
       const imageWidth = imageEl.getAttribute('width');
       const imageHeight = imageEl.getAttribute('height');
-      
+
       // 解析image的width和height
       if (imageWidth) {
         imgNode.width = this.parseDimension(imageWidth);
@@ -372,7 +398,7 @@ export class HTMLParser {
         // 如果SVG也没有width，使用viewBox的width
         imgNode.width = viewBoxWidth;
       }
-      
+
       if (imageHeight) {
         imgNode.height = this.parseDimension(imageHeight);
       } else if (svgHeight) {
@@ -399,7 +425,10 @@ export class HTMLParser {
 
     // 继续处理SVG的其他子节点（除了已经处理的image）
     for (const child of svgElement.childNodes) {
-      if (child.nodeType === Node.ELEMENT_NODE && child.tagName.toLowerCase() !== 'image') {
+      if (
+        child.nodeType === Node.ELEMENT_NODE &&
+        child.tagName.toLowerCase() !== 'image'
+      ) {
         const childNode = this.convertNode(child);
         if (childNode) {
           nodeData.children.push(childNode);
@@ -425,18 +454,20 @@ export class HTMLParser {
 
     // 移除空格
     value = value.trim();
-    
+
     // 纯数字
     if (/^\d*\.?\d+$/.test(value)) {
       return parseFloat(value) || null;
     }
-    
+
     // 带单位的数值（px, em, rem, %, pt, etc.）
-    const match = value.match(/^(\d*\.?\d+)(px|em|rem|%|pt|pc|in|cm|mm|ex|ch|vw|vh|vmin|vmax)$/);
+    const match = value.match(
+      /^(\d*\.?\d+)(px|em|rem|%|pt|pc|in|cm|mm|ex|ch|vw|vh|vmin|vmax)$/
+    );
     if (match) {
       const num = parseFloat(match[1]);
       const unit = match[2];
-      
+
       // 对于绝对单位，直接返回数值（这里简化处理，都当作px）
       // 实际使用时可能需要根据上下文进行单位转换
       switch (unit) {
@@ -467,7 +498,7 @@ export class HTMLParser {
           return num;
       }
     }
-    
+
     return null;
   }
 
@@ -516,85 +547,12 @@ export class HTMLParser {
   }
 
   /**
-   * 获取元素的完整样式（包含默认样式）
-   * @param {string} tagName - 标签名
-   * @param {Object} elementStyle - 元素自身样式
-   * @param {Object} inheritedStyle - 继承样式
-   * @returns {Object}
-   */
-  getComputedStyle(tagName, elementStyle = {}, inheritedStyle = {}) {
-    const defaultStyle = this.getDefaultStyle(tagName);
-    return {
-      ...inheritedStyle,
-      ...defaultStyle,
-      ...elementStyle,
-    };
-  }
-
-  /**
    * 将CSS属性名转换为camelCase
    * @param {string} str
    * @returns {string}
    */
   camelCase(str) {
     return str.replace(/-([a-z])/g, (match, letter) => letter.toUpperCase());
-  }
-
-  /**
-   * 判断是否为块级元素
-   * @param {string} tagName
-   * @returns {boolean}
-   */
-  isBlockElement(tagName) {
-    const blockElements = [
-      'div',
-      'p',
-      'h1',
-      'h2',
-      'h3',
-      'h4',
-      'h5',
-      'h6',
-      'ul',
-      'ol',
-      'li',
-      'blockquote',
-      'pre',
-      'hr',
-      'section',
-      'article',
-      'header',
-      'footer',
-      'nav',
-      'main',
-    ];
-    return blockElements.includes(tagName);
-  }
-
-  /**
-   * 判断是否为内联元素
-   * @param {string} tagName
-   * @returns {boolean}
-   */
-  isInlineElement(tagName) {
-    const inlineElements = [
-      'span',
-      'a',
-      'strong',
-      'em',
-      'b',
-      'i',
-      'u',
-      's',
-      'small',
-      'mark',
-      'del',
-      'ins',
-      'sub',
-      'sup',
-      'code',
-    ];
-    return inlineElements.includes(tagName);
   }
 
   /**
