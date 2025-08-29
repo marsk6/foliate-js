@@ -1,586 +1,262 @@
 /**
- * 默认样式表 - 定义常见 HTML 元素的基础样式
- * 参考浏览器默认样式和 CSS 规范
+ * 默认样式处理工具
  */
 
-export const DEFAULT_STYLES = {
-  // 根元素和文档
-  'html': {
-    'display': 'block',
-    'font-size': '16px',
-    'font-family': 'serif',
-    'line-height': '1.2',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'body': {
-    'display': 'block',
-    'font-size': '16px',
-    'font-family': 'serif',
-    'line-height': '1.2',
-    'margin': '8px',
-    'padding': '0px',
-    'color': 'rgb(0, 0, 0)',
-    'background-color': 'rgb(255, 255, 255)'
-  },
-
-  // 标题元素
-  'h1': {
-    'display': 'block',
-    'font-size': '2em',
-    'font-weight': 'bold',
-    'margin': '0.67em 0px',
-    'padding': '0px'
-  },
-
-  'h2': {
-    'display': 'block',
-    'font-size': '1.5em',
-    'font-weight': 'bold',
-    'margin': '0.83em 0px',
-    'padding': '0px'
-  },
-
-  'h3': {
-    'display': 'block',
-    'font-size': '1.17em',
-    'font-weight': 'bold',
-    'margin': '1em 0px',
-    'padding': '0px'
-  },
-
-  'h4': {
-    'display': 'block',
-    'font-size': '1em',
-    'font-weight': 'bold',
-    'margin': '1.33em 0px',
-    'padding': '0px'
-  },
-
-  'h5': {
-    'display': 'block',
-    'font-size': '0.83em',
-    'font-weight': 'bold',
-    'margin': '1.67em 0px',
-    'padding': '0px'
-  },
-
-  'h6': {
-    'display': 'block',
-    'font-size': '0.67em',
-    'font-weight': 'bold',
-    'margin': '2.33em 0px',
-    'padding': '0px'
-  },
-
-  // 文本内容
-  'p': {
-    'display': 'block',
-    'margin': '1em 0px',
-    'padding': '0px'
-  },
-
-  'div': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'span': {
-    'display': 'inline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  // 文本样式
-  'b': {
-    'display': 'inline',
-    'font-weight': 'bold',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'strong': {
-    'display': 'inline',
-    'font-weight': 'bold',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'i': {
-    'display': 'inline',
-    'font-style': 'italic',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'em': {
-    'display': 'inline',
-    'font-style': 'italic',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'u': {
-    'display': 'inline',
-    'text-decoration': 'underline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  's': {
-    'display': 'inline',
-    'text-decoration': 'line-through',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'small': {
-    'display': 'inline',
-    'font-size': '0.83em',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'big': {
-    'display': 'inline',
-    'font-size': '1.17em',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  // 链接
-  'a': {
-    'display': 'inline',
-    'color': 'rgb(0, 0, 238)',
-    'text-decoration': 'underline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  // 列表
-  'ul': {
-    'display': 'block',
-    'margin': '1em 0px',
-    'padding': '0px 0px 0px 40px',
-    'list-style-type': 'disc'
-  },
-
-  'ol': {
-    'display': 'block',
-    'margin': '1em 0px',
-    'padding': '0px 0px 0px 40px',
-    'list-style-type': 'decimal'
-  },
-
-  'li': {
-    'display': 'list-item',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'dl': {
-    'display': 'block',
-    'margin': '1em 0px',
-    'padding': '0px'
-  },
-
-  'dt': {
-    'display': 'block',
-    'font-weight': 'bold',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'dd': {
-    'display': 'block',
-    'margin': '0px 0px 0px 40px',
-    'padding': '0px'
-  },
-
-  // 表格
-  'table': {
-    'display': 'table',
-    'border-collapse': 'separate',
-    'border-spacing': '2px',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'thead': {
-    'display': 'table-header-group',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'tbody': {
-    'display': 'table-row-group',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'tfoot': {
-    'display': 'table-footer-group',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'tr': {
-    'display': 'table-row',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'td': {
-    'display': 'table-cell',
-    'padding': '1px',
-    'margin': '0px'
-  },
-
-  'th': {
-    'display': 'table-cell',
-    'padding': '1px',
-    'margin': '0px',
-    'font-weight': 'bold',
-    'text-align': 'center'
-  },
-
-  // 表单元素
-  'form': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'fieldset': {
-    'display': 'block',
-    'margin': '0px 2px',
-    'padding': '0.35em 0.75em 0.625em',
-    'border': '2px groove rgb(192, 192, 192)'
-  },
-
-  'legend': {
-    'display': 'block',
-    'padding': '0px 2px',
-    'margin': '0px'
-  },
-
-  'label': {
-    'display': 'inline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'input': {
-    'display': 'inline-block',
-    'margin': '0px',
-    'padding': '1px 0px',
-    'border': '2px inset rgb(238, 238, 238)',
-    'font-size': '13.33px'
-  },
-
-  'textarea': {
-    'display': 'inline-block',
-    'margin': '0px',
-    'padding': '2px',
-    'border': '1px solid rgb(169, 169, 169)',
-    'font-family': 'monospace'
-  },
-
-  'select': {
-    'display': 'inline-block',
-    'margin': '0px',
-    'padding': '1px 0px',
-    'border': '1px solid rgb(169, 169, 169)'
-  },
-
-  'button': {
-    'display': 'inline-block',
-    'margin': '0px',
-    'padding': '1px 6px',
-    'border': '2px outset rgb(238, 238, 238)',
-    'background-color': 'rgb(238, 238, 238)'
-  },
-
-  // 多媒体
-  'img': {
-    'display': 'inline',
-    'margin': '0px',
-    'padding': '0px',
-    'border': '0px'
-  },
-
-  'audio': {
-    'display': 'inline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'video': {
-    'display': 'inline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'canvas': {
-    'display': 'inline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'svg': {
-    'display': 'inline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  // 引用和代码
-  'blockquote': {
-    'display': 'block',
-    'margin': '1em 40px',
-    'padding': '0px'
-  },
-
-  'q': {
-    'display': 'inline',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'cite': {
-    'display': 'inline',
-    'font-style': 'italic',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'code': {
-    'display': 'inline',
-    'font-family': 'monospace',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'pre': {
-    'display': 'block',
-    'font-family': 'monospace',
-    'white-space': 'pre',
-    'margin': '1em 0px',
-    'padding': '0px'
-  },
-
-  'kbd': {
-    'display': 'inline',
-    'font-family': 'monospace',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'samp': {
-    'display': 'inline',
-    'font-family': 'monospace',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'var': {
-    'display': 'inline',
-    'font-style': 'italic',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  // 分割线和分组
-  'hr': {
-    'display': 'block',
-    'margin': '0.5em auto',
-    'padding': '0px',
-    'border': '1px inset',
-    'height': '2px'
-  },
-
-  'br': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  // 语义化元素
-  'article': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'section': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'nav': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'aside': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'header': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'footer': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'main': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  'figure': {
-    'display': 'block',
-    'margin': '1em 40px',
-    'padding': '0px'
-  },
-
-  'figcaption': {
-    'display': 'block',
-    'margin': '0px',
-    'padding': '0px'
-  },
-
-  // 隐藏元素
-  'head': {
-    'display': 'none'
-  },
-
-  'meta': {
-    'display': 'none'
-  },
-
-  'title': {
-    'display': 'none'
-  },
-
-  'style': {
-    'display': 'none'
-  },
-
-  'script': {
-    'display': 'none'
-  },
-
-  'link': {
-    'display': 'none'
-  }
+// HTML 标签的默认样式定义（使用 camelCase 格式）
+const defaultTagStyles = {
+  // 块级元素
+  'div': { display: 'block' },
+  'p': { display: 'block', marginTop: '1em', marginBottom: '1em' },
+  'h1': { display: 'block', fontSize: '2em', fontWeight: 'bold', marginTop: '0.67em', marginBottom: '0.67em' },
+  'h2': { display: 'block', fontSize: '1.5em', fontWeight: 'bold', marginTop: '0.83em', marginBottom: '0.83em' },
+  'h3': { display: 'block', fontSize: '1.17em', fontWeight: 'bold', marginTop: '1em', marginBottom: '1em' },
+  'h4': { display: 'block', fontWeight: 'bold', marginTop: '1.33em', marginBottom: '1.33em' },
+  'h5': { display: 'block', fontSize: '0.83em', fontWeight: 'bold', marginTop: '1.67em', marginBottom: '1.67em' },
+  'h6': { display: 'block', fontSize: '0.67em', fontWeight: 'bold', marginTop: '2.33em', marginBottom: '2.33em' },
+  
+  // 列表元素
+  'ul': { display: 'block', listStyleType: 'disc', marginTop: '1em', marginBottom: '1em', paddingLeft: '40px' },
+  'ol': { display: 'block', listStyleType: 'decimal', marginTop: '1em', marginBottom: '1em', paddingLeft: '40px' },
+  'li': { display: 'list-item' },
+  
+  // 引用元素
+  'blockquote': { display: 'block', marginTop: '1em', marginBottom: '1em', marginLeft: '40px', marginRight: '40px' },
+  
+  // 内联元素
+  'span': { display: 'inline' },
+  'a': { display: 'inline', color: 'rgb(0, 0, 238)', textDecoration: 'underline' },
+  'strong': { display: 'inline', fontWeight: 'bold' },
+  'b': { display: 'inline', fontWeight: 'bold' },
+  'em': { display: 'inline', fontStyle: 'italic' },
+  'i': { display: 'inline', fontStyle: 'italic' },
+  'small': { display: 'inline', fontSize: '0.83em' },
+  
+  // 特殊元素
+  'br': { display: 'inline' },
+  'img': { display: 'inline' },
+  'svg': { display: 'inline' },
+
+  // 表格元素
+  'table': { display: 'table', borderCollapse: 'separate', borderSpacing: '2px' },
+  'tr': { display: 'table-row' },
+  'td': { display: 'table-cell', verticalAlign: 'inherit' },
+  'th': { display: 'table-cell', verticalAlign: 'inherit', fontWeight: 'bold', textAlign: 'center' }
+};
+
+// 通用的默认值映射（使用 camelCase 格式，只包含分解属性）
+const genericDefaults = {
+  // 显示
+  'display': 'inline',
+  'position': 'static',
+  'float': 'none',
+  'clear': 'none',
+  'visibility': 'visible',
+  zIndex: 'auto',
+  
+  // 盒子模型
+  'width': 'auto',
+  'height': 'auto',
+  minWidth: '0px',
+  minHeight: '0px',
+  maxWidth: 'none',
+  maxHeight: 'none',
+  
+  // 边距和内边距（只保留具体方向属性）
+  marginTop: '0px',
+  marginRight: '0px', 
+  marginBottom: '0px',
+  marginLeft: '0px',
+  paddingTop: '0px',
+  paddingRight: '0px',
+  paddingBottom: '0px', 
+  paddingLeft: '0px',
+  
+  // 定位
+  'top': 'auto',
+  'right': 'auto',
+  'bottom': 'auto',
+  'left': 'auto',
+  
+  // 字体（只保留具体属性）
+  fontFamily: 'Arial, sans-serif',
+  fontSize: '16px',
+  fontWeight: '400',
+  fontStyle: 'normal',
+  lineHeight: 'normal',
+  letterSpacing: 'normal',
+  wordSpacing: 'normal',
+  
+  // 文本
+  textAlign: 'start',
+  textDecoration: 'none',
+  textTransform: 'none',
+  whiteSpace: 'normal',
+  wordBreak: 'normal',
+  overflowWrap: 'normal',
+  
+  // 颜色和背景（只保留具体属性）
+  'color': 'rgb(0, 0, 0)',
+  backgroundColor: 'rgba(0, 0, 0, 0)',
+  backgroundImage: 'none',
+  backgroundSize: 'auto auto',
+  backgroundPosition: '0% 0%',
+  backgroundRepeat: 'repeat',
+
+  // 边框（只保留具体属性）
+  borderTopWidth: '0px',
+  borderTopStyle: 'none',
+  borderTopColor: 'rgb(0, 0, 0)',
+  borderRightWidth: '0px',
+  borderRightStyle: 'none', 
+  borderRightColor: 'rgb(0, 0, 0)',
+  borderBottomWidth: '0px',
+  borderBottomStyle: 'none',
+  borderBottomColor: 'rgb(0, 0, 0)',
+  borderLeftWidth: '0px',
+  borderLeftStyle: 'none',
+  borderLeftColor: 'rgb(0, 0, 0)',
+  borderTopLeftRadius: '0px',
+  borderTopRightRadius: '0px',
+  borderBottomRightRadius: '0px',
+  borderBottomLeftRadius: '0px',
+  
+  // 变换和效果
+  'transform': 'none',
+  transformOrigin: '50% 50% 0px',
+  'opacity': '1',
+  'filter': 'none',
+  
+  // 溢出
+  'overflow': 'visible',
+  overflowX: 'visible',
+  overflowY: 'visible',
+  
+  // 其他
+  'cursor': 'auto',
+  pointerEvents: 'auto',
+  userSelect: 'auto',
+  boxSizing: 'content-box',
+  boxShadow: 'none',
+  textShadow: 'none'
 };
 
 /**
- * 获取元素的默认样式
- * @param {string} tagName - HTML 标签名
- * @returns {Object} 默认样式对象
+ * 获取标签的默认样式
+ * @param {string} tagName 
+ * @returns {Object}
  */
 export function getDefaultStyles(tagName) {
-  return DEFAULT_STYLES[tagName.toLowerCase()] || {};
+  return defaultTagStyles[tagName] || {};
 }
 
 /**
- * 合并多个样式对象，后面的样式会覆盖前面的样式
- * @param {...Object} styleObjects - 要合并的样式对象
- * @returns {Object} 合并后的样式对象
+ * 合并样式对象
+ * @param {Object} base 
+ * @param {Object} override 
+ * @returns {Object}
  */
-export function mergeStyles(...styleObjects) {
-  const result = {};
-  
-  for (const styleObj of styleObjects) {
-    if (styleObj && typeof styleObj === 'object') {
-      Object.assign(result, styleObj);
-    }
-  }
-  
-  return result;
+export function mergeStyles(base, override) {
+  return { ...base, ...override };
 }
 
 /**
- * 将 CSS 样式值标准化
- * @param {string} property - CSS 属性名
- * @param {string} value - CSS 属性值
- * @returns {string} 标准化后的值
+ * 标准化样式值
+ * @param {string} property 
+ * @param {string} value 
+ * @returns {string}
  */
 export function normalizeStyleValue(property, value) {
-  if (!value || value === '') return value;
+  if (!value) return '';
   
-  // 处理数值属性，确保有单位
-  const numericProperties = [
-    'font-size', 'line-height', 'margin', 'padding', 'border-width',
-    'width', 'height', 'top', 'right', 'bottom', 'left',
-    'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
-    'padding-top', 'padding-right', 'padding-bottom', 'padding-left'
-  ];
-  
-  if (numericProperties.includes(property) && /^\d+(\.\d+)?$/.test(value)) {
-    return value + 'px';
+  // 标准化颜色值
+  if (property === 'color' || property.includes('color')) {
+    return normalizeColor(value);
   }
   
-  // 处理颜色值
-  if (property.includes('color') && !value.startsWith('rgb') && !value.startsWith('#')) {
-    // 基本颜色名称转换
-    const colorMap = {
-      'black': 'rgb(0, 0, 0)',
-      'white': 'rgb(255, 255, 255)',
-      'red': 'rgb(255, 0, 0)',
-      'green': 'rgb(0, 128, 0)',
-      'blue': 'rgb(0, 0, 255)',
-      'yellow': 'rgb(255, 255, 0)',
-      'cyan': 'rgb(0, 255, 255)',
-      'magenta': 'rgb(255, 0, 255)',
-      'silver': 'rgb(192, 192, 192)',
-      'gray': 'rgb(128, 128, 128)',
-      'grey': 'rgb(128, 128, 128)'
-    };
-    
-    return colorMap[value.toLowerCase()] || value;
+  // 标准化长度值
+  if (isLengthProperty(property)) {
+    return normalizeLength(value);
   }
   
-  return value;
+  return value.toString().trim();
 }
 
 /**
- * 检查样式值是否为默认值
- * @param {string} property - CSS 属性名
- * @param {string} value - CSS 属性值
- * @returns {boolean} 是否为默认值
+ * 判断是否为默认值
+ * @param {string} property 
+ * @param {string} value 
+ * @returns {boolean}
  */
 export function isDefaultValue(property, value) {
-  const defaultValues = {
-    'margin': '0px',
-    'padding': '0px',
-    'border': 'none',
-    'color': 'rgb(0, 0, 0)',
-    'background-color': 'rgba(0, 0, 0, 0)',
-    'font-size': '16px',
-    'font-weight': '400',
-    'font-style': 'normal',
-    'text-decoration': 'none',
-    'display': 'block',
-    'position': 'static',
-    'opacity': '1',
-    'visibility': 'visible'
-  };
-  
-  return defaultValues[property] === value;
+  return genericDefaults[property] === value;
 }
 
-export default DEFAULT_STYLES; 
+/**
+ * 标准化颜色值
+ */
+function normalizeColor(color) {
+  // 简化颜色处理，保持原样
+  return color;
+}
+
+/**
+ * 标准化长度值
+ */
+function normalizeLength(length) {
+  // 简化长度处理，保持原样
+  return length;
+}
+
+/**
+ * 判断是否为长度相关属性
+ */
+function isLengthProperty(property) {
+  const lengthProps = [
+    // 只支持具体的分解属性（camelCase 格式）
+    'width', 'height', 'top', 'right', 'bottom', 'left',
+    'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+    'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+    'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius',
+    'fontSize', 'lineHeight', 'letterSpacing', 'wordSpacing'
+  ];
+  
+  return lengthProps.some(prop => property.includes(prop));
+}
+
+/**
+ * 判断是否为文本相关样式属性
+ * @param {string} property 
+ * @returns {boolean}
+ */
+export function isTextStyleProperty(property) {
+  const textStyleProperties = [
+    // 只支持 camelCase 格式
+    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+    'lineHeight', 'letterSpacing', 'wordSpacing',
+    'textAlign', 'textDecoration', 'textTransform', 'textIndent', 'textShadow',
+    'whiteSpace', 'wordBreak', 'overflowWrap', 'wordWrap',
+    'color', 'direction', 'unicodeBidi', 'writingMode'
+  ];
+  
+  return textStyleProperties.includes(property);
+}
+
+/**
+ * 获取文本样式的默认值
+ * @param {string} tagName 
+ * @returns {Object}
+ */
+export function getTextDefaults(tagName) {
+  const allDefaults = getDefaultStyles(tagName);
+  const textDefaults = {};
+  
+  for (const [property, value] of Object.entries(allDefaults)) {
+    if (isTextStyleProperty(property)) {
+      textDefaults[property] = value;
+}
+  }
+  
+  return textDefaults;
+} 

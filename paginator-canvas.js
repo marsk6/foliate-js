@@ -155,7 +155,7 @@ export class Paginator extends HTMLElement {
         // const sections = [
         //     {
         //         load: async () => {
-        //             return "http://127.0.0.1:5500/web/foliate-js/x-canvas/1.html";
+        //             return "http://localhost:5173/1.html";
         //         }
         //     }
         // ]
@@ -164,13 +164,14 @@ export class Paginator extends HTMLElement {
                 index,
                 loadContent: async () => {
                     const src = await section.load();
-                    const currentHTML = await fetch(src).then(res => res.text())
-                    return currentHTML;
+                    return src;
+                    // const currentHTML = await fetch(src).then(res => res.text())
+                    // return currentHTML;
                 },
             }
         });
         chapterManager.addBook(chapters);
-        chapterManager.startRead(1, 0);
+        chapterManager.startRead(0, 0);
         return chapterManager;
     }
 

@@ -1,6 +1,6 @@
 import { HTMLParser } from './HTMLParser.js';
 
-export class HTMLParse2 {
+export default class HTMLParse2 {
   constructor() {
     this.cssRules = {};
     this.iframe = null;
@@ -20,9 +20,10 @@ export class HTMLParse2 {
       this.iframe.onload = async () => {
         try {
           const body = this.iframe.contentWindow.document.body;
+          this.iframe.contentWindow.document.documentElement.style.cssText = 'font-size: 14px;';
           const root = this.parser.parse(body);
           resolve(root);
-          document.body.removeChild(this.iframe);
+          // document.body.removeChild(this.iframe);
         } catch (error) {
           reject(error);
           if (this.iframe && this.iframe.parentNode) {

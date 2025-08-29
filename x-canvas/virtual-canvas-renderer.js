@@ -44,7 +44,7 @@
  * // 所有图片都会自动居中对齐，超宽图片会自动缩放适应页面宽度
  */
 
-import HTMLParser from './html-parser.js';
+import HTMLParser2 from './html-parser/index.js';
 import { HorizontalSlideManager } from './slide-canvas.js';
 import { VirtualViewport } from './scroll-canvas.js';
 import { CanvasTools } from './canvas-tools.js';
@@ -262,7 +262,6 @@ export class VirtualCanvasRenderer {
     this.chunkWidth = this.canvasWidth;
 
     // 转换引擎实例
-    this.htmlParser = new HTMLParser();
 
     this.parsedNodes = null;
 
@@ -396,12 +395,15 @@ export class VirtualCanvasRenderer {
    * 布局HTML内容
    * @param {string} htmlContent
    */
-  async layout(htmlContent) {
-    this.currentHTML = htmlContent;
+  async layout(url) {
+    this.currentHTML = 'htmlContent';
 
-    // 1. 解析HTML为数据结构
-    const parseResult = await this.htmlParser.parse(htmlContent);
-    this.parsedNodes = parseResult.nodes;
+    // 1. 先将 HTML 字符串转换为 DOM
+    const htmlParse = new HTMLParser2();
+    const root = await htmlParse.parse(url);
+    console.log('🚨🚨🚨👉👉📢', 'root', root);
+
+    this.parsedNodes = root ? [root] : [];
 
     // 垂直模式：执行完整布局计算（不渲染）
     this.calculateFullLayout();
@@ -429,12 +431,17 @@ export class VirtualCanvasRenderer {
 
   /**
    * 计算完整布局（不进行Canvas渲染）
+   * 
+   * 布局说明：
+   * - paddingX 代表左右对称的全局内边距
+   * - 可用宽度 = canvasWidth - paddingX * 2 - 元素特定的内边距
+   * - 起始X坐标 = paddingX（左内边距）
    */
   calculateFullLayout() {
     const words = [];
     const elements = [];
 
-    let x = this.theme.paddingX;
+    let x = this.theme.paddingX; // 从左内边距开始
     let y = 0;
     let currentLine = 0;
 
@@ -446,7 +453,9 @@ export class VirtualCanvasRenderer {
       color: this.theme.textColor,
       fontFamily: this.theme.fontFamily,
       fontSize: this.theme.baseFontSize,
-      lineHeight: this.theme.lineHeight
+      lineHeight: this.theme.lineHeight,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
     };
 
     // 使用原有的布局算法计算所有位置
@@ -462,7 +471,7 @@ export class VirtualCanvasRenderer {
 
     // 📐 正确的总高度计算方式：使用实际的Y坐标
     const contentHeight = result.y;
-
+    console.log('🚨🚨🚨👉👉📢', 'contentHeight', words);
     // 计算需要的总块数
     const chunkHeight = this.chunkHeight;
     const chunkWidth = this.chunkWidth;
@@ -471,7 +480,6 @@ export class VirtualCanvasRenderer {
     // scrollContent 的高度基于块数量，而不是内容高度
     const scrollContentHeight = totalChunks * chunkHeight;
     const scrollContentWidth = totalChunks * chunkWidth;
-    console.log('🚨🚨🚨👉👉📢', 'scrollContentWidth', words);
     this.fullLayoutData = {
       words,
       elements,
@@ -739,21 +747,89 @@ export class VirtualCanvasRenderer {
     let currentFont = '';
     words.forEach((word) => {
       const { style } = word;
-      const font = `${style.fontStyle || 'normal'} ${
-        style.fontWeight || 'normal'
-      } ${style.fontSize}px ${this.theme.fontFamily}`;
+
+      // 使用兼容的样式访问方式
+      const fontStyle = this.getStyleProperty(style, 'fontStyle') || 'normal';
+      const fontWeight = this.getStyleProperty(style, 'fontWeight') || 'normal';
+      const fontSize = this.getStyleProperty(style, 'fontSize');
+      const color =
+        this.getStyleProperty(style, 'color') || this.theme.textColor;
+
+      // 处理 fontSize - 如果是带单位的字符串，解析数值部分
+      let fontSizeValue;
+      if (fontSize) {
+        fontSizeValue = this.parseSize(fontSize);
+      } else {
+        fontSizeValue = this.theme.baseFontSize;
+      }
+
+      const font = `${fontStyle} ${fontWeight} ${fontSizeValue}px ${this.theme.fontFamily}`;
 
       if (font !== currentFont) {
         ctx.font = font;
         currentFont = font;
       }
 
-      ctx.fillStyle = style.color || this.theme.textColor;
+      ctx.fillStyle = color;
+
+      // 处理文本装饰（下划线、删除线等）
+      const textDecoration = this.getStyleProperty(style, 'textDecoration');
+      if (textDecoration && textDecoration !== 'none') {
+        // 正确解析 CSS text-decoration 简写属性，格式：<line> <style> <color>
+        const linePart = textDecoration.split(/\s+/)[0];
+        if (linePart !== 'none') {
+          this.applyTextDecoration(ctx, word, textDecoration, offsetY);
+        }
+      }
 
       // 计算在Canvas内的相对位置
       const canvasY = word.y - offsetY;
       ctx.fillText(word.text, word.x, canvasY);
     });
+  }
+
+  /**
+   * 应用文本装饰效果
+   * @param {CanvasRenderingContext2D} ctx - Canvas上下文
+   * @param {Object} word - 单词对象
+   * @param {string} decoration - 装饰类型
+   * @param {number} offsetY - Y轴偏移量
+   */
+  applyTextDecoration(ctx, word, decoration, offsetY) {
+    const canvasY = word.y - offsetY;
+
+    if (decoration.includes('underline')) {
+      // 绘制下划线
+      const underlineY = canvasY + 2; // 稍微偏移基线下方
+      ctx.strokeStyle = ctx.fillStyle; // 使用文本颜色
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(word.x, underlineY);
+      ctx.lineTo(word.x + word.width, underlineY);
+      ctx.stroke();
+    }
+
+    if (decoration.includes('line-through')) {
+      // 绘制删除线
+      const lineY = canvasY - word.height * 0.3; // 在文本中间位置
+      ctx.strokeStyle = ctx.fillStyle; // 使用文本颜色
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(word.x, lineY);
+      ctx.lineTo(word.x + word.width, lineY);
+      ctx.stroke();
+    }
+
+    if (decoration.includes('overline')) {
+      // 绘制上划线
+      const overlineY = canvasY - word.height * 0.8; // 在文本上方
+      ctx.strokeStyle = ctx.fillStyle; // 使用文本颜色
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(word.x, overlineY);
+      ctx.lineTo(word.x + word.width, overlineY);
+      ctx.stroke();
+    }
   }
 
   /**
@@ -791,6 +867,8 @@ export class VirtualCanvasRenderer {
         }
 
         if (cachedImage && cachedImage.imageElement) {
+          document.body.appendChild(cachedImage.imageElement);
+          console.log('🚨🚨🚨👉👉📢', cachedImage.imageElement, element.width);
           try {
             ctx.drawImage(
               cachedImage.imageElement,
@@ -1039,71 +1117,84 @@ export class VirtualCanvasRenderer {
     }
   }
 
-
-
-  /**
-   * CSS可继承属性列表
-   */
-  inheritableProperties = new Set([
-    'color',
-    'fontFamily',
-    'fontSize', 
-    'fontStyle',
-    'fontWeight',
-    'lineHeight',
-    'textAlign',
-    'textIndent',
-    'letterSpacing',
-    'wordSpacing',
-    'textTransform',
-    'whiteSpace',
-    'direction',
-    'visibility'
-  ]);
-
-  /**
-   * 合并继承的样式
-   * @param {Object} parentStyle - 父元素样式
-   * @param {Object} currentStyle - 当前元素样式
-   * @returns {Object} 合并后的样式
-   */
-  mergeInheritedStyle(parentStyle = {}, currentStyle = {}) {
-    const mergedStyle = { ...parentStyle };
-    
-    // 当前元素的样式覆盖继承的样式
-    Object.keys(currentStyle).forEach(prop => {
-      mergedStyle[prop] = currentStyle[prop];
-    });
-    
-    return mergedStyle;
-  }
-
-  /**
-   * 提取可继承的样式
-   * @param {Object} style - 样式对象
-   * @returns {Object} 可继承的样式
-   */
-  extractInheritableStyle(style) {
-    const inheritableStyle = {};
-    
-    this.inheritableProperties.forEach(prop => {
-      if (style && style[prop] !== undefined) {
-        inheritableStyle[prop] = style[prop];
-      }
-    });
-    
-    return inheritableStyle;
-  }
-
   /**
    * 判断是否为块级元素（通过样式判断）
    * @param {Object} style - 样式对象
    * @returns {boolean}
    */
   isBlockElement(style = {}) {
-    const display = style.display || 'inline';
+    const display = this.getStyleProperty(style, 'display') || 'inline';
     // 块级显示类型包括：block, list-item, table等
-    return display === 'block' || display === 'list-item' || display === 'table';
+    return (
+      display === 'block' || display === 'list-item' || display === 'table'
+    );
+  }
+
+
+
+  /**
+   * 合并继承样式和节点样式
+   * @param {Object} inheritedStyle - 继承的样式
+   * @param {Object} nodeStyle - 节点自身的样式
+   * @returns {Object} 合并后的样式
+   */
+  mergeInheritedStyle(inheritedStyle = {}, nodeStyle = {}) {
+    // 先应用继承样式，再覆盖节点样式（节点样式优先级更高）
+    return {
+      ...inheritedStyle,
+      ...nodeStyle
+    };
+  }
+
+  /**
+   * 获取样式属性值（camelCase 格式）
+   * @param {Object} style - camelCase 格式的样式对象
+   * @param {string} property - 属性名（camelCase 格式，如 'fontSize'）
+   * @returns {string|undefined} 样式值
+   */
+  getStyleProperty(style, property) {
+    if (!style) return undefined;
+
+    // 直接获取 camelCase 格式的属性
+    return style[property];
+  }
+
+  /**
+   * 批量获取样式属性，返回 camelCase 格式的对象
+   * @param {Object} style - 原始样式对象
+   * @param {Array<string>} properties - 需要获取的属性列表（camelCase 格式）
+   * @returns {Object} camelCase 格式的样式对象
+   */
+  extractNormalizedStyles(style, properties) {
+    const normalized = {};
+
+    properties.forEach((prop) => {
+      const value = this.getStyleProperty(style, prop);
+      if (value !== undefined) {
+        // 特殊处理：跳过默认值，避免写入不必要的样式
+        if (prop === 'textDecoration') {
+          // 正确处理 CSS text-decoration 简写属性
+          if (!value || value === 'none') {
+            return; // 跳过空值或 'none' 值
+          }
+          // 检查简写属性中的 text-decoration-line 部分
+          const linePart = value.split(/\s+/)[0];
+          if (linePart === 'none') {
+            return; // 跳过 line 为 'none' 的值，如 "none solid rgb(0, 0, 0)"
+          }
+        }
+        if (prop === 'textAlign' && (value === 'start' || value === 'left')) {
+          return; // 跳过默认的对齐方式
+        }
+        if (prop === 'textTransform' && value === 'none') {
+          return; // 跳过默认的 'none' 值
+        }
+        
+        normalized[prop] = value;
+      }
+    });
+
+    return normalized;
   }
 
   /**
@@ -1124,13 +1215,13 @@ export class VirtualCanvasRenderer {
 
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
-      
+
       const result = this.layoutNode(node, x, y, line, words, elements, inheritedStyle);
-      
+
       // 更新坐标
       y = result.y;
       line = result.line;
-      
+
       // X坐标的处理：
       // - 如果当前节点是块级元素，它已经在layoutNode中处理了换行，
       //   result.x 应该是 paddingX（新行的开始）
@@ -1155,22 +1246,69 @@ export class VirtualCanvasRenderer {
    */
   layoutNode(node, startX, startY, startLine, words, elements, inheritedStyle = {}) {
     if (node.type === 'text') {
-      // 对于文本节点，使用继承的样式
-      const textStyle = this.mergeInheritedStyle(inheritedStyle, {});
-      return this.layoutText(node.text, textStyle, startX, startY, startLine, words);
+      // 文本节点现在包含自己的样式（已经是 camelCase 格式），直接合并继承样式
+      const nodeStyle = node.style || {};
+      
+      // 合并继承样式和节点样式（节点样式优先）
+      const textStyle = this.mergeInheritedStyle(inheritedStyle, nodeStyle);
+      
+      return this.layoutText(
+        node.text,
+        textStyle,
+        startX,
+        startY,
+        startLine,
+        words
+      );
+    }
+
+    if (node.type === 'link') {
+      // 链接节点类似文本节点，但使用节点自身的样式
+      const linkStyle = node.style || {};
+      const normalizedStyle = this.extractNormalizedStyles(linkStyle, [
+        'fontSize',
+        'fontWeight',
+        'fontStyle',
+        'color',
+        'textAlign',
+        'textIndent',
+        'textDecoration',
+      ]);
+
+      // 应用主题默认值
+      const textStyle = {
+        fontSize: this.theme.baseFontSize,
+        color: this.theme.textColor,
+        fontFamily: this.theme.fontFamily,
+        lineHeight: this.theme.lineHeight,
+        ...normalizedStyle,
+      };
+
+      return this.layoutText(
+        node.text,
+        textStyle,
+        startX,
+        startY,
+        startLine,
+        words
+      );
     }
 
     let x = startX;
     let y = startY;
     let line = startLine;
 
-    // 合并当前节点的样式和继承的样式
-    const currentNodeStyle = this.mergeInheritedStyle(inheritedStyle, node.style || {});
+    // 直接使用节点的样式，HTMLParser已经处理了默认样式合并
+    const currentNodeStyle = node.style || {};
 
     // 处理块级元素的上边距和上内边距
     if (this.isBlockElement(currentNodeStyle)) {
-      const marginTop = this.parseSize(currentNodeStyle.marginTop);
-      const paddingTop = this.parseSize(currentNodeStyle.paddingTop);
+      const marginTop = this.parseSize(
+        this.getStyleProperty(currentNodeStyle, 'marginTop')
+      );
+      const paddingTop = this.parseSize(
+        this.getStyleProperty(currentNodeStyle, 'paddingTop')
+      );
 
       if (marginTop > 0) {
         y += marginTop;
@@ -1188,8 +1326,12 @@ export class VirtualCanvasRenderer {
       }
 
       // 处理块级元素的左右内边距（影响文本宽度）
-      const paddingLeft = this.parseSize(currentNodeStyle.paddingLeft);
-      const paddingRight = this.parseSize(currentNodeStyle.paddingRight);
+      const paddingLeft = this.parseSize(
+        this.getStyleProperty(currentNodeStyle, 'paddingLeft')
+      );
+      const paddingRight = this.parseSize(
+        this.getStyleProperty(currentNodeStyle, 'paddingRight')
+      );
 
       if (paddingLeft > 0) {
         x += paddingLeft;
@@ -1204,9 +1346,17 @@ export class VirtualCanvasRenderer {
 
     // 处理特殊元素
     if (node.type === 'image') {
-      // 使用节点中的尺寸信息，如果没有则使用默认值
-      const originalWidth = node.width || this.defaultImageWidth;
-      const originalHeight = node.height || this.defaultImageHeight;
+      // 优先使用新 parser 提供的 bounds 信息
+      let originalWidth, originalHeight;
+
+      if (node.bounds && node.bounds.width && node.bounds.height) {
+        originalWidth = node.bounds.width;
+        originalHeight = node.bounds.height;
+      } else {
+        // 回退到手动获取或默认值
+        originalWidth = node.width || this.defaultImageWidth;
+        originalHeight = node.height || this.defaultImageHeight;
+      }
 
       // 计算可用容器宽度
       const availableWidth = this.canvasWidth - this.theme.paddingX * 2;
@@ -1245,16 +1395,14 @@ export class VirtualCanvasRenderer {
       x = this.theme.paddingX;
       y = adjustedImageElement.y + adjustedImageElement.height + 20; // 使用调整后的图片高度 + 间距
     } else if (node.children && node.children.length > 0) {
-      // 递归处理子节点，传递可继承的样式
-      const inheritableStyleForChildren = this.extractInheritableStyle(currentNodeStyle);
+      // 递归处理子节点
       const result = this.layoutNodes(
         node.children,
         x,
         y,
         line,
         words,
-        elements,
-        inheritableStyleForChildren
+        elements
       );
       x = result.x;
       y = result.y;
@@ -1263,8 +1411,12 @@ export class VirtualCanvasRenderer {
 
     // 处理块级元素的下边距、下内边距和换行
     if (this.isBlockElement(currentNodeStyle)) {
-      const marginBottom = this.parseSize(currentNodeStyle.marginBottom);
-      const paddingBottom = this.parseSize(currentNodeStyle.paddingBottom);
+      const marginBottom = this.parseSize(
+        this.getStyleProperty(currentNodeStyle, 'marginBottom')
+      );
+      const paddingBottom = this.parseSize(
+        this.getStyleProperty(currentNodeStyle, 'paddingBottom')
+      );
 
       if (paddingBottom > 0) {
         y += paddingBottom;
@@ -1294,14 +1446,18 @@ export class VirtualCanvasRenderer {
    * @returns {Object}
    */
   layoutText(text, style, startX, startY, startLine, words) {
-    const fontSize = this.parseSize(style.fontSize) || this.theme.baseFontSize;
-    const fontWeight = style.fontWeight || 'normal';
-    const fontStyle = style.fontStyle || 'normal';
+    // 使用兼容的样式访问方式
+    const fontSize =
+      this.parseSize(this.getStyleProperty(style, 'fontSize')) ||
+      this.theme.baseFontSize;
+    const fontWeight = this.getStyleProperty(style, 'fontWeight') || 'normal';
+    const fontStyle = this.getStyleProperty(style, 'fontStyle') || 'normal';
     const lineHeight = this.getLineHeight(style);
 
     // 解析文本对齐样式
-    const textAlign = style.textAlign || 'left';
-    const textIndent = this.parseSize(style.textIndent) || 0;
+    const textAlign = this.getStyleProperty(style, 'textAlign') || 'left';
+    const textIndent =
+      this.parseSize(this.getStyleProperty(style, 'textIndent')) || 0;
 
     // 更新测量上下文的字体
     this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.theme.fontFamily}`;
@@ -1336,9 +1492,9 @@ export class VirtualCanvasRenderer {
       const segmentWidth = this.measureCtx.measureText(segment.content).width;
 
       // 计算可用宽度（考虑首行缩进和右内边距）
-      const rightPadding = this.parseSize(style.effectivePaddingRight) || 0;
+      const rightPadding = this.parseSize(this.getStyleProperty(style, 'paddingRight')) || 0;
       const availableWidth =
-        this.canvasWidth - this.theme.paddingX - rightPadding;
+        this.canvasWidth - this.theme.paddingX * 2 - rightPadding;
       const effectiveStartX = isFirstLine ? startX + textIndent : startX;
       const maxWidth = availableWidth - (effectiveStartX - this.theme.paddingX);
 
@@ -1386,7 +1542,7 @@ export class VirtualCanvasRenderer {
       // 应用首行缩进
       const finalX = isFirstLine ? x + textIndent : x;
 
-      // 创建单词对象
+      // 创建单词对象 - 保留完整的样式信息
       const word = {
         x: finalX,
         y: currentLineY,
@@ -1396,10 +1552,13 @@ export class VirtualCanvasRenderer {
         text: segment.content,
         type: segment.type,
         style: {
+          // 保留所有从原始样式中提取的属性
+          ...style,
+          // 确保关键的渲染属性存在
           fontSize,
           fontWeight,
           fontStyle,
-          color: style.color || this.theme.textColor,
+          color: this.getStyleProperty(style, 'color') || this.theme.textColor,
         },
         startIndex: segment.startIndex,
         endIndex: segment.endIndex,
@@ -1440,12 +1599,16 @@ export class VirtualCanvasRenderer {
    * @returns {Object}
    */
   layoutTextWithAlignment(segments, style, startX, startY, startLine, words) {
-    const fontSize = this.parseSize(style.fontSize) || this.theme.baseFontSize;
-    const fontWeight = style.fontWeight || 'normal';
-    const fontStyle = style.fontStyle || 'normal';
+    // 使用兼容的样式访问方式
+    const fontSize =
+      this.parseSize(this.getStyleProperty(style, 'fontSize')) ||
+      this.theme.baseFontSize;
+    const fontWeight = this.getStyleProperty(style, 'fontWeight') || 'normal';
+    const fontStyle = this.getStyleProperty(style, 'fontStyle') || 'normal';
     const lineHeight = this.getLineHeight(style);
-    const textAlign = style.textAlign || 'left';
-    const textIndent = this.parseSize(style.textIndent) || 0;
+    const textAlign = this.getStyleProperty(style, 'textAlign') || 'left';
+    const textIndent =
+      this.parseSize(this.getStyleProperty(style, 'textIndent')) || 0;
 
     // 更新测量上下文的字体
     this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.theme.fontFamily}`;
@@ -1486,10 +1649,13 @@ export class VirtualCanvasRenderer {
           text: segment.content,
           type: segment.type,
           style: {
+            // 保留所有从原始样式中提取的属性
+            ...style,
+            // 确保关键的渲染属性存在
             fontSize,
             fontWeight,
             fontStyle,
-            color: style.color || this.theme.textColor,
+            color: this.getStyleProperty(style, 'color') || this.theme.textColor,
           },
           startIndex: segment.startIndex,
           endIndex: segment.endIndex,
@@ -1537,9 +1703,9 @@ export class VirtualCanvasRenderer {
       const segmentWidth = this.measureCtx.measureText(segment.content).width;
 
       // 计算可用宽度（考虑首行缩进和右内边距）
-      const rightPadding = this.parseSize(style.effectivePaddingRight) || 0;
+      const rightPadding = this.parseSize(this.getStyleProperty(style, 'paddingRight')) || 0;
       const availableWidth =
-        this.canvasWidth - this.theme.paddingX - rightPadding;
+        this.canvasWidth - this.theme.paddingX * 2 - rightPadding;
       const effectiveStartX = isFirstLine ? startX + textIndent : startX;
       const maxWidth = availableWidth - (effectiveStartX - this.theme.paddingX);
 
@@ -1624,7 +1790,7 @@ export class VirtualCanvasRenderer {
         return this.theme.paddingX + (availableWidth - lineWidth) / 2;
 
       case 'right':
-        // 右对齐：右边距 - 行宽度
+        // 右对齐：Canvas宽度 - 右边距 - 行宽度
         return this.canvasWidth - this.theme.paddingX - lineWidth;
 
       case 'justify':
@@ -1700,7 +1866,7 @@ export class VirtualCanvasRenderer {
 
   /**
    * 解析尺寸值（支持em、px、pt等）
-   * @param {string} value
+   * @param {string|number} value
    * @returns {number}
    */
   parseSize(value) {
@@ -1708,20 +1874,34 @@ export class VirtualCanvasRenderer {
 
     if (typeof value === 'number') return value;
 
-    if (value.endsWith('em')) {
-      return parseFloat(value) * this.theme.baseFontSize;
+    // 移除多余的空格
+    const trimmedValue = value.toString().trim();
+
+    if (trimmedValue.endsWith('em')) {
+      return parseFloat(trimmedValue) * this.theme.baseFontSize;
     }
 
-    if (value.endsWith('px')) {
-      return parseFloat(value);
+    if (trimmedValue.endsWith('px')) {
+      return parseFloat(trimmedValue);
     }
 
     // EPUB常用pt单位转换 (1pt = 1.33px)
-    if (value.endsWith('pt')) {
-      return parseFloat(value) * 1.33;
+    if (trimmedValue.endsWith('pt')) {
+      return parseFloat(trimmedValue) * 1.33;
     }
 
-    return parseFloat(value) || 0;
+    // rem单位处理
+    if (trimmedValue.endsWith('rem')) {
+      return parseFloat(trimmedValue) * this.theme.baseFontSize;
+    }
+
+    // 百分比单位（相对于容器宽度）
+    if (trimmedValue.endsWith('%')) {
+      const percentage = parseFloat(trimmedValue) / 100;
+      return this.canvasWidth * percentage;
+    }
+
+    return parseFloat(trimmedValue) || 0;
   }
 
   /**
@@ -1730,19 +1910,23 @@ export class VirtualCanvasRenderer {
    * @returns {number}
    */
   getLineHeight(style = {}) {
-    const fontSize = this.parseSize(style.fontSize) || this.theme.baseFontSize;
+    const fontSize =
+      this.parseSize(this.getStyleProperty(style, 'fontSize')) ||
+      this.theme.baseFontSize;
 
     // 如果样式中指定了line-height，使用样式中的值
-    if (style.lineHeight) {
-      const lineHeight = style.lineHeight;
-
+    const lineHeightValue = this.getStyleProperty(style, 'lineHeight');
+    if (lineHeightValue) {
       // 如果是数值（如 1.5），直接乘以字体大小
-      if (typeof lineHeight === 'number' || /^[\d.]+$/.test(lineHeight)) {
-        return fontSize * parseFloat(lineHeight);
+      if (
+        typeof lineHeightValue === 'number' ||
+        /^[\d.]+$/.test(lineHeightValue)
+      ) {
+        return fontSize * parseFloat(lineHeightValue);
       }
 
       // 如果是具体单位（如 20px, 1.5em），解析单位
-      const parsedLineHeight = this.parseSize(lineHeight);
+      const parsedLineHeight = this.parseSize(lineHeightValue);
       if (parsedLineHeight > 0) {
         return parsedLineHeight;
       }
