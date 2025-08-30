@@ -106,43 +106,10 @@ export class HTMLParser {
           const childElement = this.parseElement(child);
           if (childElement) {
             elementData.children.push(childElement);
-                 }
-     }
-   }
-   
-   /**
-    * 清理 SVG 字符串，去除可能影响 data URL 的内容
-    * @param {string} svgString - 原始 SVG 字符串
-    * @returns {string} 清理后的 SVG 字符串
-    */
-   cleanSVGString(svgString) {
-     // 1. 移除可能的 XML 声明（data URL 中不需要）
-     svgString = svgString.replace(/^<\?xml[^>]*\?>/, '');
-     
-     // 2. 移除 DOCTYPE 声明（如果存在）
-     svgString = svgString.replace(/<!DOCTYPE[^>]*>/i, '');
-     
-     // 3. 清理多余的空白字符
-     svgString = svgString.trim();
-     
-     // 4. 确保 SVG 根元素有正确的命名空间
-     if (!svgString.includes('xmlns="http://www.w3.org/2000/svg"')) {
-       svgString = svgString.replace(
-         /<svg([^>]*)>/,
-         '<svg$1 xmlns="http://www.w3.org/2000/svg">'
-       );
-     }
-     
-     // 5. 移除可能引起问题的注释
-     svgString = svgString.replace(/<!--[\s\S]*?-->/g, '');
-     
-     // 6. 处理特殊字符（确保引号正确转义）
-     svgString = svgString.replace(/"/g, "'"); // 将双引号替换为单引号，避免 data URL 中的引号冲突
-     
-     return svgString;
-   }
-  }
-
+          }
+        }
+      }
+    }
     // 处理伪元素 ::after  
     const afterElement = this.processPseudoElement(element, '::after');
     if (afterElement) {
