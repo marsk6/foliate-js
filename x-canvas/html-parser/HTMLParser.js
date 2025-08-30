@@ -1703,72 +1703,175 @@ export class HTMLParser {
       // 获取 SVG 的边界
       const rect = svgElement.getBoundingClientRect();
       
-      // 设置 SVG 的宽高属性以确保正确序列化
-      const clonedSvg = svgElement.cloneNode(true);
-      clonedSvg.setAttribute('width', rect.width.toString());
-      clonedSvg.setAttribute('height', rect.height.toString());
+      // 检查 SVG 是否包含 blob URL 引用
+      const hasBlobUrl = this.svgContainsBlobUrl(svgElement);
       
-      // 确保 SVG 命名空间存在
-      if (!clonedSvg.getAttribute('xmlns')) {
-        clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      if (hasBlobUrl) {
+        // 如果包含 blob URL，提取内部的 image 元素直接处理
+        return this.extractSVGImageElement(svgElement, rect);
+      } else {
+        // 如果不包含 blob URL，正常转换为 blob URL
+        return this.convertSVGToBlobUrl(svgElement, rect);
       }
-
-      // 序列化 SVG
-      const serializer = new XMLSerializer();
-      let svgString = serializer.serializeToString(clonedSvg);
-      
-      // 清理 SVG 字符串以提高兼容性
-      svgString = this.cleanSVGString(svgString);
-      
-      // 生成兼容的 SVG data URL
-      const svgDataUrl = this.createSVGDataURL(svgString);
-      
-      // 验证 data URL 是否有效
-      if (!svgDataUrl) {
-        console.warn('Failed to create valid SVG data URL');
-        return null;
-      }
-
-      return {
-        type: 'image',
-        src: svgDataUrl,
-        alt: 'SVG Image',
-        bounds: {
-          top: rect.top,
-          left: rect.left,
-          width: rect.width,
-          height: rect.height
-        }
-      };
     } catch (error) {
       console.warn('Failed to process SVG element:', error);
       return null;
     }
   }
+
+  /**
+   * 检查 SVG 是否包含 blob URL 引用
+   */
+  svgContainsBlobUrl(svgElement) {
+    const images = svgElement.querySelectorAll('image');
+    for (const img of images) {
+      const href = img.getAttribute('href') || img.getAttribute('xlink:href');
+      if (href && href.startsWith('blob:')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 提取 SVG 内部的 image 元素直接处理
+   */
+  extractSVGImageElement(svgElement, rect) {
+    const imageElement = svgElement.querySelector('image');
+    if (!imageElement) {
+      console.warn('SVG contains blob URL but no image element found');
+      return null;
+    }
+
+    const href = imageElement.getAttribute('href') || imageElement.getAttribute('xlink:href');
+    if (!href) {
+      console.warn('Image element has no href attribute');
+      return null;
+    }
+
+    // 获取图片的尺寸信息
+    const width = imageElement.getAttribute('width') || rect.width;
+    const height = imageElement.getAttribute('height') || rect.height;
+
+    return {
+      type: 'image',
+      src: href, // 直接使用 blob URL
+      alt: 'SVG Image Content',
+      bounds: {
+        top: rect.top,
+        left: rect.left,
+        width: parseFloat(width) || rect.width,
+        height: parseFloat(height) || rect.height
+      }
+    };
+  }
+
+  /**
+   * 将 SVG 转换为 blob URL（不包含 blob URL 引用的情况）
+   */
+  convertSVGToBlobUrl(svgElement, rect) {
+    // 设置 SVG 的宽高属性以确保正确序列化
+    const clonedSvg = svgElement.cloneNode(true);
+    clonedSvg.setAttribute('width', rect.width.toString());
+    clonedSvg.setAttribute('height', rect.height.toString());
+    
+    // 确保 SVG 命名空间存在
+    if (!clonedSvg.getAttribute('xmlns')) {
+      clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    }
+
+    // 序列化 SVG
+    const serializer = new XMLSerializer();
+    let svgString = serializer.serializeToString(clonedSvg);
+    
+    // 清理 SVG 字符串以提高兼容性
+    svgString = this.cleanSVGString(svgString);
+    
+    // 生成 SVG blob URL
+    const svgBlobUrl = this.createSVGBlobURL(svgString);
+    
+    // 验证 blob URL 是否有效
+    if (!svgBlobUrl) {
+      console.warn('Failed to create valid SVG blob URL');
+      return null;
+    }
+
+    return {
+      type: 'image',
+      src: svgBlobUrl,
+      alt: 'SVG Image',
+      bounds: {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height
+      }
+    };
+  }
   
   /**
-   * 创建兼容的 SVG data URL
-   * @param {string} svgString - SVG 字符串
-   * @returns {string} data URL
+   * 清理 SVG 字符串以提高兼容性
+   * @param {string} svgString - 原始 SVG 字符串
+   * @returns {string} 清理后的 SVG 字符串
    */
-  createSVGDataURL(svgString) {
+  cleanSVGString(svgString) {
+    if (!svgString) return '';
+    
+    // 移除可能导致问题的字符和属性
+    let cleaned = svgString
+      // 移除 XML 声明
+      .replace(/<\?xml[^>]*\?>/g, '')
+      // 移除 DOCTYPE 声明
+      .replace(/<!DOCTYPE[^>]*>/g, '')
+      // 移除不必要的空白
+      .trim()
+      // 确保单引号和双引号正确转义
+      .replace(/'/g, '&#39;')
+      // 移除可能有问题的注释
+      .replace(/<!--[\s\S]*?-->/g, '');
+    
+    return cleaned;
+  }
+
+  /**
+   * 创建 SVG blob URL
+   * @param {string} svgString - SVG 字符串
+   * @returns {string} blob URL
+   */
+  createSVGBlobURL(svgString) {
     try {
-      // 方法1：使用 charset 声明的 URL 编码（推荐，兼容性好）
-      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
-    } catch (error1) {
-      try {
-        // 方法2：Base64 编码（备用方案，更安全但文件更大）
-        const svgBase64 = btoa(unescape(encodeURIComponent(svgString)));
-        return `data:image/svg+xml;base64,${svgBase64}`;
-      } catch (error2) {
-        try {
-          // 方法3：简单的 URL 编码，不使用 charset（最后的备用）
-          return `data:image/svg+xml,${encodeURIComponent(svgString)}`;
-        } catch (error3) {
-          console.warn('All SVG data URL encoding methods failed:', error1, error2, error3);
-          return null;
-        }
+      // 创建 blob 对象
+      const blob = new Blob([svgString], { type: 'image/svg+xml' });
+      
+      // 创建 blob URL
+      const blobUrl = URL.createObjectURL(blob);
+      
+      // 可选：存储 blob URL 以便后续清理（避免内存泄漏）
+      if (!this.createdBlobUrls) {
+        this.createdBlobUrls = new Set();
       }
+      this.createdBlobUrls.add(blobUrl);
+      
+      return blobUrl;
+    } catch (error) {
+      console.warn('Failed to create SVG blob URL:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 清理创建的 blob URLs 以释放内存
+   */
+  cleanup() {
+    if (this.createdBlobUrls) {
+      this.createdBlobUrls.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.warn('Failed to revoke blob URL:', error);
+        }
+      });
+      this.createdBlobUrls.clear();
     }
   }
 }
