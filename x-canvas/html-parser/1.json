@@ -1,0 +1,59 @@
+[
+  {
+    "x": 16,
+    "y": 25.386703999999998,
+    "width": 105.28929138183594,
+    "height": 22.6667,
+    "line": 0,
+    "text": "CHAPTER",
+    "type": "word",
+    "style": {
+      "color": "#222",
+      "fontFamily": "\"PingFang SC\"",
+      "fontSize": 22.6667,
+      "lineHeight": 1.4,
+      "fontWeight": "bold",
+      "fontStyle": "normal"
+    },
+    "startIndex": 0,
+    "endIndex": 7
+  },
+  {
+    "x": 62.78996276855469,
+    "y": 25.386703999999998,
+    "width": 4.8351593017578125,
+    "height": 22.6667,
+    "line": 0,
+    "text": " ",
+    "type": "space",
+    "style": {
+      "color": "#222",
+      "fontFamily": "\"PingFang SC\"",
+      "fontSize": 22.6667,
+      "lineHeight": 1.4,
+      "fontWeight": "bold",
+      "fontStyle": "normal"
+    },
+    "startIndex": 7,
+    "endIndex": 8
+  },
+  {
+    "x": 66.11994934082031,
+    "y": 25.386703999999998,
+    "width": 46.91325378417969,
+    "height": 22.6667,
+    "line": 0,
+    "text": "ONE",
+    "type": "word",
+    "style": {
+      "color": "#222",
+      "fontFamily": "\"PingFang SC\"",
+      "fontSize": 22.6667,
+      "lineHeight": 1.4,
+      "fontWeight": "bold",
+      "fontStyle": "normal"
+    },
+    "startIndex": 8,
+    "endIndex": 11
+  }
+]

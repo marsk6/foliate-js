@@ -7,6 +7,7 @@ export class HTMLParser {
       useDefaultStyles: true,         // 是否使用默认样式
       mergeComputedStyles: true,      // 是否合并计算后的样式
       optimizeOutput: true,           // 是否优化输出（移除默认值）
+      debug: false,                   // 是否启用调试输出
       ...options
     };
   }
@@ -37,10 +38,13 @@ export class HTMLParser {
       return null;
     }
 
+    // 按优先级提取样式：className样式 → 内联样式 → computedStyle补充
+    const allStyles = this.extractAllElementStyles(element, computedStyle);
+    
     const elementData = {
       type: 'element',
       tag: element.tagName.toLowerCase(),
-      style: this.extractStyles(computedStyle, element.tagName.toLowerCase()),
+      style: allStyles, // 合并所有来源的样式
       bounds: this.getBounds(element),
       children: []
     };
@@ -62,12 +66,11 @@ export class HTMLParser {
       if (child.nodeType === Node.TEXT_NODE) {
         const text = child.textContent.trim();
         if (text) {
-          // 文本节点继承父元素的文本相关样式
-          const textStyles = this.extractTextStyles(computedStyle, element.tagName.toLowerCase());
+          // 普通文本节点不保存样式，使用父元素的textStyle进行继承
           elementData.children.push({
             type: 'text',
             text: text,
-            style: textStyles
+            style: {}
           });
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
@@ -467,6 +470,11 @@ export class HTMLParser {
       return value !== 'initial' && value !== 'inherit';
     }
     
+    // textIndent 特殊处理：即使是0值也要保留，因为在继承系统中有意义
+    if (property === 'textIndent') {
+      return value !== 'initial' && value !== 'inherit' && value !== 'unset' && value !== 'normal';
+    }
+    
     // 明确的无意义值（扩展列表，包含更多 Canvas 渲染无关的值）
     const meaninglessValues = [
       'auto', 'none', 'normal', 'initial', 'inherit', 'unset',
@@ -482,16 +490,28 @@ export class HTMLParser {
     const numericMatch = value.match(/^(-?\d*\.?\d+)(px|%|em|rem|ex|ch|vw|vh|vmin|vmax|pt|pc|in|cm|mm|q|fr)$/);
     if (numericMatch) {
       const numericValue = parseFloat(numericMatch[1]);
+      // textIndent 即使为0也保留
+      if (property === 'textIndent') {
+        return true;
+      }
       return numericValue !== 0;
     }
     
     // 处理无单位数字
     if (!isNaN(parseFloat(value)) && isFinite(value)) {
+      // textIndent 即使为0也保留
+      if (property === 'textIndent') {
+        return true;
+      }
       return parseFloat(value) !== 0;
     }
     
     // 处理特殊的"无效果"值
     if (value === '0' || value === '0px' || value === '0%' || value === '0em') {
+      // textIndent 即使为0也保留
+      if (property === 'textIndent') {
+        return true;
+      }
       return false;
     }
     
@@ -1218,22 +1238,27 @@ export class HTMLParser {
     const optimized = {};
     const defaultStyles = getDefaultStyles(tagName);
     
+    // 关键样式列表 - 这些样式即使是"默认值"也要保留
+    const criticalProperties = [
+      'display', 'fontSize', 'textIndent', 'fontFamily', 'fontWeight', 'color'
+    ];
+    
     for (const [property, value] of Object.entries(styles)) {
       const normalizedValue = normalizeStyleValue(property, value);
       
       // 跳过空值
       if (!normalizedValue) continue;
       
-      // display 属性对 Canvas 布局至关重要，永远保留
-      if (property === 'display') {
+      // 关键属性永远保留
+      if (criticalProperties.includes(property)) {
         optimized[property] = normalizedValue;
         continue;
       }
       
-      // 跳过与默认样式相同的值
+      // 跳过与默认样式相同的值（但不包括关键属性）
       if (defaultStyles[property] === normalizedValue) continue;
       
-      // 跳过通用默认值
+      // 跳过通用默认值（但不包括关键属性）
       if (isDefaultValue(property, normalizedValue)) continue;
       
       optimized[property] = normalizedValue;
@@ -1242,6 +1267,332 @@ export class HTMLParser {
     return optimized;
   }
 
+
+  /**
+   * 提取元素的所有样式（按优先级合并多个来源）
+   * @param {Element} element - DOM元素
+   * @param {CSSStyleDeclaration} computedStyle - 计算样式
+   * @returns {Object} 合并后的样式对象
+   */
+  extractAllElementStyles(element, computedStyle) {
+    const tagName = element.tagName.toLowerCase();
+    let allStyles = {};
+
+    // 1. 默认样式（优先级最低）
+    if (this.options.useDefaultStyles) {
+      const defaultStyles = getDefaultStyles(tagName);
+      allStyles = { ...defaultStyles };
+    }
+
+    // 2. CSS类样式（从样式表中获取）
+    const classStyles = this.extractClassStyles(element);
+    allStyles = mergeStyles(allStyles, classStyles);
+
+    // 3. 内联样式（style属性）
+    const inlineStyles = this.extractInlineStyles(element);
+    allStyles = mergeStyles(allStyles, inlineStyles);
+
+    // 4. 从computedStyle补充有用的样式（优先级最高，但不覆盖已明确指定的样式）
+    const computedStyles = this.extractComputedStyles(computedStyle, tagName, allStyles);
+    allStyles = mergeStyles(allStyles, computedStyles);
+
+    // 5. 优化输出
+    if (this.options.optimizeOutput) {
+      allStyles = this.optimizeStyles(allStyles, tagName);
+    }
+
+    return allStyles;
+  }
+
+  /**
+   * 从元素的className中提取CSS类样式
+   * @param {Element} element - DOM元素
+   * @returns {Object} CSS类样式对象
+   */
+  extractClassStyles(element) {
+    const classStyles = {};
+    const classList = element.classList;
+    
+    if (!classList || classList.length === 0) {
+      return classStyles;
+    }
+
+    try {
+      // 获取所有样式表
+      const styleSheets = Array.from(element.ownerDocument.styleSheets);
+      
+      for (const className of classList) {
+        // 尝试多种选择器格式
+        const selectors = [
+          `.${className}`,           // 基本类选择器
+          `*.${className}`,          // 通用选择器加类
+          `${element.tagName.toLowerCase()}.${className}`  // 标签加类选择器
+        ];
+        
+        let foundRule = false;
+        for (const selector of selectors) {
+          const classRule = this.findCSSRule(selector, styleSheets);
+          if (classRule && classRule.style) {
+            const ruleStyles = this.parseCSSStyleDeclaration(classRule.style);
+            Object.assign(classStyles, ruleStyles);
+            foundRule = true;
+            
+            // 调试信息
+            if (this.options.debug) {
+              console.log(`Found CSS rule for ${selector}:`, ruleStyles);
+            }
+            break; // 找到规则后跳出内层循环
+          }
+        }
+        
+        // 如果找不到规则，尝试从计算样式中推断
+        if (!foundRule) {
+          const inferredStyles = this.inferClassStyles(element, className);
+          if (Object.keys(inferredStyles).length > 0) {
+            Object.assign(classStyles, inferredStyles);
+            
+            if (this.options.debug) {
+              console.log(`Inferred styles for class ${className}:`, inferredStyles);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to extract class styles:', error);
+      
+      // 作为后备，尝试从计算样式中推断所有类的样式
+      try {
+        for (const className of classList) {
+          const inferredStyles = this.inferClassStyles(element, className);
+          Object.assign(classStyles, inferredStyles);
+        }
+      } catch (inferError) {
+        console.warn('Failed to infer class styles:', inferError);
+      }
+    }
+
+    return classStyles;
+  }
+
+  /**
+   * 从元素的style属性中提取内联样式
+   * @param {Element} element - DOM元素
+   * @returns {Object} 内联样式对象
+   */
+  extractInlineStyles(element) {
+    const inlineStyles = {};
+    
+    if (element.style && element.style.length > 0) {
+      const ruleStyles = this.parseCSSStyleDeclaration(element.style);
+      Object.assign(inlineStyles, ruleStyles);
+    }
+
+    return inlineStyles;
+  }
+
+  /**
+   * 从computedStyle中提取有用的样式（智能合并，避免丢失重要样式）
+   * @param {CSSStyleDeclaration} computedStyle - 计算样式
+   * @param {string} tagName - 标签名
+   * @param {Object} existingStyles - 已存在的样式
+   * @returns {Object} 计算样式对象
+   */
+  extractComputedStyles(computedStyle, tagName, existingStyles) {
+    const computedStyles = {};
+
+    // 提取所有相关的样式
+    const relevantStyles = this.extractAllStyles(computedStyle);
+    
+    // 关键样式列表 - 这些样式即使存在也要检查是否需要更新
+    const criticalStyleProperties = [
+      'fontSize', 'textIndent', 'lineHeight', 'fontFamily', 'fontWeight',
+      'color', 'backgroundColor', 'display', 'textAlign'
+    ];
+    
+    for (const [property, value] of Object.entries(relevantStyles)) {
+      // 如果属性不存在，直接添加
+      if (!(property in existingStyles)) {
+        computedStyles[property] = value;
+      } 
+      // 如果是关键样式，检查现有值是否有效
+      else if (criticalStyleProperties.includes(property)) {
+        const existingValue = existingStyles[property];
+        
+        // 如果现有值无效或是占位符，用计算值替换
+        if (!this.isValidStyleValue(property, existingValue) || 
+            this.isPlaceholderValue(property, existingValue)) {
+          computedStyles[property] = value;
+        }
+      }
+    }
+
+    return computedStyles;
+  }
+
+  /**
+   * 查找CSS规则
+   * @param {string} selector - CSS选择器
+   * @param {StyleSheet[]} styleSheets - 样式表数组
+   * @returns {CSSStyleRule|null} 找到的CSS规则
+   */
+  findCSSRule(selector, styleSheets) {
+    for (const styleSheet of styleSheets) {
+      try {
+        if (!styleSheet.cssRules) continue;
+        
+        for (const rule of Array.from(styleSheet.cssRules)) {
+          if (rule instanceof CSSStyleRule && rule.selectorText === selector) {
+            return rule;
+          }
+        }
+      } catch (error) {
+        // 跨域或其他访问限制，跳过这个样式表
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 从计算样式中推断类样式（当无法直接访问样式表时的后备方案）
+   * @param {Element} element - DOM元素
+   * @param {string} className - 类名
+   * @returns {Object} 推断出的样式对象
+   */
+  inferClassStyles(element, className) {
+    const inferredStyles = {};
+    
+    try {
+      // 获取元素的计算样式
+      const computedStyle = window.getComputedStyle(element);
+      
+      // 创建一个临时的相同标签元素，但不包含这个类
+      const testElement = element.ownerDocument.createElement(element.tagName);
+      
+      // 复制除了目标类之外的所有类
+      const otherClasses = Array.from(element.classList).filter(cls => cls !== className);
+      if (otherClasses.length > 0) {
+        testElement.className = otherClasses.join(' ');
+      }
+      
+      // 复制内联样式
+      if (element.style.cssText) {
+        testElement.style.cssText = element.style.cssText;
+      }
+      
+      // 将测试元素添加到DOM中（隐藏状态）
+      testElement.style.position = 'absolute';
+      testElement.style.visibility = 'hidden';
+      testElement.style.top = '-9999px';
+      element.parentNode.appendChild(testElement);
+      
+      // 获取测试元素的计算样式
+      const testComputedStyle = window.getComputedStyle(testElement);
+      
+      // 比较两个计算样式，找出差异
+      const importantProperties = [
+        'fontSize', 'fontFamily', 'fontWeight', 'fontStyle',
+        'color', 'backgroundColor', 'textAlign', 'textIndent',
+        'lineHeight', 'marginTop', 'marginBottom', 'paddingTop', 'paddingBottom'
+      ];
+      
+      for (const property of importantProperties) {
+        const originalValue = computedStyle[property];
+        const testValue = testComputedStyle[property];
+        
+        if (originalValue !== testValue && this.hasNonZeroValue(originalValue, property)) {
+          inferredStyles[property] = originalValue;
+        }
+      }
+      
+      // 清理测试元素
+      element.parentNode.removeChild(testElement);
+      
+    } catch (error) {
+      // 如果推断失败，静默忽略
+      if (this.options.debug) {
+        console.warn(`Failed to infer styles for class ${className}:`, error);
+      }
+    }
+    
+    return inferredStyles;
+  }
+
+  /**
+   * 解析CSSStyleDeclaration为camelCase格式的对象
+   * @param {CSSStyleDeclaration} styleDeclaration - CSS样式声明
+   * @returns {Object} camelCase格式的样式对象
+   */
+  parseCSSStyleDeclaration(styleDeclaration) {
+    const styles = {};
+    
+    for (let i = 0; i < styleDeclaration.length; i++) {
+      const property = styleDeclaration[i];
+      const value = styleDeclaration.getPropertyValue(property);
+      
+      if (value) {
+        // 转换为camelCase格式
+        const camelCaseProperty = this.toCamelCase(property);
+        styles[camelCaseProperty] = value;
+      }
+    }
+
+    return styles;
+  }
+
+  /**
+   * 将CSS属性名转换为camelCase格式
+   * @param {string} property - CSS属性名（kebab-case）
+   * @returns {string} camelCase格式的属性名
+   */
+  toCamelCase(property) {
+    return property.replace(/-([a-z])/g, (match, letter) => letter.toUpperCase());
+  }
+
+  /**
+   * 检查样式值是否有效
+   * @param {string} property - 样式属性名
+   * @param {string} value - 样式值
+   * @returns {boolean} 是否为有效值
+   */
+  isValidStyleValue(property, value) {
+    if (!value || value.trim() === '') return false;
+    
+    // 检查是否为明显的无效值
+    const invalidValues = ['none', 'normal', 'auto', 'initial', 'inherit', 'unset', ''];
+    if (invalidValues.includes(value.toLowerCase().trim())) {
+      // textIndent 的 0 值是有效的
+      if (property === 'textIndent' && (value === '0' || value === '0px')) {
+        return true;
+      }
+      return false;
+    }
+    
+    // 检查数值类型的属性
+    if (['fontSize', 'lineHeight', 'textIndent'].includes(property)) {
+      // 检查是否包含有效数值
+      return value.match(/\d+(\.\d+)?(px|em|rem|%|pt|in|cm|mm|ex|ch|vw|vh|vmin|vmax)?/) !== null;
+    }
+    
+    return true;
+  }
+
+  /**
+   * 检查是否为占位符值（从 className 或 style 提取失败时的占位符）
+   * @param {string} property - 样式属性名
+   * @param {string} value - 样式值
+   * @returns {boolean} 是否为占位符值
+   */
+  isPlaceholderValue(property, value) {
+    if (!value) return true;
+    
+    // 常见的占位符或无效值
+    const placeholderValues = [
+      '', 'undefined', 'null', 'NaN', 'inherit', 'initial', 'unset'
+    ];
+    
+    return placeholderValues.includes(value);
+  }
 
   /**
    * 获取元素边界信息
@@ -1290,11 +1641,8 @@ export class HTMLParser {
     // 直接从计算样式中提取关键的文本样式，避免被优化过滤
     const elementTextStyles = this.extractRawTextStyles(elementStyle, tagName);
     
-    // 提取父元素的文本相关样式
-    const parentTextStyles = this.extractTextStyles(parentStyle, 'span');
-    
-    // 合并样式：元素样式覆盖父元素样式
-    const mergedStyles = mergeStyles(parentTextStyles, elementTextStyles);
+    // 注意：不再合并父元素样式，父元素的textStyle会在渲染时继承
+    // 这里只保存元素特有的样式（如<i>的italic、<b>的bold等）
     
     // 遍历子节点
     for (let child = element.firstChild; child; child = child.nextSibling) {
@@ -1304,7 +1652,7 @@ export class HTMLParser {
           textNodes.push({
             type: 'text',
             text: text,
-            style: mergedStyles
+            style: elementTextStyles  // 只保存元素特有的样式
           });
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
@@ -1333,23 +1681,35 @@ export class HTMLParser {
   }
   
   /**
-   * 直接从计算样式中提取文本样式，不经过优化过程
+   * 提取文本样式标签本身贡献的样式（不包括继承样式）
    * @param {CSSStyleDeclaration} computedStyle 
    * @param {string} tagName 
-   * @returns {Object} 文本样式对象
+   * @returns {Object} 该标签特有的文本样式对象
    */
   extractRawTextStyles(computedStyle, tagName) {
     const rawStyles = {};
     
-    // 直接提取关键的文本样式，确保不会被优化掉
-    const textStyleProperties = [
-      'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
-      'lineHeight', 'letterSpacing', 'wordSpacing',
-      'textAlign', 'textDecoration', 'textTransform', 'textIndent', 'textShadow',
-      'color'
-    ];
+    // 定义各种文本样式标签应该贡献的样式
+    const tagStyleContributions = {
+      'i': ['fontStyle'],
+      'em': ['fontStyle'], 
+      'b': ['fontWeight'],
+      'strong': ['fontWeight'],
+      'small': ['fontSize'],
+      'big': ['fontSize'],
+      'u': ['textDecoration'],
+      's': ['textDecoration'],
+      'del': ['textDecoration'],
+      'ins': ['textDecoration'],
+      'mark': ['backgroundColor'],
+      'sup': ['verticalAlign', 'fontSize'],
+      'sub': ['verticalAlign', 'fontSize']
+    };
     
-    textStyleProperties.forEach(property => {
+    // 只提取该标签应该贡献的样式属性
+    const allowedProperties = tagStyleContributions[tagName] || [];
+    
+    allowedProperties.forEach(property => {
       const value = computedStyle[property];
       
       if (value && this.isEffectiveTextStyleRaw(property, value, tagName)) {

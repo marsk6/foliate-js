@@ -20,7 +20,7 @@ export default class HTMLParse2 {
       this.iframe.onload = async () => {
         try {
           const body = this.iframe.contentWindow.document.body;
-          this.iframe.contentWindow.document.documentElement.style.cssText = 'font-size: 14px;';
+          // this.iframe.contentWindow.document.documentElement.style.cssText = 'font-size: 14px;';
           const root = this.parser.parse(body);
           resolve(root);
           // document.body.removeChild(this.iframe);

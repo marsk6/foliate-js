@@ -152,14 +152,14 @@ export class Paginator extends HTMLElement {
                 highlightOpacity: 0.3,
             },
         });
-        // const sections = [
-        //     {
-        //         load: async () => {
-        //             return "http://localhost:5173/1.html";
-        //         }
-        //     }
-        // ]
-        const chapters = this.sections.map((section, index) => {
+        const sections = [
+            {
+                load: async () => {
+                    return "http://localhost:5173/1.html";
+                }
+            }
+        ]
+        const chapters = sections.map((section, index) => {
             return {
                 index,
                 loadContent: async () => {
