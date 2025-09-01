@@ -1,59 +1,76 @@
-[
-  {
-    "x": 16,
-    "y": 25.386703999999998,
-    "width": 105.28929138183594,
-    "height": 22.6667,
-    "line": 0,
-    "text": "CHAPTER",
-    "type": "word",
-    "style": {
-      "color": "#222",
-      "fontFamily": "\"PingFang SC\"",
-      "fontSize": 22.6667,
-      "lineHeight": 1.4,
-      "fontWeight": "bold",
-      "fontStyle": "normal"
-    },
-    "startIndex": 0,
-    "endIndex": 7
+{
+  "type": "element",
+  "tag": "body",
+  "style": {
+    "fontSize": "22.6667px",
+    "display": "block",
+    "marginRight": "6.66667px",
+    "marginLeft": "6.66667px",
+    "fontFamily": "\"PingFang SC\""
   },
-  {
-    "x": 62.78996276855469,
-    "y": 25.386703999999998,
-    "width": 4.8351593017578125,
-    "height": 22.6667,
-    "line": 0,
-    "text": " ",
-    "type": "space",
-    "style": {
-      "color": "#222",
-      "fontFamily": "\"PingFang SC\"",
-      "fontSize": 22.6667,
-      "lineHeight": 1.4,
-      "fontWeight": "bold",
-      "fontStyle": "normal"
-    },
-    "startIndex": 7,
-    "endIndex": 8
+  "bounds": {
+    "top": 0,
+    "left": 0,
+    "width": 0,
+    "height": 0
   },
-  {
-    "x": 66.11994934082031,
-    "y": 25.386703999999998,
-    "width": 46.91325378417969,
-    "height": 22.6667,
-    "line": 0,
-    "text": "ONE",
-    "type": "word",
-    "style": {
-      "color": "#222",
-      "fontFamily": "\"PingFang SC\"",
-      "fontSize": 22.6667,
-      "lineHeight": 1.4,
-      "fontWeight": "bold",
-      "fontStyle": "normal"
+  "children": [
+    {
+      "type": "element",
+      "tag": "p",
+      "style": {
+        "display": "block",
+        "marginTop": "16px",
+        "marginBottom": "16px",
+        "fontSize": "16px",
+        "textAlign": "justify",
+        "textIndent": "15px",
+        "fontFamily": "\"PingFang SC\""
+      },
+      "bounds": {
+        "top": 0,
+        "left": 0,
+        "width": 0,
+        "height": 0
+      },
+      "children": [
+        {
+          "type": "text",
+          "text": "He found it a lot harder to concentrate on drills that afternoon and when\n      he left the building at",
+          "style": {}
+        },
+        {
+          "type": "text",
+          "text": "five o'clock , he was still so worried that he walked straight into\n        someone just outside the door.",
+          "style": {}
+        }
+      ]
     },
-    "startIndex": 8,
-    "endIndex": 11
-  }
-]
+    {
+      "type": "element",
+      "tag": "p",
+      "style": {
+        "display": "block",
+        "marginTop": "16px",
+        "marginBottom": "16px",
+        "fontSize": "16px",
+        "textAlign": "justify",
+        "textIndent": "15px",
+        "fontFamily": "\"PingFang SC\""
+      },
+      "bounds": {
+        "top": 0,
+        "left": 0,
+        "width": 0,
+        "height": 0
+      },
+      "children": [
+        {
+          "type": "text",
+          "text": "A man appeared on the corner the cat had been watching, appeared so\n          suddenly and silently you'd have thought he'd just popped out of the\n          ground. The cat's tail twitched and its eyes narrowed.",
+          "style": {}
+        }
+      ]
+    }
+  ]
+}

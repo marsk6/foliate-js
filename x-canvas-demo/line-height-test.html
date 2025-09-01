@@ -127,6 +127,16 @@
                     <input type="range" id="paddingSlider" min="10" max="40" value="16">
                     <span class="value-display" id="paddingValue">16px</span>
                 </div>
+                
+                <div class="control-group">
+                    <label>文本对齐:</label>
+                    <select id="textAlignSelect">
+                        <option value="left">左对齐</option>
+                        <option value="center">居中对齐</option>
+                        <option value="right">右对齐</option>
+                        <option value="justify">两端对齐</option>
+                    </select>
+                </div>
             </div>
             
             <div class="canvas-container">
@@ -163,7 +173,7 @@
     </div>
 
     <script type="module">
-        import CanvasRenderer from './canvas-renderer.js';
+        import { VirtualCanvasRenderer } from '../x-canvas/virtual-canvas-renderer.js';
 
         // 测试HTML内容
         const testHTML = `
@@ -177,14 +187,17 @@
         `;
 
         // 初始化渲染器
-        const canvas = document.getElementById('renderCanvas');
-        const renderer = new CanvasRenderer({
-            canvas: canvas,
+        const container = document.getElementById('renderCanvas').parentElement;
+        const renderer = new VirtualCanvasRenderer({
+            mountPoint: container,
+            mode: 'vertical',
             theme: {
                 baseFontSize: 20,
                 lineHeight: 1.4,
                 paddingX: 16,
-                paddingY: 16
+                paddingY: 16,
+                backgroundColor: '#fff',
+                textColor: '#222'
             }
         });
 
@@ -192,6 +205,7 @@
         const fontSizeSlider = document.getElementById('fontSizeSlider');
         const lineHeightSlider = document.getElementById('lineHeightSlider');
         const paddingSlider = document.getElementById('paddingSlider');
+        const textAlignSelect = document.getElementById('textAlignSelect');
         const fontSizeValue = document.getElementById('fontSizeValue');
         const lineHeightValue = document.getElementById('lineHeightValue');
         const paddingValue = document.getElementById('paddingValue');
@@ -209,8 +223,9 @@
             const fontSize = parseInt(fontSizeSlider.value);
             const lineHeight = parseFloat(lineHeightSlider.value);
             const padding = parseInt(paddingSlider.value);
+            const textAlign = textAlignSelect.value;
 
-            // 更新Canvas渲染器
+            // 更新Canvas渲染器主题
             renderer.setTheme({
                 baseFontSize: fontSize,
                 lineHeight: lineHeight,
@@ -218,10 +233,23 @@
                 paddingY: padding
             });
 
+            // 创建带有文本对齐样式的HTML内容
+            const styledHTML = `
+                <style>
+                    p { text-align: ${textAlign}; }
+                    h4 { text-align: ${textAlign}; }
+                </style>
+                ${testHTML}
+            `;
+
+            // 渲染内容
+            renderer.render(styledHTML);
+
             // 更新HTML参考
             htmlReference.style.fontSize = fontSize + 'px';
             htmlReference.style.lineHeight = lineHeight;
             htmlReference.style.padding = padding + 'px';
+            htmlReference.style.textAlign = textAlign;
         }
 
         // 事件监听
@@ -239,10 +267,14 @@
             updateValues();
             updateRender();
         });
+        
+        textAlignSelect.addEventListener('change', () => {
+            updateRender();
+        });
 
         // 初始化
         updateValues();
-        renderer.render(testHTML);
+        updateRender();
 
         // 调试信息
         console.log('渲染结果:', renderer.getRenderResult());

@@ -1,4 +1,5 @@
 import { getDefaultStyles, mergeStyles, normalizeStyleValue, isDefaultValue, isTextStyleProperty, getTextDefaults } from './DefaultStyles.js';
+import { normalizeEnglishText } from './EnglishTextNormalizer.js';
 
 export class HTMLParser {
   constructor(options = {}) {
@@ -8,7 +9,31 @@ export class HTMLParser {
       mergeComputedStyles: true,      // 是否合并计算后的样式
       optimizeOutput: true,           // 是否优化输出（移除默认值）
       debug: false,                   // 是否启用调试输出
+      normalizeText: true,            // 是否规范化英语文本
       ...options
+    };
+  }
+
+  /**
+   * 创建规范化的文本节点
+   * @param {string} text - 原始文本
+   * @param {Object} style - 文本样式
+   * @returns {Object} 文本节点对象
+   */
+  createTextNode(text, style = {}) {
+    if (!text) return null;
+    
+    const trimmedText = text.trim();
+    if (!trimmedText) return null;
+    
+    // 如果启用文本规范化，对英语文本进行规范化处理
+    const finalText = this.options.normalizeText ? 
+      normalizeEnglishText(trimmedText) : trimmedText;
+    
+    return {
+      type: 'text',
+      text: finalText,
+      style: style
     };
   }
 
@@ -28,6 +53,22 @@ export class HTMLParser {
    */
   parseElement(element) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) {
+      return null;
+    }
+
+    // 优先处理需要忽略包装的标签（如time标签）
+    if (this.isIgnoreWrapperTag(element)) {
+      const contentNodes = this.processIgnoreWrapperTag(element);
+      // 如果只有一个节点，直接返回；如果多个节点，用fragment包装
+      if (contentNodes.length === 1) {
+        return contentNodes[0];
+      } else if (contentNodes.length > 1) {
+        // 返回一个虚拟的fragment节点来包装多个内容
+        return {
+          type: 'fragment',
+          children: contentNodes
+        };
+      }
       return null;
     }
 
@@ -64,14 +105,9 @@ export class HTMLParser {
     // 处理文本节点和子元素
     for (let child = element.firstChild; child; child = child.nextSibling) {
       if (child.nodeType === Node.TEXT_NODE) {
-        const text = child.textContent.trim();
-        if (text) {
-          // 普通文本节点不保存样式，使用父元素的textStyle进行继承
-          elementData.children.push({
-            type: 'text',
-            text: text,
-            style: {}
-          });
+        const textNode = this.createTextNode(child.textContent);
+        if (textNode) {
+          elementData.children.push(textNode);
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         // 特殊处理 SVG 元素
@@ -99,6 +135,13 @@ export class HTMLParser {
             }
           }
         }
+        // 处理需要忽略包装但保留内容的标签（如time标签）
+        else if (this.isIgnoreWrapperTag(child)) {
+          const contentNodes = this.processIgnoreWrapperTag(child);
+          if (contentNodes && contentNodes.length > 0) {
+            elementData.children.push(...contentNodes);
+          }
+        }
         // 处理纯文本样式标签：直接合并样式到文本节点，不创建element节点
         else if (this.isPureTextStyleTag(child)) {
           const textNodes = this.processTextStyleTag(child, computedStyle);
@@ -108,7 +151,12 @@ export class HTMLParser {
         } else {
           const childElement = this.parseElement(child);
           if (childElement) {
-            elementData.children.push(childElement);
+            // 如果是fragment节点，展开其children
+            if (childElement.type === 'fragment') {
+              elementData.children.push(...childElement.children);
+            } else {
+              elementData.children.push(childElement);
+            }
           }
         }
       }
@@ -176,23 +224,14 @@ export class HTMLParser {
     // 显示和布局
     this.addDisplayStyles(styles, style);
 
-    // 盒子模型
+    // 盒子模型（仅图片需要 width/height）
     this.addBoxModelStyles(styles, style);
 
     // 字体相关
     this.addFontStyles(styles, style);
 
-    // 颜色和背景
+    // 颜色和背景（仅用于特殊标签）
     this.addColorStyles(styles, style);
-
-    // 边框
-    this.addBorderStyles(styles, style);
-
-    // 变换和效果
-    this.addTransformStyles(styles, style);
-
-    // 其他样式
-    this.addMiscStyles(styles, style);
 
     return styles;
   }
@@ -234,50 +273,9 @@ export class HTMLParser {
       return false;
     }
     
-    // 背景色：透明色不需要
+    // 背景色：透明色不需要（仅用于特殊标签）
     if (property === 'backgroundColor') {
       return value !== 'rgba(0, 0, 0, 0)' && value !== 'transparent';
-    }
-    
-    // 背景图：none 值不需要记录
-    if (property === 'backgroundImage') {
-      return value !== 'none';
-    }
-    
-    // 边框：无边框不需要
-    if (property.includes('border')) {
-      return this.hasNonZeroValue(value, property) && value !== 'none';
-    }
-    
-    // 变换：none 值不需要记录
-    if (property === 'transform') {
-      return value !== 'none' && value !== 'matrix(1, 0, 0, 1, 0, 0)';
-    }
-    
-    // 滤镜：none 值不需要记录
-    if (property === 'filter') {
-      return value !== 'none';
-    }
-    
-    // 阴影：none 值不需要记录
-    if (property === 'boxShadow') {
-      return value !== 'none' && !value.includes('0px 0px 0px') && 
-             !value.includes('rgba(0, 0, 0, 0)');
-    }
-    
-    // 浮动和清除：none 值不需要记录
-    if (property === 'float' || property === 'clear') {
-      return value !== 'none';
-    }
-    
-    // 定位：static 值不需要记录
-    if (property === 'position') {
-      return value !== 'static';
-    }
-    
-    // 可见性：visible 值不需要记录
-    if (property === 'visibility') {
-      return value !== 'visible';
     }
     
     return true;
@@ -287,35 +285,9 @@ export class HTMLParser {
    * 添加显示和布局相关样式（只保留对Canvas布局有影响的样式）
    */
   addDisplayStyles(styles, style) {
-    // display：Canvas布局需要知道所有显示类型
+    // display：Canvas布局需要知道显示类型来区分块级和内联元素
     if (style.display) {
-      // Canvas 布局需要区分 block、inline 和其他类型
       styles.display = style.display;
-    }
-    
-    // 定位相关：只有非 static 的才需要
-    if (style.position && style.position !== 'static') {
-      styles.position = style.position;
-    }
-    
-    // 浮动：只有设置了浮动的才需要
-    if (style.float && style.float !== 'none') {
-      styles.float = style.float;
-    }
-    
-    // 清除浮动：只有设置了的才需要  
-    if (style.clear && style.clear !== 'none') {
-      styles.clear = style.clear;
-    }
-    
-    // 可见性：只有隐藏的才需要记录
-    if (style.visibility && style.visibility !== 'visible') {
-      styles.visibility = style.visibility;
-    }
-    
-    // z-index：只有设置了具体数值的才需要
-    if (style.zIndex && style.zIndex !== 'auto' && !isNaN(parseInt(style.zIndex))) {
-      styles.zIndex = style.zIndex;
     }
   }
 
@@ -323,26 +295,12 @@ export class HTMLParser {
    * 添加盒子模型相关样式（只保留有具体数值的）
    */
   addBoxModelStyles(styles, style) {
-    // 宽度和高度：只有设置了具体值的才需要
+    // 宽度和高度：图片元素需要（只有设置了具体值的才需要）
     if (style.width && style.width !== 'auto' && this.hasNonZeroValue(style.width, 'width')) {
       styles.width = style.width;
     }
     if (style.height && style.height !== 'auto' && this.hasNonZeroValue(style.height, 'height')) {
       styles.height = style.height;
-    }
-    
-    // 最小/最大尺寸：只有设置了约束的才需要
-    if (style.minWidth && style.minWidth !== '0px' && this.hasNonZeroValue(style.minWidth, 'minWidth')) {
-      styles.minWidth = style.minWidth;
-    }
-    if (style.minHeight && style.minHeight !== '0px' && this.hasNonZeroValue(style.minHeight, 'minHeight')) {
-      styles.minHeight = style.minHeight;
-    }
-    if (style.maxWidth && style.maxWidth !== 'none' && !style.maxWidth.includes('infinity')) {
-      styles.maxWidth = style.maxWidth;
-    }
-    if (style.maxHeight && style.maxHeight !== 'none' && !style.maxHeight.includes('infinity')) {
-      styles.maxHeight = style.maxHeight;
     }
 
     // 内边距：只有非零值才需要
@@ -350,15 +308,6 @@ export class HTMLParser {
 
     // 外边距：只有非零值才需要
     this.addSpacingStyles(styles, style, 'margin');
-
-    // 定位：只有在定位元素中设置了具体值的才需要
-    if (style.position && style.position !== 'static') {
-      ['top', 'right', 'bottom', 'left'].forEach(prop => {
-        if (style[prop] && style[prop] !== 'auto' && this.hasNonZeroValue(style[prop], prop)) {
-          styles[prop] = style[prop];
-        }
-      });
-    }
   }
 
   /**
@@ -524,38 +473,17 @@ export class HTMLParser {
       'lineHeight': ['normal'],
       'letterSpacing': ['normal'],
       'wordSpacing': ['normal'],
-      'textDecoration': ['none'],
-      'textTransform': ['none'],
-      'textShadow': ['none'],
       'fontSize': ['16px', '1em', '100%'],
       'color': ['rgb(0, 0, 0)', 'black', '#000', '#000000'],
       
-      // 背景样式
+      // 尺寸样式（图片需要）
+      'width': ['auto'],
+      'height': ['auto'],
+      
+      // 背景样式（仅用于特殊标签）
       'backgroundColor': ['rgba(0, 0, 0, 0)', 'transparent'],
-      'backgroundImage': ['none'],
-      'backgroundSize': ['auto auto'],
-      'backgroundPosition': ['0% 0%'],
-      'backgroundRepeat': ['repeat'],
       
-      // 边框样式（分解属性）
-      'borderTopWidth': ['0px', '0'],
-      'borderRightWidth': ['0px', '0'],
-      'borderBottomWidth': ['0px', '0'],
-      'borderLeftWidth': ['0px', '0'],
-      'borderTopStyle': ['none'],
-      'borderRightStyle': ['none'],
-      'borderBottomStyle': ['none'],
-      'borderLeftStyle': ['none'],
-      'borderTopColor': ['rgb(0, 0, 0)', 'currentColor', 'transparent'],
-      'borderRightColor': ['rgb(0, 0, 0)', 'currentColor', 'transparent'],
-      'borderBottomColor': ['rgb(0, 0, 0)', 'currentColor', 'transparent'],
-      'borderLeftColor': ['rgb(0, 0, 0)', 'currentColor', 'transparent'],
-      'borderTopLeftRadius': ['0px', '0'],
-      'borderTopRightRadius': ['0px', '0'],
-      'borderBottomRightRadius': ['0px', '0'],
-      'borderBottomLeftRadius': ['0px', '0'],
-      
-      // 间距样式（分解属性）
+      // 间距样式
       'marginTop': ['0px', '0'],
       'marginRight': ['0px', '0'],
       'marginBottom': ['0px', '0'],
@@ -563,48 +491,14 @@ export class HTMLParser {
       'paddingTop': ['0px', '0'],
       'paddingRight': ['0px', '0'],
       'paddingBottom': ['0px', '0'],
-      'paddingLeft': ['0px', '0'],
-      
-      // 布局样式（display 除外，因为对Canvas布局很重要）
-      'transform': ['none', 'matrix(1, 0, 0, 1, 0, 0)'],
-      'filter': ['none'],
-      'boxShadow': ['none'],
-      'float': ['none'],
-      'clear': ['none'],
-      'position': ['static'],
-      'visibility': ['visible'],
-      'whiteSpace': ['normal'],
-      'wordBreak': ['normal'],
-      'overflowWrap': ['normal'],
-      'overflow': ['visible'],
-      'overflowX': ['visible'],
-      'overflowY': ['visible']
+      'paddingLeft': ['0px', '0']
     };
     
     if (defaultValues[property] && defaultValues[property].includes(value)) {
       return false;
     }
     
-    // 处理边框相关的无效果值（现在都是具体属性）
-    if (property && property.includes('border')) {
-      // 边框宽度为 0 的无效
-      if (property.includes('Width') && (value === '0px' || value === '0' || value === '0em' || value === '0rem')) {
-        return false;
-      }
-      // 边框样式为 none 的无效
-      if (property.includes('Style') && value === 'none') {
-        return false;
-      }
-      // 边框圆角为 0 的无效
-      if (property.includes('Radius') && (value === '0px' || value === '0' || value === '0em' || value === '0rem')) {
-        return false;
-      }
-      // 边框颜色：如果是默认值或透明则无效
-      if (property.includes('Color') && 
-          (value === 'currentColor' || value === 'transparent' || value === 'rgba(0, 0, 0, 0)')) {
-        return false;
-      }
-    }
+
 
     // 处理字体相关（只支持 camelCase）
     if (property === 'fontFamily') {
@@ -702,29 +596,9 @@ export class HTMLParser {
       return value !== 'rgb(0, 0, 0)' && value !== 'black' && value !== '#000' && value !== '#000000';
     }
     
-    // 文本装饰：正确解析简写属性值
-    if (property === 'textDecoration') {
-      // 处理 CSS text-decoration 简写属性，格式：<line> <style> <color>
-      // 如果 line 部分是 'none'，则整个装饰无效
-      if (!value || value === 'none') {
-        return false;
-      }
-      
-      // 检查简写属性中的 text-decoration-line 部分
-      const linePart = value.split(/\s+/)[0];
-      return linePart !== 'none';
-    }
+
     
-    // 文本转换：none 值不需要记录
-    if (property === 'textTransform') {
-      return value !== 'none';
-    }
-    
-    // 文本阴影：none 值不需要记录
-    if (property === 'textShadow') {
-      return value !== 'none' && !value.includes('0px 0px 0px') && 
-             !value.includes('rgba(0, 0, 0, 0)');
-    }
+
     
     // 字体样式：normal 值不需要记录
     if (property === 'fontStyle') {
@@ -803,23 +677,9 @@ export class HTMLParser {
     if (style.textAlign && style.textAlign !== 'start' && style.textAlign !== 'left') {
       styles.textAlign = style.textAlign;
     }
+
     
-    // 文本装饰：正确解析简写属性，只有设置了装饰的才需要
-    if (style.textDecoration) {
-      // 处理 CSS text-decoration 简写属性，格式：<line> <style> <color>
-      if (style.textDecoration !== 'none') {
-        // 检查简写属性中的 text-decoration-line 部分
-        const linePart = style.textDecoration.split(/\s+/)[0];
-        if (linePart !== 'none') {
-          styles.textDecoration = style.textDecoration;
-        }
-      }
-    }
-    
-    // 文本转换：只有设置了转换的才需要
-    if (style.textTransform && style.textTransform !== 'none') {
-      styles.textTransform = style.textTransform;
-    }
+
   }
 
   /**
@@ -887,7 +747,7 @@ export class HTMLParser {
   }
 
   /**
-   * 添加颜色和背景相关样式（只保留对渲染有影响的，展开简写属性）
+   * 添加颜色和背景相关样式（仅保留 backgroundColor 用于特殊标签）
    */
   addColorStyles(styles, style) {
     // 文本颜色：只有非默认黑色才需要记录
@@ -895,84 +755,10 @@ export class HTMLParser {
       styles.color = style.color;
     }
     
-    // 先处理 background 简写属性，展开到具体属性
-    if (style.background && style.background !== 'none' && style.background !== 'transparent') {
-      const backgroundValues = this.parseBackgroundShorthand(style.background);
-      if (backgroundValues) {
-        // 设置解析出的背景属性
-        if (backgroundValues.backgroundColor) styles.backgroundColor = backgroundValues.backgroundColor;
-        if (backgroundValues.backgroundImage) styles.backgroundImage = backgroundValues.backgroundImage;
-        if (backgroundValues.backgroundPosition) styles.backgroundPosition = backgroundValues.backgroundPosition;
-        if (backgroundValues.backgroundSize) styles.backgroundSize = backgroundValues.backgroundSize;
-        if (backgroundValues.backgroundRepeat) styles.backgroundRepeat = backgroundValues.backgroundRepeat;
-      }
-    }
-    
-    // 背景色：只有非透明的才需要（会覆盖简写值）
-    if (style.backgroundColor && 
-        style.backgroundColor !== 'rgba(0, 0, 0, 0)' && 
-        style.backgroundColor !== 'transparent') {
+    // 背景色：仅用于特殊标签（如 ins）
+    if (style.backgroundColor && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent') {
       styles.backgroundColor = style.backgroundColor;
     }
-    
-    // 背景图：只有设置了图片的才需要
-    if (style.backgroundImage && style.backgroundImage !== 'none') {
-      styles.backgroundImage = style.backgroundImage;
-      
-      // 如果有背景图，相关属性才有意义
-      if (style.backgroundSize && style.backgroundSize !== 'auto auto') {
-        styles.backgroundSize = style.backgroundSize;
-      }
-      if (style.backgroundPosition && style.backgroundPosition !== '0% 0%') {
-        styles.backgroundPosition = style.backgroundPosition;
-      }
-      if (style.backgroundRepeat && style.backgroundRepeat !== 'repeat') {
-        styles.backgroundRepeat = style.backgroundRepeat;
-      }
-    }
-  }
-
-  /**
-   * 解析背景简写属性
-   * @param {string} backgroundValue - 背景简写值，如 "red url(bg.jpg) no-repeat center"
-   * @returns {Object|null} 解析后的背景属性
-   */
-  parseBackgroundShorthand(backgroundValue) {
-    if (!backgroundValue || backgroundValue === 'none' || backgroundValue === 'transparent') {
-      return null;
-    }
-    
-    const result = {};
-    
-    // 简化的背景解析逻辑
-    // 查找 url() 函数（背景图片）
-    const urlMatch = backgroundValue.match(/url\([^)]+\)/);
-    if (urlMatch) {
-      result.backgroundImage = urlMatch[0];
-    }
-    
-    // 查找颜色值（rgb, rgba, hex, 命名颜色等）
-    const colorMatch = backgroundValue.match(/(rgba?\([^)]+\)|#[0-9a-fA-F]{3,6}|(?:red|blue|green|yellow|white|black|gray|grey|orange|purple|pink|brown|cyan|magenta|lime|navy|olive|maroon|teal|silver|aqua|fuchsia)\b)/i);
-    if (colorMatch && !urlMatch) {
-      // 只有在没有背景图的情况下才设置背景色
-      result.backgroundColor = colorMatch[0];
-    }
-    
-    // 查找重复方式
-    const repeatMatch = backgroundValue.match(/\b(repeat|no-repeat|repeat-x|repeat-y)\b/);
-    if (repeatMatch) {
-      result.backgroundRepeat = repeatMatch[0];
-    }
-    
-    // 查找位置信息
-    const positionMatch = backgroundValue.match(/\b(left|right|center|top|bottom|\d+%|\d+px)\b/g);
-    if (positionMatch && positionMatch.length >= 2) {
-      result.backgroundPosition = positionMatch.slice(0, 2).join(' ');
-    } else if (positionMatch && positionMatch.length === 1) {
-      result.backgroundPosition = positionMatch[0];
-    }
-    
-    return Object.keys(result).length > 0 ? result : null;
   }
 
   /**
@@ -1016,219 +802,6 @@ export class HTMLParser {
   }
 
   /**
-   * 添加边框相关样式（展开为具体方向属性）
-   */
-  addBorderStyles(styles, style) {
-    const borderProperties = ['Top', 'Right', 'Bottom', 'Left'];
-    
-    // 先处理简写的 border 属性，展开到各个方向
-    if (style.border && style.border !== 'none' && style.border !== '0' && style.border !== '0px' && this.hasNonZeroValue(style.border, 'border')) {
-      const borderValue = this.parseBorderShorthand(style.border);
-      if (borderValue && this.hasNonZeroValue(borderValue.width, 'borderWidth') && borderValue.style !== 'none') {
-        // 将简写边框应用到所有方向（只有当边框有效时）
-        borderProperties.forEach(side => {
-          styles[`border${side}Width`] = borderValue.width;
-          styles[`border${side}Style`] = borderValue.style;
-          // 只有当颜色是有效颜色时才设置
-          if (borderValue.color && this.isValidColor(borderValue.color) && borderValue.color !== 'currentColor') {
-            styles[`border${side}Color`] = borderValue.color;
-          }
-        });
-      }
-    }
-    
-    // 处理各个方向的具体边框（会覆盖简写值）
-    borderProperties.forEach(side => {
-      const width = style[`border${side}Width`];
-      const style_prop = style[`border${side}Style`];
-      const color = style[`border${side}Color`];
-      
-      // 只有宽度大于0且样式不为none才算有边框
-      if (this.hasNonZeroValue(width, `border${side}Width`) && style_prop && style_prop !== 'none') {
-        styles[`border${side}Width`] = width;
-        styles[`border${side}Style`] = style_prop;
-        // 只有当颜色是有效颜色时才设置
-        if (color && this.isValidColor(color) && color !== 'currentColor') {
-          styles[`border${side}Color`] = color;
-        }
-      }
-    });
-
-    // 边框圆角：展开为具体角度属性
-    this.addBorderRadiusStyles(styles, style);
-  }
-
-  /**
-   * 解析边框简写属性
-   * @param {string} borderValue - 边框简写值，如 "1px solid red"
-   * @returns {Object|null} 解析后的边框属性
-   */
-  parseBorderShorthand(borderValue) {
-    if (!borderValue || borderValue === 'none' || borderValue === '0' || borderValue === '0px') {
-      return null;
-    }
-    
-    // 解析常见的边框格式：width style color
-    const parts = borderValue.trim().split(/\s+/);
-    
-    let width = '0px';
-    let style = 'none';  
-    let color = 'currentColor';
-    let foundWidth = false;
-    let foundStyle = false;
-    
-    // 改进的解析逻辑
-    for (const part of parts) {
-      // 检查是否为宽度值（包含数字和单位）
-      if (!foundWidth && part.match(/^\d+(\.\d+)?(px|em|rem|%|pt)$/)) {
-        width = part;
-        foundWidth = true;
-      }
-      // 检查是否为样式值
-      else if (!foundStyle && ['hidden', 'dotted', 'dashed', 'solid', 'double', 'groove', 'ridge', 'inset', 'outset'].includes(part)) {
-        style = part;
-        foundStyle = true;
-      }
-      // 如果不是宽度也不是样式，且看起来像颜色，当作颜色处理
-      else if (!part.match(/^\d+(\.\d+)?(px|em|rem|%|pt)$/) && 
-               !['hidden', 'dotted', 'dashed', 'solid', 'double', 'groove', 'ridge', 'inset', 'outset'].includes(part) &&
-               this.isValidColor(part)) {
-        color = part;
-      }
-    }
-    
-    // 如果边框宽度为 0，返回 null（不设置边框）
-    if (!foundWidth || width === '0' || width === '0px') {
-      return null;
-    }
-    
-    // 如果没有明确的样式，默认为 solid
-    if (!foundStyle || style === 'none') {
-      style = 'solid';
-    }
-    
-    return { width, style, color };
-  }
-
-  /**
-   * 添加边框圆角样式（展开为具体角度属性）
-   * @param {Object} styles - 样式对象
-   * @param {CSSStyleDeclaration} style - 计算样式
-   */
-  addBorderRadiusStyles(styles, style) {
-    // 处理简写的 borderRadius
-    if (style.borderRadius && this.hasNonZeroValue(style.borderRadius, 'borderRadius')) {
-      const radiusValue = style.borderRadius;
-      
-      // 如果是单一值，应用到所有角
-      if (!radiusValue.includes(' ')) {
-        styles.borderTopLeftRadius = radiusValue;
-        styles.borderTopRightRadius = radiusValue;
-        styles.borderBottomRightRadius = radiusValue;
-        styles.borderBottomLeftRadius = radiusValue;
-      } else {
-        // 解析多值的圆角设置
-        const values = radiusValue.trim().split(/\s+/);
-        if (values.length === 2) {
-          // 两个值：top-left/bottom-right, top-right/bottom-left
-          styles.borderTopLeftRadius = values[0];
-          styles.borderTopRightRadius = values[1];
-          styles.borderBottomRightRadius = values[0];
-          styles.borderBottomLeftRadius = values[1];
-        } else if (values.length === 4) {
-          // 四个值：top-left, top-right, bottom-right, bottom-left
-          styles.borderTopLeftRadius = values[0];
-          styles.borderTopRightRadius = values[1];
-          styles.borderBottomRightRadius = values[2];
-          styles.borderBottomLeftRadius = values[3];
-        }
-      }
-    }
-    
-    // 处理各个具体角度的圆角（会覆盖简写值）
-    const corners = ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'];
-    corners.forEach(corner => {
-      const radiusProperty = `border${corner}Radius`;
-      if (style[radiusProperty] && this.hasNonZeroValue(style[radiusProperty], radiusProperty)) {
-        styles[radiusProperty] = style[radiusProperty];
-      }
-    });
-  }
-
-  /**
-   * 添加变换和效果相关样式（只保留有实际效果的）
-   */
-  addTransformStyles(styles, style) {
-    // 变换：只有设置了实际变换的才需要
-    if (style.transform && style.transform !== 'none' && style.transform !== 'matrix(1, 0, 0, 1, 0, 0)') {
-      styles.transform = style.transform;
-      
-      // 如果有变换，变换原点才有意义
-      if (style.transformOrigin && style.transformOrigin !== '50% 50% 0px') {
-        styles.transformOrigin = style.transformOrigin;
-      }
-    }
-    
-    // 透明度：只有非完全不透明的才需要
-    if (style.opacity && parseFloat(style.opacity) !== 1) {
-      styles.opacity = style.opacity;
-    }
-    
-    // 滤镜：只有设置了滤镜的才需要
-    if (style.filter && style.filter !== 'none') {
-      styles.filter = style.filter;
-    }
-  }
-
-  /**
-   * 添加其他样式（只保留对Canvas渲染有影响的）
-   */
-  addMiscStyles(styles, style) {
-    // 溢出处理：只有设置了裁剪的才需要（影响Canvas渲染）
-    if (style.overflow && style.overflow !== 'visible' && 
-        (style.overflow === 'hidden' || style.overflow === 'scroll' || style.overflow === 'auto')) {
-      styles.overflow = style.overflow;
-    }
-    if (style.overflowX && style.overflowX !== 'visible' && 
-        (style.overflowX === 'hidden' || style.overflowX === 'scroll' || style.overflowX === 'auto')) {
-      styles.overflowX = style.overflowX;
-    }
-    if (style.overflowY && style.overflowY !== 'visible' && 
-        (style.overflowY === 'hidden' || style.overflowY === 'scroll' || style.overflowY === 'auto')) {
-      styles.overflowY = style.overflowY;
-    }
-
-    // 盒子尺寸模型：只有非默认的才需要（影响尺寸计算）
-    if (style.boxSizing && style.boxSizing !== 'content-box') {
-      styles.boxSizing = style.boxSizing;
-    }
-
-    // 阴影：只有设置了阴影的才需要（影响视觉效果）
-    if (style.boxShadow && style.boxShadow !== 'none' && 
-        !style.boxShadow.includes('0px 0px 0px') && 
-        !style.boxShadow.includes('rgba(0, 0, 0, 0)')) {
-      styles.boxShadow = style.boxShadow;
-    }
-    
-    if (style.textShadow && style.textShadow !== 'none' && 
-        !style.textShadow.includes('0px 0px 0px') && 
-        !style.textShadow.includes('rgba(0, 0, 0, 0)')) {
-      styles.textShadow = style.textShadow;
-    }
-
-    // 文本行为：这些会影响文本渲染，需要保留（只有非默认值）
-    if (style.overflowWrap && style.overflowWrap !== 'normal') {
-      styles.overflowWrap = style.overflowWrap;
-    }
-    if (style.wordBreak && style.wordBreak !== 'normal') {
-      styles.wordBreak = style.wordBreak;
-    }
-    if (style.whiteSpace && style.whiteSpace !== 'normal') {
-      styles.whiteSpace = style.whiteSpace;
-    }
-  }
-
-  /**
    * 优化样式输出，移除默认值和重复值
    * @param {Object} styles 
    * @param {string} tagName 
@@ -1266,6 +839,15 @@ export class HTMLParser {
     
     return optimized;
   }
+
+  /**
+   * 提取元素的所有样式（按优先级合并多个来源）
+   * @param {Element} element - DOM元素
+   * @param {CSSStyleDeclaration} computedStyle - 计算样式
+   * @returns {Object} 合并后的样式对象
+   */
+
+
 
 
   /**
@@ -1626,6 +1208,47 @@ export class HTMLParser {
   }
 
   /**
+   * 判断是否为需要忽略包装但保留内容的标签
+   */
+  isIgnoreWrapperTag(element) {
+    const tagName = element.tagName.toLowerCase();
+    const ignoreWrapperTags = ['time', 'span'];  // time标签对阅读器无用，span通常也只是语义包装
+    return ignoreWrapperTags.includes(tagName);
+  }
+
+  /**
+   * 处理忽略包装但保留内容的标签（如time、span等）
+   * @param {Element} element - 需要忽略包装的元素
+   * @returns {Array} 内容节点数组
+   */
+  processIgnoreWrapperTag(element) {
+    const contentNodes = [];
+    
+    // 遍历子节点，直接提取内容，不保留包装元素
+    for (let child = element.firstChild; child; child = child.nextSibling) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const textNode = this.createTextNode(child.textContent);
+        if (textNode) {
+          contentNodes.push(textNode);
+        }
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        // 递归处理子元素
+        const childElement = this.parseElement(child);
+        if (childElement) {
+          // 如果是fragment节点，展开其children
+          if (childElement.type === 'fragment') {
+            contentNodes.push(...childElement.children);
+          } else {
+            contentNodes.push(childElement);
+          }
+        }
+      }
+    }
+    
+    return contentNodes;
+  }
+
+  /**
    * 处理纯文本样式标签，将样式直接合并到文本节点
    * @param {Element} element - 文本样式标签元素
    * @param {CSSStyleDeclaration} parentStyle - 父元素的计算样式
@@ -1647,13 +1270,9 @@ export class HTMLParser {
     // 遍历子节点
     for (let child = element.firstChild; child; child = child.nextSibling) {
       if (child.nodeType === Node.TEXT_NODE) {
-        const text = child.textContent.trim();
-        if (text) {
-          textNodes.push({
-            type: 'text',
-            text: text,
-            style: elementTextStyles  // 只保存元素特有的样式
-          });
+        const textNode = this.createTextNode(child.textContent, elementTextStyles);
+        if (textNode) {
+          textNodes.push(textNode);
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         // 如果是嵌套的纯文本样式标签，递归处理
@@ -1661,6 +1280,13 @@ export class HTMLParser {
           const nestedTextNodes = this.processTextStyleTag(child, elementStyle);
           if (nestedTextNodes && nestedTextNodes.length > 0) {
             textNodes.push(...nestedTextNodes);
+          }
+        }
+        // 处理需要忽略包装但保留内容的标签
+        else if (this.isIgnoreWrapperTag(child)) {
+          const contentNodes = this.processIgnoreWrapperTag(child);
+          if (contentNodes && contentNodes.length > 0) {
+            textNodes.push(...contentNodes);
           }
         }
         // 其他元素类型的子节点可以忽略或特殊处理
@@ -1789,20 +1415,13 @@ export class HTMLParser {
    * 处理 br 元素，转换为换行符
    */
   processBrElement() {
-    return {
-      type: 'text',
-      text: '\n',
-      style: {}
-    };
+    return this.createTextNode('\n');
   }
 
   /**
    * 处理上标/下标元素
    */
   processSupSubElement(element, tagName, computedStyle) {
-    const textContent = element.textContent.trim();
-    if (!textContent) return null;
-
     const textStyles = this.extractTextStyles(computedStyle, tagName);
     
     // 添加上标/下标特有样式
@@ -1814,68 +1433,43 @@ export class HTMLParser {
       textStyles.fontSize = '0.75em';
     }
 
-    return {
-      type: 'text',
-      text: textContent,
-      style: textStyles
-    };
+    return this.createTextNode(element.textContent, textStyles);
   }
 
   /**
    * 处理删除/插入元素
    */
   processDelInsElement(element, tagName, computedStyle) {
-    const textContent = element.textContent.trim();
-    if (!textContent) return null;
-
     const textStyles = this.extractTextStyles(computedStyle, tagName);
     
     // 添加删除/插入特有样式
     if (tagName === 'del') {
-      textStyles.textDecoration = 'line-through';
+      // 删除线样式已移除，可以考虑用其他方式表示（如颜色变化）
+      textStyles.color = 'rgba(128, 128, 128, 0.7)'; // 灰色表示删除内容
     } else if (tagName === 'ins') {
-      textStyles.textDecoration = 'underline';
-      textStyles.backgroundColor = 'rgba(255, 255, 0, 0.3)'; // 浅黄色背景
+      textStyles.backgroundColor = 'rgba(255, 255, 0, 0.3)'; // 浅黄色背景表示插入内容
     }
 
-    return {
-      type: 'text',
-      text: textContent,
-      style: textStyles
-    };
+    return this.createTextNode(element.textContent, textStyles);
   }
 
   /**
    * 处理标记元素
    */
   processMarkElement(element, computedStyle) {
-    const textContent = element.textContent.trim();
-    if (!textContent) return null;
-
     const textStyles = this.extractTextStyles(computedStyle, 'mark');
     textStyles.backgroundColor = 'rgba(255, 255, 0, 0.5)'; // 高亮背景
 
-    return {
-      type: 'text',
-      text: textContent,
-      style: textStyles
-    };
+    return this.createTextNode(element.textContent, textStyles);
   }
 
   /**
    * 处理小字号元素
    */
   processSmallElement(element, computedStyle) {
-    const textContent = element.textContent.trim();
-    if (!textContent) return null;
-
     const textStyles = this.extractTextStyles(computedStyle, 'small');
 
-    return {
-      type: 'text',
-      text: textContent,
-      style: textStyles
-    };
+    return this.createTextNode(element.textContent, textStyles);
   }
 
   /**
@@ -1913,9 +1507,13 @@ export class HTMLParser {
     const href = element.getAttribute('href') || '';
     const textStyles = this.extractTextStyles(computedStyle, 'a');
 
+    // 对链接文本进行规范化
+    const normalizedText = this.options.normalizeText ? 
+      normalizeEnglishText(textContent) : textContent;
+
     return {
       type: 'link',
-      text: textContent,
+      text: normalizedText,
       href: href,
       style: textStyles
     };
@@ -1961,12 +1559,9 @@ export class HTMLParser {
 
     // 获取父列表的样式，用于前缀文本
     const parentStyle = window.getComputedStyle(parent);
+    const textStyles = this.extractTextStyles(parentStyle, parentTag);
     
-    return {
-      type: 'text',
-      text: prefixText,
-      style: this.extractTextStyles(parentStyle, parentTag)
-    };
+    return this.createTextNode(prefixText, textStyles);
   }
 
   /**
@@ -1989,11 +1584,8 @@ export class HTMLParser {
     }
 
     // 返回包含样式的文本节点
-    return {
-      type: 'text',
-      text: textContent,
-      style: this.extractTextStyles(pseudoStyle, element.tagName.toLowerCase())
-    };
+    const textStyles = this.extractTextStyles(pseudoStyle, element.tagName.toLowerCase());
+    return this.createTextNode(textContent, textStyles);
   }
 
   /**

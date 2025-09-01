@@ -510,7 +510,9 @@ class LineStylist {
       
       // 计算文本对齐的偏移量（基于已有位置进行调整）
       let alignmentOffsetX = 0;
-      if (textAlign === 'center' || textAlign === 'right') {
+      let justifySpaceDistribution = new Map(); // 用于存储每个空格应该增加的宽度
+      
+      if (textAlign === 'center' || textAlign === 'right' || textAlign === 'justify') {
         // 重新计算行的实际宽度
         let lineWidth = 0;
         for (let i = 0; i < line.segments.length; i++) {
@@ -531,8 +533,33 @@ class LineStylist {
           alignmentOffsetX = remainingSpace / 2;
         } else if (textAlign === 'right') {
           alignmentOffsetX = remainingSpace;
+        } else if (textAlign === 'justify') {
+          // 两端对齐：将剩余空间均分到空格中
+          // 只对非最后一行进行两端对齐，最后一行保持左对齐
+          const isLastLine = lineIndex === lines.length - 1;
+          if (!isLastLine && remainingSpace > 0) {
+            // 计算该行中空格的数量
+            const spaceSegments = [];
+            for (let i = 0; i < line.segments.length; i++) {
+              const segment = line.segments[i];
+              if (segment.type === 'space') {
+                spaceSegments.push(i);
+              }
+            }
+            
+            if (spaceSegments.length > 0) {
+              // 将剩余空间均分到每个空格
+              const additionalSpacePerGap = remainingSpace / spaceSegments.length;
+              spaceSegments.forEach(segmentIndex => {
+                justifySpaceDistribution.set(segmentIndex, additionalSpacePerGap);
+              });
+            }
+          }
         }
       }
+      
+      // 计算两端对齐时的累积偏移
+      let justifyOffsetX = 0;
       
       for (let segmentIndex = 0; segmentIndex < line.segments.length; segmentIndex++) {
         const segment = line.segments[segmentIndex];
@@ -551,11 +578,23 @@ class LineStylist {
         this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
         const segmentWidth = this.measureCtx.measureText(segment.content).width;
 
-        // 使用 LineBreaker 计算的位置 + 对齐偏移
+        // 计算最终的X位置（包含对齐偏移和两端对齐偏移）
+        let finalX = position.x + alignmentOffsetX + justifyOffsetX;
+        
+        // 如果是空格且需要两端对齐，则增加额外的宽度
+        let finalWidth = segmentWidth;
+        if (segment.type === 'space' && justifySpaceDistribution.has(segmentIndex)) {
+          const additionalSpace = justifySpaceDistribution.get(segmentIndex);
+          finalWidth += additionalSpace;
+          // 这个空格之后的所有段都需要增加相应的偏移
+          justifyOffsetX += additionalSpace;
+        }
+
+        // 使用 LineBreaker 计算的位置 + 对齐偏移 + 两端对齐偏移
         const styledWord = {
-          x: position.x + alignmentOffsetX, // 基于正确位置进行对齐调整
+          x: finalX,
           y: currentY,
-          width: segmentWidth,
+          width: finalWidth,
           height: fontSize,
           line: currentLineNumber,
           text: segment.content,
@@ -659,7 +698,7 @@ class LineStylist {
         return startX + availableWidth - lineWidth;
       
       case 'justify':
-        // 两端对齐暂时使用左对齐，后续可扩展
+        // 两端对齐：起始位置是左对齐，具体的空间分布在 applyStylesToLines 中处理
         return startX;
       
       case 'left':
@@ -1264,6 +1303,11 @@ export class VirtualCanvasRenderer {
   renderCanvasText(words, ctx, offsetY) {
     let currentFont = '';
     words.forEach((word) => {
+      // 跳过空格的渲染 - 空格不需要在 Canvas 上绘制，只需要保留位置信息用于字符索引计算
+      if (word.type === 'space') {
+        return;
+      }
+      
       const { style } = word;
 
       // 使用兼容的样式访问方式
@@ -1290,65 +1334,13 @@ export class VirtualCanvasRenderer {
 
       ctx.fillStyle = color;
 
-      // 处理文本装饰（下划线、删除线等）
-      const textDecoration = this.getStyleProperty(style, 'textDecoration');
-      if (textDecoration && textDecoration !== 'none') {
-        // 正确解析 CSS text-decoration 简写属性，格式：<line> <style> <color>
-        const linePart = textDecoration.split(/\s+/)[0];
-        if (linePart !== 'none') {
-          this.applyTextDecoration(ctx, word, textDecoration, offsetY);
-        }
-      }
-
       // 计算在Canvas内的相对位置
       const canvasY = word.y - offsetY;
       ctx.fillText(word.text, word.x, canvasY);
     });
   }
 
-  /**
-   * 应用文本装饰效果
-   * @param {CanvasRenderingContext2D} ctx - Canvas上下文
-   * @param {Object} word - 单词对象
-   * @param {string} decoration - 装饰类型
-   * @param {number} offsetY - Y轴偏移量
-   */
-  applyTextDecoration(ctx, word, decoration, offsetY) {
-    const canvasY = word.y - offsetY;
 
-    if (decoration.includes('underline')) {
-      // 绘制下划线
-      const underlineY = canvasY + 2; // 稍微偏移基线下方
-      ctx.strokeStyle = ctx.fillStyle; // 使用文本颜色
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(word.x, underlineY);
-      ctx.lineTo(word.x + word.width, underlineY);
-      ctx.stroke();
-    }
-
-    if (decoration.includes('line-through')) {
-      // 绘制删除线
-      const lineY = canvasY - word.height * 0.3; // 在文本中间位置
-      ctx.strokeStyle = ctx.fillStyle; // 使用文本颜色
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(word.x, lineY);
-      ctx.lineTo(word.x + word.width, lineY);
-      ctx.stroke();
-    }
-
-    if (decoration.includes('overline')) {
-      // 绘制上划线
-      const overlineY = canvasY - word.height * 0.8; // 在文本上方
-      ctx.strokeStyle = ctx.fillStyle; // 使用文本颜色
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(word.x, overlineY);
-      ctx.lineTo(word.x + word.width, overlineY);
-      ctx.stroke();
-    }
-  }
 
   /**
    * 渲染Canvas中的元素
@@ -1685,11 +1677,7 @@ export class VirtualCanvasRenderer {
       'lineHeight', 'letterSpacing', 'wordSpacing',
       
       // 文本相关  
-      'color', 'textAlign', 'textIndent', 'textTransform', 'textDecoration',
-      'textShadow', 'whiteSpace', 'wordBreak', 'overflowWrap',
-      
-      // 其他可继承样式
-      'direction', 'writingMode', 'visibility'
+      'color', 'textAlign', 'textIndent'
     ];
   }
 
@@ -1753,23 +1741,11 @@ export class VirtualCanvasRenderer {
       const value = this.getStyleProperty(style, prop);
       if (value !== undefined) {
         // 特殊处理：跳过默认值，避免写入不必要的样式
-        if (prop === 'textDecoration') {
-          // 正确处理 CSS text-decoration 简写属性
-          if (!value || value === 'none') {
-            return; // 跳过空值或 'none' 值
-          }
-          // 检查简写属性中的 text-decoration-line 部分
-          const linePart = value.split(/\s+/)[0];
-          if (linePart === 'none') {
-            return; // 跳过 line 为 'none' 的值，如 "none solid rgb(0, 0, 0)"
-          }
-        }
+
         if (prop === 'textAlign' && (value === 'start' || value === 'left')) {
           return; // 跳过默认的对齐方式
         }
-        if (prop === 'textTransform' && value === 'none') {
-          return; // 跳过默认的 'none' 值
-        }
+
         
         normalized[prop] = value;
       }
@@ -2209,43 +2185,26 @@ export class VirtualCanvasRenderer {
   }
 
   /**
-   * 规范化空白符（类似 CSS white-space: normal）
+   * 规范化空白符（统一折叠处理）
    * @param {string} text - 原始文本
-   * @param {Object} style - 样式对象
    * @returns {string} 规范化后的文本
    */
-  normalizeWhitespace(text, style = {}) {
-    const whiteSpace = this.getStyleProperty(style, 'whiteSpace') || 'normal';
-    
-    switch (whiteSpace) {
-      case 'pre':
-      case 'pre-wrap':
-        // 保持所有空白符
-        return text;
-        
-      case 'pre-line':
-        // 折叠空格和制表符，保留换行符
-        return text.replace(/[ \t]+/g, ' ').replace(/^ +| +$/gm, '');
-        
-      case 'nowrap':
-      case 'normal':
-      default:
-        // 折叠所有连续空白符为单个空格，移除首尾空白
-        return text
-          .replace(/\s+/g, ' ')  // 折叠所有连续空白符为单个空格
-          .trim();               // 移除首尾空白
-    }
+  normalizeWhitespace(text) {
+    // 统一的空白符处理：折叠所有连续空白符为单个空格，移除首尾空白
+    return text
+      .replace(/\s+/g, ' ')  // 折叠所有连续空白符为单个空格
+      .trim();               // 移除首尾空白
   }
 
   /**
    * 将文本分割为单词、字符和空格段
    * @param {string} text
-   * @param {Object} [style] - 样式对象，用于决定空白符处理方式
+   * @param {Object} [style] - 样式对象（保留参数以维持兼容性）
    * @returns {Array}
    */
   segmentText(text, style = {}) {
     // 首先规范化空白符
-    const normalizedText = this.normalizeWhitespace(text, style);
+    const normalizedText = this.normalizeWhitespace(text);
     
     // 如果文本为空，直接返回
     if (!normalizedText) {

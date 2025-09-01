@@ -43,25 +43,16 @@ const defaultTagStyles = {
   'th': { display: 'table-cell', verticalAlign: 'inherit', fontWeight: 'bold', textAlign: 'center' }
 };
 
-// 通用的默认值映射（使用 camelCase 格式，只包含分解属性）
+// 通用的默认值映射（只保留电子书阅读器需要的样式）
 const genericDefaults = {
   // 显示
   'display': 'inline',
-  'position': 'static',
-  'float': 'none',
-  'clear': 'none',
-  'visibility': 'visible',
-  zIndex: 'auto',
   
-  // 盒子模型
+  // 尺寸（图片需要）
   'width': 'auto',
   'height': 'auto',
-  minWidth: '0px',
-  minHeight: '0px',
-  maxWidth: 'none',
-  maxHeight: 'none',
   
-  // 边距和内边距（只保留具体方向属性）
+  // 边距和内边距
   marginTop: '0px',
   marginRight: '0px', 
   marginBottom: '0px',
@@ -71,13 +62,7 @@ const genericDefaults = {
   paddingBottom: '0px', 
   paddingLeft: '0px',
   
-  // 定位
-  'top': 'auto',
-  'right': 'auto',
-  'bottom': 'auto',
-  'left': 'auto',
-  
-  // 字体（只保留具体属性）
+  // 字体
   fontFamily: 'Arial, sans-serif',
   fontSize: '16px',
   fontWeight: '400',
@@ -88,56 +73,10 @@ const genericDefaults = {
   
   // 文本
   textAlign: 'start',
-  textDecoration: 'none',
-  textTransform: 'none',
-  whiteSpace: 'normal',
-  wordBreak: 'normal',
-  overflowWrap: 'normal',
   
-  // 颜色和背景（只保留具体属性）
+  // 颜色（backgroundColor 仅用于特殊标签如 ins）
   'color': 'rgb(0, 0, 0)',
   backgroundColor: 'rgba(0, 0, 0, 0)',
-  backgroundImage: 'none',
-  backgroundSize: 'auto auto',
-  backgroundPosition: '0% 0%',
-  backgroundRepeat: 'repeat',
-
-  // 边框（只保留具体属性）
-  borderTopWidth: '0px',
-  borderTopStyle: 'none',
-  borderTopColor: 'rgb(0, 0, 0)',
-  borderRightWidth: '0px',
-  borderRightStyle: 'none', 
-  borderRightColor: 'rgb(0, 0, 0)',
-  borderBottomWidth: '0px',
-  borderBottomStyle: 'none',
-  borderBottomColor: 'rgb(0, 0, 0)',
-  borderLeftWidth: '0px',
-  borderLeftStyle: 'none',
-  borderLeftColor: 'rgb(0, 0, 0)',
-  borderTopLeftRadius: '0px',
-  borderTopRightRadius: '0px',
-  borderBottomRightRadius: '0px',
-  borderBottomLeftRadius: '0px',
-  
-  // 变换和效果
-  'transform': 'none',
-  transformOrigin: '50% 50% 0px',
-  'opacity': '1',
-  'filter': 'none',
-  
-  // 溢出
-  'overflow': 'visible',
-  overflowX: 'visible',
-  overflowY: 'visible',
-  
-  // 其他
-  'cursor': 'auto',
-  pointerEvents: 'auto',
-  userSelect: 'auto',
-  boxSizing: 'content-box',
-  boxShadow: 'none',
-  textShadow: 'none'
 };
 
 /**
@@ -212,13 +151,10 @@ function normalizeLength(length) {
  */
 function isLengthProperty(property) {
   const lengthProps = [
-    // 只支持具体的分解属性（camelCase 格式）
-    'width', 'height', 'top', 'right', 'bottom', 'left',
-    'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+    // 电子书阅读器需要的长度属性
+    'width', 'height', // 图片需要
     'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
     'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-    'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius',
     'fontSize', 'lineHeight', 'letterSpacing', 'wordSpacing'
   ];
   
@@ -232,12 +168,11 @@ function isLengthProperty(property) {
  */
 export function isTextStyleProperty(property) {
   const textStyleProperties = [
-    // 只支持 camelCase 格式
+    // 电子书阅读器需要的文本样式
     'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
     'lineHeight', 'letterSpacing', 'wordSpacing',
-    'textAlign', 'textDecoration', 'textTransform', 'textIndent', 'textShadow',
-    'whiteSpace', 'wordBreak', 'overflowWrap', 'wordWrap',
-    'color', 'direction', 'unicodeBidi', 'writingMode'
+    'textAlign', 'textIndent',
+    'color'
   ];
   
   return textStyleProperties.includes(property);
