@@ -246,6 +246,35 @@ class LineBreaker {
   constructor(renderer) {
     this.renderer = renderer;
     this.measureCtx = renderer.measureCtx;
+    
+    // 定义不能出现在行首的英语标点符号
+    this.englishEndPunctuation = new Set([
+      ',', '.', ';', ':', '?', '!', ')', ']', '}',
+      '»', '"', "'", '…'
+    ]);
+    
+    // 定义不能出现在行末的英语标点符号
+    this.englishStartPunctuation = new Set([
+      '(', '[', '{', '«', '"', "'"
+    ]);
+  }
+
+  /**
+   * 检查标点符号是否不应该出现在行首
+   * @param {string} punctuation - 标点符号
+   * @returns {boolean}
+   */
+  isEnglishEndPunctuation(punctuation) {
+    return this.englishEndPunctuation.has(punctuation);
+  }
+
+  /**
+   * 检查标点符号是否不应该出现在行末
+   * @param {string} punctuation - 标点符号
+   * @returns {boolean}
+   */
+  isEnglishStartPunctuation(punctuation) {
+    return this.englishStartPunctuation.has(punctuation);
   }
 
   /**
@@ -298,20 +327,67 @@ class LineBreaker {
         segmentWidth,
         currentX,
         rightBoundary,
-        willExceedBoundary
+        willExceedBoundary,
+        segments,
+        i
       );
 
       if (breakResult.shouldBreak) {
-        // 完成当前行（如果有内容）
-        if (currentLine.hasContent()) {
-          currentLine.computeMetrics(this.measureCtx);
-          lines.push(currentLine);
-        }
+        // 处理需要回溯的情况（如英语标点符号不能在行首）
+        if (breakResult.needBacktrack && currentLine.segments.length > 0) {
+          // 找到需要回溯的段数
+          const backtrackCount = this.findBacktrackCount(currentLine.segments, segment);
+          
+          if (backtrackCount > 0) {
+            // 从当前行移除需要回溯的段
+            const backtrackSegments = currentLine.segments.splice(-backtrackCount);
+            const backtrackPositions = currentLine.positions.splice(-backtrackCount);
+            
+            // 完成当前行（如果还有内容）
+            if (currentLine.hasContent()) {
+              currentLine.computeMetrics(this.measureCtx);
+              lines.push(currentLine);
+            }
 
-        // 创建新行
-        currentLine = new LineBox();
-        currentX = startX; // 新行从基础起始位置开始（没有缩进）
-        isFirstLine = false;
+            // 创建新行
+            currentLine = new LineBox();
+            currentX = startX; // 新行从基础起始位置开始
+            isFirstLine = false;
+
+            // 将回溯的段添加到新行
+            for (let j = 0; j < backtrackSegments.length; j++) {
+              const backtrackSegment = backtrackSegments[j];
+              
+              // 重新测量回溯段的宽度
+              let backtrackWidth;
+              if (styleMap && backtrackSegment.originalSegmentIndex !== undefined) {
+                const segmentStyle = styleMap.get(backtrackSegment.originalSegmentIndex) || {};
+                const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
+                const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
+                const fontStyle = this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
+                
+                this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
+                backtrackWidth = this.measureCtx.measureText(backtrackSegment.content).width;
+              } else {
+                backtrackWidth = this.measureCtx.measureText(backtrackSegment.content).width;
+              }
+              
+              currentLine.addSegment(backtrackSegment, currentX);
+              currentX += backtrackWidth;
+            }
+          }
+        } else {
+          // 完成当前行（如果有内容）
+          if (currentLine.hasContent()) {
+            currentLine.computeMetrics(this.measureCtx);
+            lines.push(currentLine);
+          }
+
+          // 创建新行
+          currentLine = new LineBox();
+          currentX = startX; // 新行从基础起始位置开始（没有缩进）
+          isFirstLine = false;
+        }
 
         // 如果是空格导致的换行，跳过这个空格
         if (breakResult.skipSegment) {
@@ -346,18 +422,49 @@ class LineBreaker {
   }
 
   /**
-   * 判断是否需要在某个段落前换行（简化版，模拟浏览器行为）
+   * 计算需要回溯的段数
+   * @param {Array} currentSegments - 当前行的段
+   * @param {Object} problematicSegment - 有问题的段（如不能出现在行首的标点符号）
+   * @returns {number}
+   */
+  findBacktrackCount(currentSegments, problematicSegment) {
+    // 对于不能出现在行首的标点符号，至少要回溯1个非空格段
+    let backtrackCount = 0;
+    
+    // 从行末开始向前查找，跳过空格
+    for (let i = currentSegments.length - 1; i >= 0; i--) {
+      const segment = currentSegments[i];
+      backtrackCount++;
+      
+      // 如果遇到非空格的段，停止回溯
+      if (segment.type !== 'space') {
+        break;
+      }
+      
+      // 避免回溯过多
+      if (backtrackCount >= 3) {
+        break;
+      }
+    }
+    
+    return backtrackCount;
+  }
+
+  /**
+   * 判断是否需要在某个段落前换行（改进版：支持英语标点符号规则）
    * @param {Object} segment - 文本段落
    * @param {number} segmentWidth - 段落宽度
    * @param {number} currentX - 当前X位置
    * @param {number} rightBoundary - 右边界位置
    * @param {boolean} willExceedBoundary - 是否会超出边界
+   * @param {Array} allSegments - 所有段落数组（用于上下文判断）
+   * @param {number} currentIndex - 当前段落的索引
    * @returns {Object} 分行结果
    */
-  shouldBreakBefore(segment, segmentWidth, currentX, rightBoundary, willExceedBoundary) {
+  shouldBreakBefore(segment, segmentWidth, currentX, rightBoundary, willExceedBoundary, allSegments, currentIndex) {
     // 如果不会超出边界，无需换行
     if (!willExceedBoundary) {
-      return { shouldBreak: false, skipSegment: false };
+      return { shouldBreak: false, skipSegment: false, needBacktrack: false };
     }
 
     // 通过比较可用宽度来判断是否已有内容在当前行
@@ -370,28 +477,58 @@ class LineBreaker {
       // 英文单词：整个单词必须在同一行，超出则换行
       // 但如果是行首且单词过长，强制放置以避免无限循环
       return hasContentInLine
-        ? { shouldBreak: true, skipSegment: false }
-        : { shouldBreak: false, skipSegment: false }; // 强制放置，即使超出
+        ? { shouldBreak: true, skipSegment: false, needBacktrack: false }
+        : { shouldBreak: false, skipSegment: false, needBacktrack: false }; // 强制放置，即使超出
     }
 
-    if (segment.type === 'cjk' || segment.type === 'punctuation') {
-      // 中文字符和标点：可以在任意位置换行
+    if (segment.type === 'cjk') {
+      // 中文字符：可以在任意位置换行
       // 但如果是行首，强制放置以避免无限循环
       return hasContentInLine
-        ? { shouldBreak: true, skipSegment: false }
-        : { shouldBreak: false, skipSegment: false }; // 强制放置
+        ? { shouldBreak: true, skipSegment: false, needBacktrack: false }
+        : { shouldBreak: false, skipSegment: false, needBacktrack: false }; // 强制放置
+    }
+
+    if (segment.type === 'punctuation') {
+      // 标点符号的特殊处理
+      const punctuation = segment.content;
+      
+      // 检查是否是不能出现在行首的英语标点符号
+      if (this.isEnglishEndPunctuation(punctuation)) {
+        // 这类标点符号不能出现在行首
+        if (hasContentInLine) {
+          // 当前行有内容，需要换行并回溯
+          return { 
+            shouldBreak: true, 
+            skipSegment: false, 
+            needBacktrack: true 
+          };
+        } else {
+          // 如果是行首，强制放置以避免无限循环
+          return { 
+            shouldBreak: false, 
+            skipSegment: false, 
+            needBacktrack: false 
+          };
+        }
+      }
+      
+      // 其他标点符号（包括中文标点）可以正常换行
+      return hasContentInLine
+        ? { shouldBreak: true, skipSegment: false, needBacktrack: false }
+        : { shouldBreak: false, skipSegment: false, needBacktrack: false };
     }
 
     if (segment.type === 'space') {
       // 空格：如果导致换行则跳过这个空格
       // 行首的空格直接跳过（不显示）
       return hasContentInLine
-        ? { shouldBreak: true, skipSegment: true }
-        : { shouldBreak: false, skipSegment: true }; // 行首空格跳过
+        ? { shouldBreak: true, skipSegment: true, needBacktrack: false }
+        : { shouldBreak: false, skipSegment: true, needBacktrack: false }; // 行首空格跳过
     }
 
     // 其他类型默认不换行
-    return { shouldBreak: false, skipSegment: false };
+    return { shouldBreak: false, skipSegment: false, needBacktrack: false };
   }
 }
 
