@@ -1,4 +1,5 @@
 /**
+ * @deprecated
  * HTML到数据结构转换器
  * 将HTML内容转换为渲染器可用的数据结构
  * 专门处理EPUB格式的HTML
