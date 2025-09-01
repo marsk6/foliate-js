@@ -2,6 +2,42 @@
  * 英语文本规范化工具
  * 用于修复 epub 中常见的英语排版问题
  */
+
+// 导入 wordsninja 用于分割黏连单词
+import WordsNinjaPack from 'wordsninja';
+
+// 全局变量
+let wordsNinjaInstance = null;
+let dictionaryLoaded = false;
+let initPromise = null;
+
+// 初始化 wordsninja
+async function initWordsNinja() {
+  if (initPromise) {
+    return initPromise;
+  }
+  
+  initPromise = (async () => {
+    try {
+      console.log('正在初始化 wordsninja...');
+      wordsNinjaInstance = new WordsNinjaPack();
+      await wordsNinjaInstance.loadDictionary();
+      dictionaryLoaded = true;
+      console.log('wordsninja 初始化成功！');
+      return true;
+    } catch (error) {
+      console.warn('Failed to load wordsninja:', error);
+      dictionaryLoaded = false;
+      return false;
+    }
+  })();
+  
+  return initPromise;
+}
+
+// 立即开始初始化（非阻塞）
+initWordsNinja().catch(() => {});
+
 export class EnglishTextNormalizer {
   constructor() {
     // 初始化规范化规则
@@ -156,8 +192,8 @@ export class EnglishTextNormalizer {
       { pattern: /(\S)\s*"\s*/g, replacement: '$1 "' },
       // 闭引号前不应该有空格，后面应该有空格（如果后面跟字母）
       { pattern: /\s*"\s*([A-Za-z])/g, replacement: '" $1' },
-      // 单引号类似处理
-      { pattern: /(\S)\s*'\s*([A-Za-z])/g, replacement: "$1'$2" },
+      // 单引号处理：只处理开引号情况，避免影响闭引号后的空格
+      { pattern: /(\s)'(\S)/g, replacement: "$1'$2" }, // 开引号：空格+'+ 非空格
     ];
 
     // 数字和单位规则
@@ -239,7 +275,10 @@ export class EnglishTextNormalizer {
     // 6. 修复特殊词汇的分离问题
     normalizedText = this.fixSpecialWords(normalizedText);
 
-    // 7. 最后清理多余的空格
+    // 7. 分割黏连的单词（如果 wordsninja 可用）
+    normalizedText = this.splitConcatenatedWords(normalizedText);
+
+    // 8. 最后清理多余的空格
     normalizedText = this.finalCleanup(normalizedText);
 
     return normalizedText;
@@ -331,6 +370,71 @@ export class EnglishTextNormalizer {
   }
 
   /**
+   * 分割黏连的单词（同步版本，智能处理）
+   * 如果 wordsninja 可用就分割，否则直接返回原文本
+   */
+  splitConcatenatedWords(text) {
+    // 如果 wordsninja 未加载，直接返回原文本（不等待）
+    if (!dictionaryLoaded || !wordsNinjaInstance) {
+      return text;
+    }
+
+    try {
+      // 使用正则表达式找到可能的黏连单词
+      // 匹配：长度 >= 6 的纯字母单词（可能是黏连的）
+      return text.replace(/\b[a-zA-Z]{6,}\b/g, (match) => {
+        try {
+          // 使用 wordsninja 分割单词
+          const splitWords = wordsNinjaInstance.splitSentence(match.toLowerCase());
+          
+          // 如果分割出多个单词，则应用分割
+          if (splitWords && splitWords.length > 1) {
+            // 保持原始大小写格式
+            return this.preserveOriginalCase(match, splitWords);
+          }
+        } catch (error) {
+          console.warn('Word splitting error for:', match, error);
+        }
+        
+        // 如果分割失败或只有一个单词，返回原单词
+        return match;
+      });
+    } catch (error) {
+      console.warn('splitConcatenatedWords error:', error);
+      return text;
+    }
+  }
+
+
+
+  /**
+   * 保持原始大小写格式
+   * @param {string} originalWord - 原始单词
+   * @param {string[]} splitWords - 分割后的单词数组
+   * @returns {string} 保持大小写的分割结果
+   */
+  preserveOriginalCase(originalWord, splitWords) {
+    if (!splitWords || splitWords.length === 0) {
+      return originalWord;
+    }
+
+    // 如果原单词是全大写
+    if (originalWord === originalWord.toUpperCase()) {
+      return splitWords.map(word => word.toUpperCase()).join(' ');
+    }
+
+    // 如果原单词首字母大写
+    if (originalWord[0] === originalWord[0].toUpperCase()) {
+      const result = splitWords.map(word => word.toLowerCase());
+      result[0] = result[0].charAt(0).toUpperCase() + result[0].slice(1);
+      return result.join(' ');
+    }
+
+    // 默认情况：返回小写的分割结果
+    return splitWords.join(' ');
+  }
+
+  /**
    * 最终清理
    */
   finalCleanup(text) {
@@ -347,21 +451,29 @@ export class EnglishTextNormalizer {
 
   /**
    * 检测文本是否为英语
-   * 简单的启发式检测：包含常见英语单词和字符
+   * 更宽松的启发式检测：主要基于拉丁字符
    */
   isEnglishText(text) {
     if (!text || text.length < 3) {
       return false;
     }
 
-    // 检查是否包含英语常见词汇
-    const commonEnglishWords =
-      /\b(the|and|or|but|in|on|at|to|for|of|with|by|from|up|about|into|over|after|a|an|is|are|was|were|be|been|have|has|had|do|does|did|will|would|could|should|may|might|can|must|shall)\b/i;
-
     // 检查是否主要是拉丁字符
     const latinCharacters = /^[a-zA-Z0-9\s.,;:!?'"()\-–—\[\]{}]+$/;
+    if (!latinCharacters.test(text)) {
+      return false;
+    }
 
-    return commonEnglishWords.test(text) && latinCharacters.test(text);
+    // 检查是否包含英语常见词汇（更宽松的检查）
+    const commonEnglishWords =
+      /\b(the|and|or|but|in|on|at|to|for|of|with|by|from|up|about|into|over|after|a|an|is|are|was|were|be|been|have|has|had|do|does|did|will|would|could|should|may|might|can|must|shall|you|me|he|she|it|we|they|my|your|his|her|its|our|their|this|that|these|those|here|there|now|then|when|where|why|how|what|who|which|if|because|so|very|much|many|some|any|all|no|not|only|just|also|even|still|again|back|way|know|see|get|make|go|come|take|give|think|want|need|feel|find|use|say|tell|ask|work|try|seem|look|turn|keep|let|put|end|why|where|before|after|while|during|between|under|over|through|around|without|within|along|across|against|toward|upon|among|beyond)\b/i;
+
+    // 检查字母比例（至少50%是字母）
+    const letterCount = (text.match(/[a-zA-Z]/g) || []).length;
+    const letterRatio = letterCount / text.length;
+
+    // 如果有常见英语单词，或者主要是字母组成，就认为是英语
+    return commonEnglishWords.test(text) || letterRatio >= 0.5;
   }
 
   /**

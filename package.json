@@ -25,7 +25,8 @@
     "fs-extra": "^11.2.0",
     "globals": "^15.9.0",
     "pdfjs-dist": "^4.7.76",
-    "rollup": "^4.22.4"
+    "rollup": "^4.22.4",
+    "wordsninja": "^1.1.0"
   },
   "scripts": {
     "build": "npx rollup -c"

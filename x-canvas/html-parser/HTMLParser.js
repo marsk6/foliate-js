@@ -27,7 +27,7 @@ export class HTMLParser {
     if (!trimmedText) return null;
     
     // 如果启用文本规范化，对英语文本进行规范化处理
-    const finalText = this.options.normalizeText ? 
+    const finalText = this.options.normalizeText ?
       normalizeEnglishText(trimmedText) : trimmedText;
     
     return {
