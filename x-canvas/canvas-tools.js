@@ -37,14 +37,14 @@ export class CanvasTools {
   async createDOMStructure() {
     const div = document.createElement('div');
     div.innerHTML = `
-      <div class="highlight-layer" id="highlightLayer"></div>
-      <div class="anchor" id="startAnchor">
+      <div class="highlight-layer"></div>
+      <div class="anchor start-anchor">
         <div class="anchor-inner">
           <div class="anchor-dot"></div>
           <div class="anchor-line"></div>
         </div>
       </div>
-      <div class="anchor" id="endAnchor">
+      <div class="anchor end-anchor">
         <div class="anchor-inner">
           <div class="anchor-line"></div>
           <div class="anchor-dot"></div>
@@ -53,9 +53,9 @@ export class CanvasTools {
     `;
     this.renderer.scrollContent.append(div);
     await Promise.resolve();
-    this.startAnchor = document.getElementById('startAnchor');
-    this.endAnchor = document.getElementById('endAnchor');
-    this.highlightLayer = document.getElementById('highlightLayer'); // 需要获取高亮层元素
+    this.startAnchor = div.querySelector('.start-anchor');
+    this.endAnchor = div.querySelector('.end-anchor');
+    this.highlightLayer = div.querySelector('.highlight-layer'); // 需要获取高亮层元素
   }
 
   /**

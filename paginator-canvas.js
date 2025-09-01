@@ -172,6 +172,7 @@ export class Paginator extends HTMLElement {
         });
         chapterManager.addBook(chapters);
         chapterManager.startRead(0, 0);
+        window.native.chapterManager = chapterManager;
         return chapterManager;
     }
 
