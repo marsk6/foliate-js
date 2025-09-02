@@ -1,3 +1,5 @@
+import { HighlightManager } from './highlight-manager.js';
+
 export class CanvasTools {
   static instance = null;
   startIdx = null;
@@ -16,9 +18,17 @@ export class CanvasTools {
    */
   highlightLayer = null; // 需要获取高亮层元素
   /**
-   * @type {import('./virtual-canvas-renderer').VirtualCanvasRenderer | import('./slide-canvas').HorizontalSlideManager}
+   * @type {HTMLDivElement}
+   */
+  selectionMenu = null; // 选中菜单元素
+  /**
+   * @type {import('./virtual-canvas-renderer').VirtualCanvasRenderer}
    */
   renderer = null;
+  /**
+   * @type {HighlightManager}
+   */
+  highlightManager = null;
 
   selection = {
     range: null,
@@ -32,6 +42,9 @@ export class CanvasTools {
 
     this.renderer = renderer;
     this.createDOMStructure();
+    
+    // 初始化划线管理器
+    this.highlightManager = new HighlightManager(renderer);
   }
 
   async createDOMStructure() {
@@ -50,12 +63,206 @@ export class CanvasTools {
           <div class="anchor-dot"></div>
         </div>
       </div>
+      <div class="selection-menu">
+        <div class="selection-menu-arrow"></div>
+        <div class="selection-menu-content">
+          <div class="selection-menu-item" data-action="copy">Copy</div>
+          <div class="selection-menu-item" data-action="highlight">Highlight</div>
+          <div class="selection-menu-item" data-action="note">Add Note</div>
+        </div>
+      </div>
     `;
     this.renderer.scrollContent.append(div);
     await Promise.resolve();
     this.startAnchor = div.querySelector('.start-anchor');
     this.endAnchor = div.querySelector('.end-anchor');
     this.highlightLayer = div.querySelector('.highlight-layer'); // 需要获取高亮层元素
+    this.selectionMenu = div.querySelector('.selection-menu');
+
+    // 添加菜单项点击事件
+    this.setupMenuEvents();
+  }
+
+  /**
+   * 设置菜单事件监听
+   */
+  setupMenuEvents() {
+    if (!this.selectionMenu) return;
+
+    const menuItems = this.selectionMenu.querySelectorAll(
+      '.selection-menu-item'
+    );
+    menuItems.forEach((item) => {
+      item.addEventListener('click', (e) => {
+        const action = e.target.dataset.action;
+        this.handleMenuAction(action);
+        this.hideSelectionMenu();
+      });
+    });
+
+    // 点击其他地方隐藏菜单
+    document.addEventListener('click', (e) => {
+      if (!this.selectionMenu.contains(e.target) && !this.isSelecting) {
+        this.hideSelectionMenu();
+      }
+    });
+  }
+
+  /**
+   * 处理菜单动作
+   * @param {string} action
+   */
+  handleMenuAction(action) {
+    const selection = this.getSelection();
+
+    switch (action) {
+      case 'copy':
+        if (selection.text && navigator.clipboard) {
+          navigator.clipboard.writeText(selection.text).catch(console.error);
+        }
+        break;
+      case 'highlight':
+        if (selection && selection.text && this.highlightManager) {
+          // 添加划线，使用默认黄色高亮
+          const highlight = this.highlightManager.addHighlight(selection, {
+            color: '#FFFF00',
+            opacity: 0.3,
+            type: 'highlight'
+          });
+          console.log('添加划线:', highlight.id);
+        }
+        break;
+      case 'note':
+        if (selection && selection.text && this.highlightManager) {
+          // 添加带笔记的划线，使用蓝色
+          const note = prompt('请输入笔记内容:');
+          if (note !== null) {
+            const highlight = this.highlightManager.addHighlight(selection, {
+              color: '#87CEEB',
+              opacity: 0.3,
+              type: 'highlight',
+              note: note,
+              tags: ['note']
+            });
+            console.log('添加笔记划线:', highlight.id, note);
+          }
+        }
+        break;
+    }
+  }
+
+  /**
+   * 显示选中菜单
+   */
+  showSelectionMenu() {
+    if (!this.selectionMenu || this.startIdx == null || this.endIdx == null)
+      return;
+
+    const min = Math.min(this.startIdx, this.endIdx);
+    const max = Math.max(this.startIdx, this.endIdx);
+
+    if (!this.renderer.fullLayoutData || !this.renderer.fullLayoutData.words)
+      return;
+
+    // 计算选中的行数
+    // TODO: 计算重复
+    const lineMap = {};
+    for (let i = min; i <= max; i++) {
+      if (i >= this.renderer.fullLayoutData.words.length) break;
+      const l = this.renderer.fullLayoutData.words[i].line;
+      if (!lineMap[l]) lineMap[l] = { start: i, end: i };
+      else lineMap[l].end = i;
+    }
+
+    const lines = Object.keys(lineMap);
+    const isSingleLine = lines.length === 1;
+
+    // 计算菜单位置
+    const menuPosition = this.calculateMenuPosition(lineMap, isSingleLine);
+
+    // 设置菜单位置和显示
+    this.selectionMenu.style.left = menuPosition.x + 'px';
+    this.selectionMenu.style.top = menuPosition.y + 'px';
+    this.selectionMenu.classList.add('show');
+
+    // 根据单行/多行调整箭头样式
+    const arrow = this.selectionMenu.querySelector('.selection-menu-arrow');
+    if (isSingleLine) {
+      arrow.classList.add('center-align');
+      arrow.classList.remove('left-align');
+    } else {
+      arrow.classList.add('left-align');
+      arrow.classList.remove('center-align');
+    }
+  }
+
+  /**
+   * 隐藏选中菜单
+   */
+  hideSelectionMenu() {
+    if (this.selectionMenu) {
+      this.selectionMenu.classList.remove('show');
+    }
+  }
+
+  /**
+   * 计算菜单位置
+   * @param {Object} lineMap 行映射
+   * @param {boolean} isSingleLine 是否单行
+   * @returns {Object} 菜单位置 {x, y}
+   */
+  calculateMenuPosition(lineMap, isSingleLine) {
+    const lines = Object.values(lineMap);
+    const menuWidth = 120; // 菜单宽度
+    const menuHeight = 100; // 菜单高度
+    const arrowHeight = 8; // 箭头高度
+
+    let targetX, targetY;
+
+    if (isSingleLine) {
+      // 单行：对齐选中区域中心上方
+      const lineData = lines[0];
+      const startChar = this.renderer.fullLayoutData.words[lineData.start];
+      const endChar = this.renderer.fullLayoutData.words[lineData.end];
+
+      targetX = (startChar.x + endChar.x + endChar.width) / 2 - menuWidth / 2;
+      targetY =
+        startChar.y -
+        this.renderer.theme.baseFontSize -
+        menuHeight -
+        arrowHeight;
+    } else {
+      // 多行：对齐第一行左侧上方
+      const firstLineData = lines[0];
+      const startChar = this.renderer.fullLayoutData.words[firstLineData.start];
+
+      targetX = startChar.x;
+      targetY =
+        startChar.y -
+        this.renderer.theme.baseFontSize -
+        menuHeight -
+        arrowHeight;
+    }
+
+    // 处理模式偏移
+    let offsetTop = 0;
+    let offsetLeft = 0;
+    if (this.renderer.mode === 'horizontal') {
+      offsetTop =
+        -this.renderer.canvasHeight * this.renderer.viewport.state.currentPage;
+      offsetLeft =
+        this.renderer.canvasWidth * this.renderer.viewport.state.currentPage;
+    }
+
+    // 确保菜单不超出视窗边界
+    const containerRect = this.renderer.scrollContent.getBoundingClientRect();
+    targetX = Math.max(
+      10,
+      Math.min(targetX + offsetLeft, containerRect.width - menuWidth - 10)
+    );
+    targetY = Math.max(10, targetY + offsetTop);
+
+    return { x: targetX, y: targetY };
   }
 
   /**
@@ -229,6 +436,34 @@ export class CanvasTools {
     return this.selection;
   }
 
+  /**
+   * 在渲染器重新布局后恢复划线
+   */
+  restoreHighlights() {
+    if (this.highlightManager) {
+      // 等待下一帧确保布局完成
+      requestAnimationFrame(() => {
+        this.highlightManager.restoreHighlights();
+      });
+    }
+  }
+
+  /**
+   * 清除所有划线
+   */
+  clearHighlights() {
+    if (this.highlightManager) {
+      this.highlightManager.clearAllHighlights();
+    }
+  }
+
+  /**
+   * 获取所有划线
+   */
+  getAllHighlights() {
+    return this.highlightManager ? this.highlightManager.getAllHighlights() : [];
+  }
+
   handleTouch(e) {
     if (this.isSelecting) {
       this.isSelecting = false;
@@ -236,6 +471,7 @@ export class CanvasTools {
       this.endIdx = null;
       this.updateHighlightBar();
       this.updateAnchors();
+      this.hideSelectionMenu();
     }
   }
 
@@ -256,6 +492,12 @@ export class CanvasTools {
     });
   }
 
+  handleLongPressEnd() {
+    requestAnimationFrame(() => {
+      this.showSelectionMenu();
+    });
+  }
+
   /**
    * @param {Point} point
    * @param {"start" | "end"} type
@@ -266,9 +508,16 @@ export class CanvasTools {
     } else {
       this.endIdx = this.renderer.getCharIndexAt(point);
     }
+    this.hideSelectionMenu();
     requestAnimationFrame(() => {
       this.updateHighlightBar();
       this.updateAnchors();
+    });
+  }
+
+  handleMoveAnchorEnd() {
+    requestAnimationFrame(() => {
+      this.showSelectionMenu();
     });
   }
 

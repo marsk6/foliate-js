@@ -967,6 +967,9 @@ export class VirtualCanvasRenderer {
     this.setupHighDPI();
 
     window.addEventListener('resize', this.setupHighDPI.bind(this));
+
+    // 初始化划线工具（延迟到DOM创建后）
+    this.canvasTools = null;
   }
 
   /**
@@ -1036,8 +1039,8 @@ export class VirtualCanvasRenderer {
     // 组装DOM结构
     this.container.appendChild(this.scrollContent);
 
-    // 创建画布工具
-    this.tools = new CanvasTools(this);
+    // 创建画布工具（包含划线管理）
+    this.canvasTools = new CanvasTools(this);
     // 初始化垂直模式
     this.initMode({
       mode: this.mode,
@@ -1117,10 +1120,24 @@ export class VirtualCanvasRenderer {
     this.viewport.canvasInfoList.forEach((canvasInfo) => {
       canvasInfo.needsRerender = true;
     });
+    
+    // 布局完成后恢复划线
+    setTimeout(() => {
+      if (this.canvasTools) {
+        this.canvasTools.restoreHighlights();
+      }
+    }, 100);
   }
 
   render() {
     this.renderVisibleContent();
+    
+    // 渲染完成后恢复划线
+    setTimeout(() => {
+      if (this.canvasTools) {
+        this.canvasTools.restoreHighlights();
+      }
+    }, 50);
   }
 
   /**
@@ -1428,6 +1445,9 @@ export class VirtualCanvasRenderer {
       // 渲染内容（相对于Canvas的偏移）
       this.renderCanvasText(canvasWords, ctx, contentStartY);
       this.renderCanvasElements(canvasElements, ctx, contentStartY);
+      
+      // 渲染划线
+      this.renderCanvasHighlights(ctx, contentStartY, contentEndY);
     }
   }
 
@@ -1475,6 +1495,145 @@ export class VirtualCanvasRenderer {
       const canvasY = word.y - offsetY;
       ctx.fillText(word.text, word.x, canvasY);
     });
+  }
+
+  /**
+   * 渲染Canvas中的划线
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} contentStartY - 当前Canvas内容的起始Y位置
+   * @param {number} contentEndY - 当前Canvas内容的结束Y位置
+   */
+  renderCanvasHighlights(ctx, contentStartY, contentEndY) {
+    if (!this.canvasTools || !this.canvasTools.highlightManager) return;
+    
+    const highlights = this.canvasTools.highlightManager.getAllHighlights();
+    if (highlights.length === 0) return;
+
+    const words = this.fullLayoutData.words;
+    if (!words) return;
+
+    highlights.forEach(highlight => {
+      // 检查划线是否在当前Canvas可视区域内
+      if (!highlight.currentPosition) return;
+
+      const { globalStart, globalEnd } = highlight.currentPosition;
+      
+      // 检查划线是否与当前Canvas区域有交集
+      if (globalStart >= words.length || globalEnd >= words.length) return;
+      
+      const startWord = words[globalStart];
+      const endWord = words[globalEnd];
+      if (!startWord || !endWord) return;
+
+      // 检查Y坐标是否在当前Canvas渲染范围内
+      const highlightTop = startWord.y - this.theme.baseFontSize;
+      const highlightBottom = endWord.y + this.theme.baseFontSize;
+      
+      if (highlightBottom < contentStartY || highlightTop > contentEndY) {
+        return; // 不在当前Canvas范围内
+      }
+
+      // 按行分组绘制划线
+      this.drawCanvasHighlight(ctx, highlight, globalStart, globalEnd, contentStartY);
+    });
+  }
+
+  /**
+   * 在Canvas上绘制单个划线
+   * @param {CanvasRenderingContext2D} ctx 
+   * @param {Object} highlight 划线对象
+   * @param {number} globalStart 起始字符索引
+   * @param {number} globalEnd 结束字符索引
+   * @param {number} offsetY Canvas偏移Y
+   */
+  drawCanvasHighlight(ctx, highlight, globalStart, globalEnd, offsetY) {
+    const words = this.fullLayoutData.words;
+    
+    // 按行分组
+    const lineMap = {};
+    for (let i = globalStart; i <= globalEnd; i++) {
+      if (i >= words.length) break;
+      const word = words[i];
+      if (!word) continue;
+      
+      const line = word.line;
+      if (!lineMap[line]) {
+        lineMap[line] = { start: i, end: i, words: [word] };
+      } else {
+        lineMap[line].end = i;
+        lineMap[line].words.push(word);
+      }
+    }
+
+    // 设置绘制样式
+    const { style } = highlight;
+    
+    // 为每行绘制划线
+    Object.values(lineMap).forEach(lineData => {
+      const { start, end } = lineData;
+      const startWord = words[start];
+      const endWord = words[end];
+      
+      // 计算在Canvas内的相对位置
+      const canvasY = startWord.y - offsetY;
+      const x = startWord.x;
+      const width = endWord.x + endWord.width - startWord.x;
+      const height = this.theme.baseFontSize + 2;
+      
+      // 只渲染在当前Canvas范围内的部分
+      if (canvasY > -height && canvasY < this.canvasHeight + height) {
+        this.drawHighlightShape(ctx, {
+          x: x,
+          y: canvasY - this.theme.baseFontSize + 2,
+          width: width,
+          height: height
+        }, style);
+      }
+    });
+  }
+
+  /**
+   * 绘制划线形状
+   * @param {CanvasRenderingContext2D} ctx 
+   * @param {Object} rect 矩形区域 {x, y, width, height}
+   * @param {Object} style 样式配置
+   */
+  drawHighlightShape(ctx, rect, style) {
+    const { x, y, width, height } = rect;
+    
+    // 设置透明度
+    ctx.globalAlpha = style.opacity || 0.3;
+    
+    switch (style.type) {
+      case 'highlight':
+        // 高亮背景
+        ctx.fillStyle = style.color || '#FFFF00';
+        ctx.fillRect(x, y, width, height);
+        break;
+        
+      case 'underline':
+        // 下划线
+        ctx.strokeStyle = style.color || '#0000FF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y + height);
+        ctx.lineTo(x + width, y + height);
+        ctx.stroke();
+        break;
+        
+      case 'strikethrough':
+        // 删除线
+        ctx.strokeStyle = style.color || '#FF0000';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y + height / 2);
+        ctx.lineTo(x + width, y + height / 2);
+        ctx.stroke();
+        break;
+    }
+    
+    // 恢复透明度
+    ctx.globalAlpha = 1.0;
   }
 
 
@@ -2611,4 +2770,85 @@ export class VirtualCanvasRenderer {
           this.viewport = new Viewport(config);
     }
   }
+
+  // ================= 划线管理API =================
+
+  /**
+   * 注册内容段落到划线系统
+   * @param {string} type 段落类型 (original/translation/hint/note)
+   * @param {string} content 段落内容
+   * @param {number} startChar 起始字符位置
+   * @param {number} endChar 结束字符位置
+   * @param {string} originalId 关联的原始段落ID（可选）
+   * @param {Object} metadata 元数据（可选）
+   * @returns {string} 段落ID
+   */
+  registerContentSegment(type, content, startChar, endChar, originalId = null, metadata = {}) {
+    if (this.canvasTools && this.canvasTools.highlightManager) {
+      return this.canvasTools.highlightManager.registerContentSegment(
+        type, content, startChar, endChar, originalId, metadata
+      );
+    }
+    return null;
+  }
+
+  /**
+   * 批量注册内容段落
+   * @param {Array} segments 段落数组，每个元素包含 {type, content, startChar, endChar, originalId?, metadata?}
+   */
+  registerContentSegments(segments) {
+    if (this.canvasTools && this.canvasTools.highlightManager) {
+      this.canvasTools.highlightManager.registerContentSegments(segments);
+    }
+  }
+
+  /**
+   * 获取所有划线
+   * @returns {Array} 划线列表
+   */
+  getAllHighlights() {
+    return this.canvasTools ? this.canvasTools.getAllHighlights() : [];
+  }
+
+  /**
+   * 清除所有划线
+   */
+  clearHighlights() {
+    if (this.canvasTools) {
+      this.canvasTools.clearHighlights();
+    }
+  }
+
+  /**
+   * 手动恢复划线（通常不需要调用，系统会自动处理）
+   */
+  restoreHighlights() {
+    if (this.canvasTools) {
+      this.canvasTools.restoreHighlights();
+    }
+  }
+
+  /**
+   * 程序化添加划线
+   * @param {Object} selection 选中区域信息
+   * @param {Object} options 划线选项
+   * @returns {Object} 创建的划线对象
+   */
+  addHighlight(selection, options = {}) {
+    if (this.canvasTools && this.canvasTools.highlightManager) {
+      return this.canvasTools.highlightManager.addHighlight(selection, options);
+    }
+    return null;
+  }
+
+  /**
+   * 删除指定划线
+   * @param {string} highlightId 划线ID
+   */
+  removeHighlight(highlightId) {
+    if (this.canvasTools && this.canvasTools.highlightManager) {
+      this.canvasTools.highlightManager.removeHighlight(highlightId);
+    }
+  }
+}
 export default VirtualCanvasRenderer;
