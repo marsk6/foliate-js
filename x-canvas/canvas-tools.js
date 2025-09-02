@@ -30,6 +30,11 @@ export class CanvasTools {
    */
   highlightManager = null;
 
+  anchors = {
+    start: null,
+    end: null,
+  };
+
   selection = {
     range: null,
   };
@@ -42,7 +47,7 @@ export class CanvasTools {
 
     this.renderer = renderer;
     this.createDOMStructure();
-    
+
     // 初始化划线管理器
     this.highlightManager = new HighlightManager(renderer);
   }
@@ -63,21 +68,24 @@ export class CanvasTools {
           <div class="anchor-dot"></div>
         </div>
       </div>
-      <div class="selection-menu">
+    `;
+    const selectionMenu = document.createElement('div');
+    selectionMenu.innerHTML = `
         <div class="selection-menu-arrow"></div>
         <div class="selection-menu-content">
           <div class="selection-menu-item" data-action="copy">Copy</div>
           <div class="selection-menu-item" data-action="highlight">Highlight</div>
           <div class="selection-menu-item" data-action="note">Add Note</div>
         </div>
-      </div>
     `;
+    selectionMenu.classList.add('selection-menu');
+    this.selectionMenu = selectionMenu;
     this.renderer.scrollContent.append(div);
+    this.renderer.container.append(selectionMenu);
     await Promise.resolve();
     this.startAnchor = div.querySelector('.start-anchor');
     this.endAnchor = div.querySelector('.end-anchor');
     this.highlightLayer = div.querySelector('.highlight-layer'); // 需要获取高亮层元素
-    this.selectionMenu = div.querySelector('.selection-menu');
 
     // 添加菜单项点击事件
     this.setupMenuEvents();
@@ -158,41 +166,19 @@ export class CanvasTools {
     if (!this.selectionMenu || this.startIdx == null || this.endIdx == null)
       return;
 
-    const min = Math.min(this.startIdx, this.endIdx);
-    const max = Math.max(this.startIdx, this.endIdx);
-
     if (!this.renderer.fullLayoutData || !this.renderer.fullLayoutData.words)
       return;
 
-    // 计算选中的行数
-    // TODO: 计算重复
-    const lineMap = {};
-    for (let i = min; i <= max; i++) {
-      if (i >= this.renderer.fullLayoutData.words.length) break;
-      const l = this.renderer.fullLayoutData.words[i].line;
-      if (!lineMap[l]) lineMap[l] = { start: i, end: i };
-      else lineMap[l].end = i;
-    }
-
-    const lines = Object.keys(lineMap);
-    const isSingleLine = lines.length === 1;
-
-    // 计算菜单位置
-    const menuPosition = this.calculateMenuPosition(lineMap, isSingleLine);
-
-    // 设置菜单位置和显示
-    this.selectionMenu.style.left = menuPosition.x + 'px';
-    this.selectionMenu.style.top = menuPosition.y + 'px';
-    this.selectionMenu.classList.add('show');
+    const isSingleLine = this.anchors.start.y === this.anchors.end.y;
 
     // 根据单行/多行调整箭头样式
     const arrow = this.selectionMenu.querySelector('.selection-menu-arrow');
+    this.selectionMenu.style.top = (this.anchors.start.y - 12) + 'px';
+    this.selectionMenu.style.display = 'block';
+    this.selectionMenu.style.top = (this.anchors.start.y - 38) + 'px';
     if (isSingleLine) {
-      arrow.classList.add('center-align');
-      arrow.classList.remove('left-align');
     } else {
-      arrow.classList.add('left-align');
-      arrow.classList.remove('center-align');
+      this.selectionMenu.style.top = (this.anchors.start.y - 38) + 'px';
     }
   }
 
@@ -200,69 +186,7 @@ export class CanvasTools {
    * 隐藏选中菜单
    */
   hideSelectionMenu() {
-    if (this.selectionMenu) {
-      this.selectionMenu.classList.remove('show');
-    }
-  }
-
-  /**
-   * 计算菜单位置
-   * @param {Object} lineMap 行映射
-   * @param {boolean} isSingleLine 是否单行
-   * @returns {Object} 菜单位置 {x, y}
-   */
-  calculateMenuPosition(lineMap, isSingleLine) {
-    const lines = Object.values(lineMap);
-    const menuWidth = 120; // 菜单宽度
-    const menuHeight = 100; // 菜单高度
-    const arrowHeight = 8; // 箭头高度
-
-    let targetX, targetY;
-
-    if (isSingleLine) {
-      // 单行：对齐选中区域中心上方
-      const lineData = lines[0];
-      const startChar = this.renderer.fullLayoutData.words[lineData.start];
-      const endChar = this.renderer.fullLayoutData.words[lineData.end];
-
-      targetX = (startChar.x + endChar.x + endChar.width) / 2 - menuWidth / 2;
-      targetY =
-        startChar.y -
-        this.renderer.theme.baseFontSize -
-        menuHeight -
-        arrowHeight;
-    } else {
-      // 多行：对齐第一行左侧上方
-      const firstLineData = lines[0];
-      const startChar = this.renderer.fullLayoutData.words[firstLineData.start];
-
-      targetX = startChar.x;
-      targetY =
-        startChar.y -
-        this.renderer.theme.baseFontSize -
-        menuHeight -
-        arrowHeight;
-    }
-
-    // 处理模式偏移
-    let offsetTop = 0;
-    let offsetLeft = 0;
-    if (this.renderer.mode === 'horizontal') {
-      offsetTop =
-        -this.renderer.canvasHeight * this.renderer.viewport.state.currentPage;
-      offsetLeft =
-        this.renderer.canvasWidth * this.renderer.viewport.state.currentPage;
-    }
-
-    // 确保菜单不超出视窗边界
-    const containerRect = this.renderer.scrollContent.getBoundingClientRect();
-    targetX = Math.max(
-      10,
-      Math.min(targetX + offsetLeft, containerRect.width - menuWidth - 10)
-    );
-    targetY = Math.max(10, targetY + offsetTop);
-
-    return { x: targetX, y: targetY };
+    this.selectionMenu.style.display = 'none';
   }
 
   /**
@@ -313,8 +237,13 @@ export class CanvasTools {
       const bar1Rect = bar1.getBoundingClientRect();
       this.startAnchor.style.display = 'inline-block';
       this.startAnchor.style.height = bar1Rect.height + 'px';
-      this.startAnchor.style.left = parseFloat(bar1.style.left) + 'px';
-      this.startAnchor.style.top = parseFloat(bar1.style.top) + 'px';
+      this.anchors.start = {
+        x: parseFloat(bar1.style.left),
+        y: parseFloat(bar1.style.top),
+      };
+      this.startAnchor.style.left = this.anchors.start.x + 'px';
+      this.startAnchor.style.top = this.anchors.start.y + 'px';
+
     }
 
     if (linesArr.length > 0 && bars.length > 0) {
@@ -324,9 +253,12 @@ export class CanvasTools {
       this.endAnchor.style.display = 'inline-block';
       this.endAnchor.style.height = bar2Rect.height + 'px';
       // NOTE: 因为锚点条和圆点是居中布局
-      this.endAnchor.style.left =
-        parseFloat(bar2.style.left) + bar2Rect.width + 'px';
-      this.endAnchor.style.top = parseFloat(bar2.style.top) + 'px';
+      this.anchors.end = {
+        x: parseFloat(bar2.style.left) + bar2Rect.width,
+        y: parseFloat(bar2.style.top),
+      };
+      this.endAnchor.style.left = this.anchors.end.x + 'px';
+      this.endAnchor.style.top = this.anchors.end.y + 'px';
     }
   }
 
@@ -535,5 +467,144 @@ export class CanvasTools {
         y: endRect.top,
       },
     };
+  }
+
+  /**
+   * 渲染Canvas中的高亮
+   * @param {CanvasRenderingContext2D} ctx - Canvas上下文
+   * @param {number} contentStartY - 内容起始Y坐标
+   * @param {number} contentEndY - 内容结束Y坐标
+   */
+  renderCanvasHighlights(ctx, contentStartY, contentEndY) {
+    if (!this.highlightManager) return;
+
+    const highlights = this.highlightManager.getAllHighlights();
+    if (highlights.length === 0) return;
+
+    const words = this.renderer.fullLayoutData.words;
+    if (!words) return;
+
+    highlights.forEach(highlight => {
+      // 检查划线是否在当前Canvas可视区域内
+      if (!highlight.currentPosition) return;
+
+      const { globalStart, globalEnd } = highlight.currentPosition;
+
+      // 检查划线是否与当前Canvas区域有交集
+      if (globalStart >= words.length || globalEnd >= words.length) return;
+
+      const startWord = words[globalStart];
+      const endWord = words[globalEnd];
+      if (!startWord || !endWord) return;
+
+      // 检查Y坐标是否在当前Canvas渲染范围内
+      const highlightTop = startWord.y - this.renderer.theme.baseFontSize;
+      const highlightBottom = endWord.y + this.renderer.theme.baseFontSize;
+
+      if (highlightBottom < contentStartY || highlightTop > contentEndY) {
+        return; // 不在当前Canvas范围内
+      }
+
+      // 按行分组绘制划线
+      this.drawCanvasHighlight(ctx, highlight, globalStart, globalEnd, contentStartY);
+    });
+  }
+
+  /**
+   * 在Canvas上绘制单个划线
+   * @param {CanvasRenderingContext2D} ctx 
+   * @param {Object} highlight 划线对象
+   * @param {number} globalStart 起始字符索引
+   * @param {number} globalEnd 结束字符索引
+   * @param {number} offsetY Canvas偏移Y
+   */
+  drawCanvasHighlight(ctx, highlight, globalStart, globalEnd, offsetY) {
+    const words = this.renderer.fullLayoutData.words;
+
+    // 按行分组
+    const lineMap = {};
+    for (let i = globalStart; i <= globalEnd; i++) {
+      if (i >= words.length) break;
+      const word = words[i];
+      if (!word) continue;
+
+      const line = word.line;
+      if (!lineMap[line]) {
+        lineMap[line] = { start: i, end: i, words: [word] };
+      } else {
+        lineMap[line].end = i;
+        lineMap[line].words.push(word);
+      }
+    }
+
+    // 设置绘制样式
+    const { style } = highlight;
+
+    // 为每行绘制划线
+    Object.values(lineMap).forEach(lineData => {
+      const { start, end } = lineData;
+      const startWord = words[start];
+      const endWord = words[end];
+
+      // 计算在Canvas内的相对位置
+      const canvasY = startWord.y - offsetY;
+      const x = startWord.x;
+      const width = endWord.x + endWord.width - startWord.x;
+      const height = this.renderer.theme.baseFontSize + 2;
+
+      // 只渲染在当前Canvas范围内的部分
+      if (canvasY > -height && canvasY < this.renderer.canvasHeight + height) {
+        this.drawHighlightShape(ctx, {
+          x: x,
+          y: canvasY - this.renderer.theme.baseFontSize + 2,
+          width: width,
+          height: height
+        }, style);
+      }
+    });
+  }
+
+  /**
+   * 绘制划线形状
+   * @param {CanvasRenderingContext2D} ctx 
+   * @param {Object} rect 矩形区域 {x, y, width, height}
+   * @param {Object} style 样式配置
+   */
+  drawHighlightShape(ctx, rect, style) {
+    const { x, y, width, height } = rect;
+
+    // 设置透明度
+    ctx.globalAlpha = style.opacity || 0.3;
+
+    switch (style.type) {
+      case 'highlight':
+        // 高亮背景
+        ctx.fillStyle = style.color || '#FFFF00';
+        ctx.fillRect(x, y, width, height);
+        break;
+
+      case 'underline':
+        // 下划线
+        ctx.strokeStyle = style.color || '#0000FF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y + height);
+        ctx.lineTo(x + width, y + height);
+        ctx.stroke();
+        break;
+
+      case 'strikethrough':
+        // 删除线
+        ctx.strokeStyle = style.color || '#FF0000';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x, y + height / 2);
+        ctx.lineTo(x + width, y + height / 2);
+        ctx.stroke();
+        break;
+    }
+
+    // 恢复透明度
+    ctx.globalAlpha = 1.0;
   }
 }

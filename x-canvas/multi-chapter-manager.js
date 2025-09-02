@@ -447,11 +447,11 @@ class ScrollManager extends ReadMode {
        * @param {'top' | 'bottom'} direction
        */
       show: (direction) => {
-        node?.style[direction] = 0;
-        node?.style.display = 'flex';
+        node.style[direction] = 0;
+        node.style.display = 'flex';
       },
       hide: () => {
-        node?.style.display = 'none';
+        node.style.display = 'none';
       },
     };
   }

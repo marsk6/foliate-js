@@ -174,7 +174,7 @@ class InlineFlowManager {
   collectInlineFlow(inlineNodes, inheritedStyle = {}) {
     const segments = [];
     const styleMap = new Map(); // 记录每个segment对应的样式
-    
+
     let globalTextIndex = 0;
     let segmentIndex = 0;
 
@@ -182,10 +182,10 @@ class InlineFlowManager {
       if (node.type === 'text' || node.type === 'link') {
         // 合并继承样式和节点样式
         const nodeStyle = this.renderer.mergeInheritedStyle(inheritedStyle, node.style || {});
-        
+
         // 分割文本为segments（传递样式用于空白符处理）
         const nodeSegments = this.renderer.segmentText(node.text, nodeStyle);
-        
+
         for (const segment of nodeSegments) {
           const globalSegment = {
             ...segment,
@@ -195,19 +195,19 @@ class InlineFlowManager {
             originalNodeId: node.id || `${node.type}_${segmentIndex}`, // 用于调试
             originalSegmentIndex: segmentIndex // 用于样式映射
           };
-          
+
           segments.push(globalSegment);
-          
+
           // 建立segment到样式的映射
           styleMap.set(segmentIndex, nodeStyle);
-          
+
           segmentIndex++;
         }
-        
+
         globalTextIndex += node.text.length;
       }
     }
-    
+
     return { segments, styleMap };
   }
 
@@ -219,21 +219,21 @@ class InlineFlowManager {
    */
   extractInlineNodes(children, inheritedStyle = {}) {
     const inlineNodes = [];
-    
+
     for (const child of children) {
       if (child.type === 'text' || child.type === 'link') {
         inlineNodes.push(child);
       } else if (child.type === 'element' && this.renderer.isInlineNode(child)) {
         // 内联元素：递归提取其子内容
         const childInheritedStyle = this.renderer.mergeInheritedStyle(
-          inheritedStyle, 
+          inheritedStyle,
           this.renderer.extractInheritableStyles(child.style || {})
         );
         const childInlineNodes = this.extractInlineNodes(child.children || [], childInheritedStyle);
         inlineNodes.push(...childInlineNodes);
       }
     }
-    
+
     return inlineNodes;
   }
 }
@@ -246,13 +246,13 @@ class LineBreaker {
   constructor(renderer) {
     this.renderer = renderer;
     this.measureCtx = renderer.measureCtx;
-    
+
     // 定义不能出现在行首的英语标点符号
     this.englishEndPunctuation = new Set([
       ',', '.', ';', ':', '?', '!', ')', ']', '}',
       '»', '"', "'", '…'
     ]);
-    
+
     // 定义不能出现在行末的英语标点符号
     this.englishStartPunctuation = new Set([
       '(', '[', '{', '«', '"', "'"
@@ -295,13 +295,13 @@ class LineBreaker {
     const lines = [];
     let currentLine = new LineBox();
     let isFirstLine = !isInlineTextContinuation; // 如果是续接文本，则不是首行
-    
+
     // 关键修复：正确设置当前X位置
     let currentX = isFirstLine ? startX + textIndent : startX;
 
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
-      
+
       // 使用正确的字体样式测量宽度
       let segmentWidth;
       if (styleMap && segment.originalSegmentIndex !== undefined) {
@@ -309,7 +309,7 @@ class LineBreaker {
         const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
         const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
         const fontStyle = this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
-        
+
         // 设置正确的字体
         this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
         segmentWidth = this.measureCtx.measureText(segment.content).width;
@@ -337,12 +337,12 @@ class LineBreaker {
         if (breakResult.needBacktrack && currentLine.segments.length > 0) {
           // 找到需要回溯的段数
           const backtrackCount = this.findBacktrackCount(currentLine.segments, segment);
-          
+
           if (backtrackCount > 0) {
             // 从当前行移除需要回溯的段
             const backtrackSegments = currentLine.segments.splice(-backtrackCount);
             const backtrackPositions = currentLine.positions.splice(-backtrackCount);
-            
+
             // 完成当前行（如果还有内容）
             if (currentLine.hasContent()) {
               currentLine.computeMetrics(this.measureCtx);
@@ -357,7 +357,7 @@ class LineBreaker {
             // 将回溯的段添加到新行
             for (let j = 0; j < backtrackSegments.length; j++) {
               const backtrackSegment = backtrackSegments[j];
-              
+
               // 重新测量回溯段的宽度
               let backtrackWidth;
               if (styleMap && backtrackSegment.originalSegmentIndex !== undefined) {
@@ -365,13 +365,13 @@ class LineBreaker {
                 const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
                 const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
                 const fontStyle = this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
-                
+
                 this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
                 backtrackWidth = this.measureCtx.measureText(backtrackSegment.content).width;
               } else {
                 backtrackWidth = this.measureCtx.measureText(backtrackSegment.content).width;
               }
-              
+
               currentLine.addSegment(backtrackSegment, currentX);
               currentX += backtrackWidth;
             }
@@ -430,23 +430,23 @@ class LineBreaker {
   findBacktrackCount(currentSegments, problematicSegment) {
     // 对于不能出现在行首的标点符号，至少要回溯1个非空格段
     let backtrackCount = 0;
-    
+
     // 从行末开始向前查找，跳过空格
     for (let i = currentSegments.length - 1; i >= 0; i--) {
       const segment = currentSegments[i];
       backtrackCount++;
-      
+
       // 如果遇到非空格的段，停止回溯
       if (segment.type !== 'space') {
         break;
       }
-      
+
       // 避免回溯过多
       if (backtrackCount >= 3) {
         break;
       }
     }
-    
+
     return backtrackCount;
   }
 
@@ -492,27 +492,27 @@ class LineBreaker {
     if (segment.type === 'punctuation') {
       // 标点符号的特殊处理
       const punctuation = segment.content;
-      
+
       // 检查是否是不能出现在行首的英语标点符号
       if (this.isEnglishEndPunctuation(punctuation)) {
         // 这类标点符号不能出现在行首
         if (hasContentInLine) {
           // 当前行有内容，需要换行并回溯
-          return { 
-            shouldBreak: true, 
-            skipSegment: false, 
-            needBacktrack: true 
+          return {
+            shouldBreak: true,
+            skipSegment: false,
+            needBacktrack: true
           };
         } else {
           // 如果是行首，强制放置以避免无限循环
-          return { 
-            shouldBreak: false, 
-            skipSegment: false, 
-            needBacktrack: false 
+          return {
+            shouldBreak: false,
+            skipSegment: false,
+            needBacktrack: false
           };
         }
       }
-      
+
       // 其他标点符号（包括中文标点）可以正常换行
       return hasContentInLine
         ? { shouldBreak: true, skipSegment: false, needBacktrack: false }
@@ -585,10 +585,10 @@ class LineBox {
           const fontWeight = segmentStyle.fontWeight || 'normal';
           const fontStyle = segmentStyle.fontStyle || 'normal';
           const fontFamily = segmentStyle.fontFamily || 'system-ui, sans-serif';
-          
+
           measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize} ${fontFamily}`;
         }
-        
+
         totalWidth += measureCtx.measureText(segment.content).width;
       } else {
         // 回退到近似计算
@@ -644,11 +644,11 @@ class LineStylist {
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
       const line = lines[lineIndex];
       const lineMetric = lineMetrics[lineIndex];
-      
+
       // 计算文本对齐的偏移量（基于已有位置进行调整）
       let alignmentOffsetX = 0;
       let justifySpaceDistribution = new Map(); // 用于存储每个空格应该增加的宽度
-      
+
       if (textAlign === 'center' || textAlign === 'right' || textAlign === 'justify') {
         // 重新计算行的实际宽度
         let lineWidth = 0;
@@ -658,14 +658,14 @@ class LineStylist {
           const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
           const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
           const fontStyle = this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
-          
+
           this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
           lineWidth += this.measureCtx.measureText(segment.content).width;
         }
-        
+
         const contentWidth = availableWidth - (line.isFirstLine ? textIndent : 0);
         const remainingSpace = contentWidth - lineWidth;
-        
+
         if (textAlign === 'center') {
           alignmentOffsetX = remainingSpace / 2;
         } else if (textAlign === 'right') {
@@ -683,7 +683,7 @@ class LineStylist {
                 spaceSegments.push(i);
               }
             }
-            
+
             if (spaceSegments.length > 0) {
               // 将剩余空间均分到每个空格
               const additionalSpacePerGap = remainingSpace / spaceSegments.length;
@@ -694,17 +694,17 @@ class LineStylist {
           }
         }
       }
-      
+
       // 计算两端对齐时的累积偏移
       let justifyOffsetX = 0;
-      
+
       for (let segmentIndex = 0; segmentIndex < line.segments.length; segmentIndex++) {
         const segment = line.segments[segmentIndex];
         const position = line.positions[segmentIndex];
-        
+
         // 获取该segment的样式
         const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
-        
+
         // 解析样式属性
         const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
         const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
@@ -717,7 +717,7 @@ class LineStylist {
 
         // 计算最终的X位置（包含对齐偏移和两端对齐偏移）
         let finalX = position.x + alignmentOffsetX + justifyOffsetX;
-        
+
         // 如果是空格且需要两端对齐，则增加额外的宽度
         let finalWidth = segmentWidth;
         if (segment.type === 'space' && justifySpaceDistribution.has(segmentIndex)) {
@@ -800,7 +800,7 @@ class LineStylist {
     // 创建简单的样式映射（所有segment使用相同样式）
     const styleMap = new Map();
     let segmentIndex = 0;
-    
+
     for (const line of lines) {
       for (const segment of line.segments) {
         styleMap.set(segmentIndex, styleContext.style || {});
@@ -820,7 +820,7 @@ class LineStylist {
    */
   calculateLineAlignment(line, textAlign, styleContext) {
     const { availableWidth, startX } = styleContext;
-    
+
     // 重新计算行的实际宽度
     let lineWidth = 0;
     for (const segment of line.segments) {
@@ -830,14 +830,14 @@ class LineStylist {
     switch (textAlign) {
       case 'center':
         return startX + (availableWidth - lineWidth) / 2;
-      
+
       case 'right':
         return startX + availableWidth - lineWidth;
-      
+
       case 'justify':
         // 两端对齐：起始位置是左对齐，具体的空间分布在 applyStylesToLines 中处理
         return startX;
-      
+
       case 'left':
       default:
         return startX;
@@ -912,7 +912,7 @@ export class VirtualCanvasRenderer {
   defaultImageHeight = 150;
 
   /** @type {CanvasTools} 画布工具 */
-  tools;
+  canvasTools;
 
   /** @type {HTMLCanvasElement[]} Canvas池 */
   canvasList = [];
@@ -1120,7 +1120,7 @@ export class VirtualCanvasRenderer {
     this.viewport.canvasInfoList.forEach((canvasInfo) => {
       canvasInfo.needsRerender = true;
     });
-    
+
     // 布局完成后恢复划线
     setTimeout(() => {
       if (this.canvasTools) {
@@ -1131,7 +1131,7 @@ export class VirtualCanvasRenderer {
 
   render() {
     this.renderVisibleContent();
-    
+
     // 渲染完成后恢复划线
     setTimeout(() => {
       if (this.canvasTools) {
@@ -1445,9 +1445,9 @@ export class VirtualCanvasRenderer {
       // 渲染内容（相对于Canvas的偏移）
       this.renderCanvasText(canvasWords, ctx, contentStartY);
       this.renderCanvasElements(canvasElements, ctx, contentStartY);
-      
+
       // 渲染划线
-      this.renderCanvasHighlights(ctx, contentStartY, contentEndY);
+      this.canvasTools.renderCanvasHighlights(ctx, contentStartY, contentEndY);
     }
   }
 
@@ -1464,7 +1464,7 @@ export class VirtualCanvasRenderer {
       if (word.type === 'space') {
         return;
       }
-      
+
       const { style } = word;
 
       // 使用兼容的样式访问方式
@@ -1497,144 +1497,6 @@ export class VirtualCanvasRenderer {
     });
   }
 
-  /**
-   * 渲染Canvas中的划线
-   * @param {CanvasRenderingContext2D} ctx
-   * @param {number} contentStartY - 当前Canvas内容的起始Y位置
-   * @param {number} contentEndY - 当前Canvas内容的结束Y位置
-   */
-  renderCanvasHighlights(ctx, contentStartY, contentEndY) {
-    if (!this.canvasTools || !this.canvasTools.highlightManager) return;
-    
-    const highlights = this.canvasTools.highlightManager.getAllHighlights();
-    if (highlights.length === 0) return;
-
-    const words = this.fullLayoutData.words;
-    if (!words) return;
-
-    highlights.forEach(highlight => {
-      // 检查划线是否在当前Canvas可视区域内
-      if (!highlight.currentPosition) return;
-
-      const { globalStart, globalEnd } = highlight.currentPosition;
-      
-      // 检查划线是否与当前Canvas区域有交集
-      if (globalStart >= words.length || globalEnd >= words.length) return;
-      
-      const startWord = words[globalStart];
-      const endWord = words[globalEnd];
-      if (!startWord || !endWord) return;
-
-      // 检查Y坐标是否在当前Canvas渲染范围内
-      const highlightTop = startWord.y - this.theme.baseFontSize;
-      const highlightBottom = endWord.y + this.theme.baseFontSize;
-      
-      if (highlightBottom < contentStartY || highlightTop > contentEndY) {
-        return; // 不在当前Canvas范围内
-      }
-
-      // 按行分组绘制划线
-      this.drawCanvasHighlight(ctx, highlight, globalStart, globalEnd, contentStartY);
-    });
-  }
-
-  /**
-   * 在Canvas上绘制单个划线
-   * @param {CanvasRenderingContext2D} ctx 
-   * @param {Object} highlight 划线对象
-   * @param {number} globalStart 起始字符索引
-   * @param {number} globalEnd 结束字符索引
-   * @param {number} offsetY Canvas偏移Y
-   */
-  drawCanvasHighlight(ctx, highlight, globalStart, globalEnd, offsetY) {
-    const words = this.fullLayoutData.words;
-    
-    // 按行分组
-    const lineMap = {};
-    for (let i = globalStart; i <= globalEnd; i++) {
-      if (i >= words.length) break;
-      const word = words[i];
-      if (!word) continue;
-      
-      const line = word.line;
-      if (!lineMap[line]) {
-        lineMap[line] = { start: i, end: i, words: [word] };
-      } else {
-        lineMap[line].end = i;
-        lineMap[line].words.push(word);
-      }
-    }
-
-    // 设置绘制样式
-    const { style } = highlight;
-    
-    // 为每行绘制划线
-    Object.values(lineMap).forEach(lineData => {
-      const { start, end } = lineData;
-      const startWord = words[start];
-      const endWord = words[end];
-      
-      // 计算在Canvas内的相对位置
-      const canvasY = startWord.y - offsetY;
-      const x = startWord.x;
-      const width = endWord.x + endWord.width - startWord.x;
-      const height = this.theme.baseFontSize + 2;
-      
-      // 只渲染在当前Canvas范围内的部分
-      if (canvasY > -height && canvasY < this.canvasHeight + height) {
-        this.drawHighlightShape(ctx, {
-          x: x,
-          y: canvasY - this.theme.baseFontSize + 2,
-          width: width,
-          height: height
-        }, style);
-      }
-    });
-  }
-
-  /**
-   * 绘制划线形状
-   * @param {CanvasRenderingContext2D} ctx 
-   * @param {Object} rect 矩形区域 {x, y, width, height}
-   * @param {Object} style 样式配置
-   */
-  drawHighlightShape(ctx, rect, style) {
-    const { x, y, width, height } = rect;
-    
-    // 设置透明度
-    ctx.globalAlpha = style.opacity || 0.3;
-    
-    switch (style.type) {
-      case 'highlight':
-        // 高亮背景
-        ctx.fillStyle = style.color || '#FFFF00';
-        ctx.fillRect(x, y, width, height);
-        break;
-        
-      case 'underline':
-        // 下划线
-        ctx.strokeStyle = style.color || '#0000FF';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x, y + height);
-        ctx.lineTo(x + width, y + height);
-        ctx.stroke();
-        break;
-        
-      case 'strikethrough':
-        // 删除线
-        ctx.strokeStyle = style.color || '#FF0000';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x, y + height / 2);
-        ctx.lineTo(x + width, y + height / 2);
-        ctx.stroke();
-        break;
-    }
-    
-    // 恢复透明度
-    ctx.globalAlpha = 1.0;
-  }
 
 
 
@@ -1799,9 +1661,8 @@ export class VirtualCanvasRenderer {
     if (element.isScaled) {
       ctx.fillStyle = '#888';
       ctx.font = '10px system-ui';
-      const scaleText = `${element.originalWidth}×${
-        element.originalHeight
-      } → ${Math.round(element.width)}×${Math.round(element.height)}`;
+      const scaleText = `${element.originalWidth}×${element.originalHeight
+        } → ${Math.round(element.width)}×${Math.round(element.height)}`;
       const scaleWidth = ctx.measureText(scaleText).width;
       const scaleX = element.x + (element.width - scaleWidth) / 2;
       const scaleY = canvasY + element.height - 8;
@@ -1877,7 +1738,7 @@ export class VirtualCanvasRenderer {
       const wordCenterY = word.y; // 基线位置
       const distance = Math.sqrt(
         Math.pow(contentX - wordCenterX, 2) +
-          Math.pow(contentY - wordCenterY, 2)
+        Math.pow(contentY - wordCenterY, 2)
       );
 
       if (distance < minDistance) {
@@ -1952,13 +1813,13 @@ export class VirtualCanvasRenderer {
     if (node.type === 'text' || node.type === 'link') {
       return true;
     }
-    
+
     // 检查元素节点是否为内联元素
     if (node.type === 'element') {
       const style = node.style || {};
       return !this.isBlockElement(style);
     }
-    
+
     return false;
   }
 
@@ -1971,7 +1832,7 @@ export class VirtualCanvasRenderer {
       // 字体相关
       'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
       'lineHeight', 'letterSpacing', 'wordSpacing',
-      
+
       // 文本相关  
       'color', 'textAlign', 'textIndent'
     ];
@@ -1985,13 +1846,13 @@ export class VirtualCanvasRenderer {
   extractInheritableStyles(style) {
     const inheritableStyles = {};
     const inheritableProps = this.getInheritableStyleProperties();
-    
+
     inheritableProps.forEach(prop => {
       if (style && style[prop] !== undefined) {
         inheritableStyles[prop] = style[prop];
       }
     });
-    
+
     return inheritableStyles;
   }
 
@@ -2042,7 +1903,7 @@ export class VirtualCanvasRenderer {
           return; // 跳过默认的对齐方式
         }
 
-        
+
         normalized[prop] = value;
       }
     });
@@ -2073,12 +1934,12 @@ export class VirtualCanvasRenderer {
 
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
-      
+
       // 检查当前节点是否是内联节点且前一个节点也是内联节点
       const currentNodeIsInline = this.isInlineNode(node);
       const currentNodeIsInlineText = this.isInlineTextNode(node);
       let isInlineTextContinuation = currentNodeIsInlineText && lastNodeWasInline;
-      
+
       // 对于第一个节点，使用传入的状态
       if (i === 0) {
         isInlineTextContinuation = currentNodeIsInlineText && firstNodeInlineTextContinuation;
@@ -2096,7 +1957,7 @@ export class VirtualCanvasRenderer {
       // - 如果当前节点是内联元素，result.x 是当前行的结束位置
       // - 无论哪种情况，都直接使用 result.x，因为 layoutNode 已经正确处理了
       x = result.x;
-      
+
       lastNodeWasInline = currentNodeIsInline;
     }
 
@@ -2119,10 +1980,10 @@ export class VirtualCanvasRenderer {
     if (node.type === 'text') {
       // 文本节点的样式：继承的样式 + 节点自身的特有样式
       const nodeStyle = node.style || {};
-      
+
       // 合并继承样式和节点特有样式（节点样式优先）
       const textStyle = this.mergeInheritedStyle(inheritedStyle, nodeStyle);
-      
+
       return this.layoutText(
         node.text,
         textStyle,
@@ -2156,7 +2017,7 @@ export class VirtualCanvasRenderer {
 
     // 直接使用节点的样式，HTMLParser已经处理了默认样式合并
     const currentNodeStyle = node.style || {};
-    
+
     // 准备传递给子节点的继承样式：从当前节点提取可继承样式并与父节点继承样式合并
     const currentInheritableStyles = this.extractInheritableStyles(currentNodeStyle);
     const inheritedStyleForChildren = this.mergeInheritedStyle(inheritedStyle, currentInheritableStyles);
@@ -2257,22 +2118,22 @@ export class VirtualCanvasRenderer {
     } else if (node.children && node.children.length > 0) {
       // 判断是否为块级元素
       const isBlockElement = this.isBlockElement(currentNodeStyle);
-      
+
       if (isBlockElement) {
         // 块级元素：使用内联流处理方式
         const inlineChildren = this.inlineFlowManager.extractInlineNodes(node.children, inheritedStyleForChildren);
-        
+
         if (inlineChildren.length > 0) {
           // 收集整个内联流
           const { segments, styleMap } = this.inlineFlowManager.collectInlineFlow(inlineChildren, inheritedStyleForChildren);
-          
+
           if (segments.length > 0) {
             // 计算布局参数
             const rightPadding = this.parseSize(this.getStyleProperty(currentNodeStyle, 'paddingRight')) || 0;
             const availableWidth = this.canvasWidth - this.theme.paddingX * 2 - rightPadding;
             const textIndent = this.parseSize(this.getStyleProperty(currentNodeStyle, 'textIndent')) || 0;
             const textAlign = this.getStyleProperty(currentNodeStyle, 'textAlign') || 'left';
-            
+
             // 第一阶段：统一分行
             const layoutContext = {
               availableWidth,
@@ -2281,7 +2142,7 @@ export class VirtualCanvasRenderer {
               isInlineTextContinuation
             };
             const lines = this.lineBreaker.breakIntoLines(segments, layoutContext, styleMap);
-            
+
             // 第二阶段：样式应用
             const styleContext = {
               textAlign,
@@ -2293,32 +2154,32 @@ export class VirtualCanvasRenderer {
               textIndent
             };
             const styledWords = this.lineStylist.applyStylesToLines(lines, styleMap, styleContext);
-            
+
             // 添加到渲染系统
             let finalX = x;
             let finalY = y;
             let finalLine = line;
-            
+
             for (const styledWord of styledWords) {
               const adjustedWord = this.addWordToChunk(styledWord);
               words.push(adjustedWord);
-              
+
               finalX = adjustedWord.x + adjustedWord.width;
               finalY = adjustedWord.y;
               finalLine = adjustedWord.line;
             }
-            
+
             x = finalX;
             y = finalY;
             line = finalLine;
           }
         }
-        
+
         // 处理非内联子节点（如图片等）
-        const nonInlineChildren = node.children.filter(child => 
+        const nonInlineChildren = node.children.filter(child =>
           !(child.type === 'text' || child.type === 'link' || (child.type === 'element' && this.isInlineNode(child)))
         );
-        
+
         if (nonInlineChildren.length > 0) {
           const result = this.layoutNodesWithInlineState(
             nonInlineChildren,
@@ -2473,10 +2334,10 @@ export class VirtualCanvasRenderer {
     }
 
     // 返回最终位置信息
-    return { 
-      x: finalX, 
-      y: finalY, 
-      line: finalLine 
+    return {
+      x: finalX,
+      y: finalY,
+      line: finalLine
     };
   }
 
@@ -2501,12 +2362,12 @@ export class VirtualCanvasRenderer {
   segmentText(text, style = {}) {
     // 首先规范化空白符
     const normalizedText = this.normalizeWhitespace(text);
-    
+
     // 如果文本为空，直接返回
     if (!normalizedText) {
       return [];
     }
-    
+
     const segments = [];
 
     const regex =
@@ -2767,88 +2628,8 @@ export class VirtualCanvasRenderer {
       poolSize,
       onViewportChange: this.handleViewportChange.bind(this),
     };
-          this.viewport = new Viewport(config);
-    }
+    this.viewport = new Viewport(config);
   }
 
-  // ================= 划线管理API =================
-
-  /**
-   * 注册内容段落到划线系统
-   * @param {string} type 段落类型 (original/translation/hint/note)
-   * @param {string} content 段落内容
-   * @param {number} startChar 起始字符位置
-   * @param {number} endChar 结束字符位置
-   * @param {string} originalId 关联的原始段落ID（可选）
-   * @param {Object} metadata 元数据（可选）
-   * @returns {string} 段落ID
-   */
-  registerContentSegment(type, content, startChar, endChar, originalId = null, metadata = {}) {
-    if (this.canvasTools && this.canvasTools.highlightManager) {
-      return this.canvasTools.highlightManager.registerContentSegment(
-        type, content, startChar, endChar, originalId, metadata
-      );
-    }
-    return null;
-  }
-
-  /**
-   * 批量注册内容段落
-   * @param {Array} segments 段落数组，每个元素包含 {type, content, startChar, endChar, originalId?, metadata?}
-   */
-  registerContentSegments(segments) {
-    if (this.canvasTools && this.canvasTools.highlightManager) {
-      this.canvasTools.highlightManager.registerContentSegments(segments);
-    }
-  }
-
-  /**
-   * 获取所有划线
-   * @returns {Array} 划线列表
-   */
-  getAllHighlights() {
-    return this.canvasTools ? this.canvasTools.getAllHighlights() : [];
-  }
-
-  /**
-   * 清除所有划线
-   */
-  clearHighlights() {
-    if (this.canvasTools) {
-      this.canvasTools.clearHighlights();
-    }
-  }
-
-  /**
-   * 手动恢复划线（通常不需要调用，系统会自动处理）
-   */
-  restoreHighlights() {
-    if (this.canvasTools) {
-      this.canvasTools.restoreHighlights();
-    }
-  }
-
-  /**
-   * 程序化添加划线
-   * @param {Object} selection 选中区域信息
-   * @param {Object} options 划线选项
-   * @returns {Object} 创建的划线对象
-   */
-  addHighlight(selection, options = {}) {
-    if (this.canvasTools && this.canvasTools.highlightManager) {
-      return this.canvasTools.highlightManager.addHighlight(selection, options);
-    }
-    return null;
-  }
-
-  /**
-   * 删除指定划线
-   * @param {string} highlightId 划线ID
-   */
-  removeHighlight(highlightId) {
-    if (this.canvasTools && this.canvasTools.highlightManager) {
-      this.canvasTools.highlightManager.removeHighlight(highlightId);
-    }
-  }
 }
 export default VirtualCanvasRenderer;

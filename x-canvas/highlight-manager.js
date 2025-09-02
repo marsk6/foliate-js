@@ -319,7 +319,7 @@ export class HighlightManager {
    * @param {Object} highlight - 划线对象
    */
   renderHighlight(highlight) {
-    // Canvas版本不需要DOM操作，划线会在renderCanvasHighlights中绘制
+    // Canvas版本不需要DOM操作，划线会在CanvasTools.renderCanvasHighlights中绘制
     // 这里只需要确保划线数据被正确存储
     if (!highlight.currentPosition) {
       // 如果没有当前位置，使用存储的位置

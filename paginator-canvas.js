@@ -1,7 +1,6 @@
 import { MultiChapterManager } from './x-canvas/multi-chapter-manager.js';
 
 
-
 // NOTE: everything here assumes the so-called "negative scroll type" for RTL
 // NOTE: 整体的布局 header（标题） container（book） footer（进度）
 
@@ -31,82 +30,8 @@ export class Paginator extends HTMLElement {
     sections = []
     constructor() {
         super()
-        this.#root.innerHTML = `<style>
-        * {
-            box-sizing: border-box;
-        }
-        :host {
-            font-family: system-ui, sans-serif;
-            background: #f8f8f8;
-            -webkit-user-select: none; /* 禁止选中文本 */
-            -webkit-touch-callout: none; /* 禁止长按弹出菜单 */
-            touch-action: manipulation; /* 禁止双指缩放、双击放大等 */
-            user-select: none;
-            height: 100vh;
-            margin: 0;
-        }
-        .canvas-wrap {
-            position: relative;
-            -webkit-user-select: none;
-            user-select: none;
-        }
-        #renderCanvas {
-            width: 100%;
-            height: 100%;
-        }
-        .anchor {
-            position: absolute;
-            z-index: 10;
-            pointer-events: auto;
-            background: none;
-            border: none;
-            display: none;
-        }
-        .anchor-inner {
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            height: 100%;
-        }
-        .anchor-line {
-            width: 3px;
-            height: 100%;
-            background: #007aff;
-        }
-        .anchor-dot {
-            position: absolute;
-            width: 10px;
-            height: 10px;
-            background: #007aff;
-            border-radius: 10px;
-        }
-
-        #startAnchor .anchor-dot {
-            top: -10px;
-        }
-
-        #endAnchor .anchor-dot {
-            bottom: -10px;
-        }
-
-        .highlight-bar {
-            position: absolute;
-            background: #007aff;
-            opacity: 0.2;
-            pointer-events: none;
-        }
-        .highlight-layer {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 2;
-        }
-
-        </style>
+        this.#root.innerHTML = `
+        <link rel="stylesheet" href="http://localhost:5173/styles.css">
         <div class="canvas-wrap">
             <div id="renderCanvas"></div>
         </div>
