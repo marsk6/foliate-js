@@ -119,8 +119,8 @@ export class CanvasTools {
           // 添加划线，使用默认黄色高亮
           const highlightId = this.addHighlight({
             chapterIndex: selection.chapterIndex,
-            startIdx: selection.startIdx,
-            endIdx: selection.endIdx,
+            startTokenId: selection.startTokenId,
+            endTokenId: selection.endTokenId,
             text: selection.text,
             style: {
               type: 'highlight',
@@ -293,11 +293,17 @@ export class CanvasTools {
       _globalEndOffset: max,
     };
 
+    // 获取起始和结束词的tokenId
+    const startTokenId = charPos[min] ? charPos[min].tokenId : null;
+    const endTokenId = charPos[max] ? charPos[max].tokenId : null;
+
     this.selection = {
       range: range,
       text: selectedText,
       startIdx: min,
       endIdx: max,
+      startTokenId: startTokenId,
+      endTokenId: endTokenId,
       chapterIndex: renderer.chapterIndex, // 添加章节索引
     };
 
@@ -410,7 +416,7 @@ export class CanvasTools {
 
   /**
    * 添加新的高亮
-   * @param {Object} highlightData 高亮数据 {startIdx, endIdx, text, style}
+   * @param {Object} highlightData 高亮数据 {startTokenId, endTokenId, text, style}
    * @returns {string} 高亮ID
    */
   addHighlight(highlightData) {
@@ -419,8 +425,8 @@ export class CanvasTools {
       id,
       position: {
         chapterIndex: highlightData.chapterIndex,
-        startIdx: highlightData.startIdx,
-        endIdx: highlightData.endIdx,
+        startTokenId: highlightData.startTokenId,
+        endTokenId: highlightData.endTokenId,
       },
       text: highlightData.text,
       style: highlightData.style || {
@@ -448,6 +454,42 @@ export class CanvasTools {
    */
   removeHighlight(highlightId) {
     return this.highlights.delete(highlightId);
+  }
+
+  /**
+   * 根据tokenId查找word在words数组中的索引
+   * @param {string} tokenId 
+   * @returns {number|null} word索引，如果未找到返回null
+   */
+  findWordIndexByTokenId(tokenId) {
+    if (!this.renderer.fullLayoutData || !this.renderer.fullLayoutData.words) {
+      return null;
+    }
+    
+    const words = this.renderer.fullLayoutData.words;
+    for (let i = 0; i < words.length; i++) {
+      if (words[i].tokenId === tokenId) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 根据tokenId范围获取对应的索引范围
+   * @param {string} startTokenId 
+   * @param {string} endTokenId 
+   * @returns {Object|null} {startIdx, endIdx} 或 null
+   */
+  getIndexRangeByTokenIds(startTokenId, endTokenId) {
+    const startIdx = this.findWordIndexByTokenId(startTokenId);
+    const endIdx = this.findWordIndexByTokenId(endTokenId);
+    
+    if (startIdx === null || endIdx === null) {
+      return null;
+    }
+    
+    return { startIdx, endIdx };
   }
 
   /**
@@ -484,13 +526,20 @@ export class CanvasTools {
       // 检查划线是否在当前Canvas可视区域内
       if (!highlight.position) return;
 
-      const { startIdx, endIdx } = highlight.position;
+      const { startTokenId, endTokenId } = highlight.position;
+      
+      // 根据tokenId获取索引范围
+      const indexRange = this.getIndexRangeByTokenIds(startTokenId, endTokenId);
+      if (!indexRange) return; // tokenId未找到，可能是文本已更新
+      
+      const { startIdx, endIdx } = indexRange;
+      const words = this.renderer.fullLayoutData.words;
 
       // 检查划线是否与当前Canvas区域有交集
-      if (globalStart >= words.length || globalEnd >= words.length) return;
+      if (startIdx >= words.length || endIdx >= words.length) return;
 
-      const startWord = words[globalStart];
-      const endWord = words[globalEnd];
+      const startWord = words[startIdx];
+      const endWord = words[endIdx];
       if (!startWord || !endWord) return;
 
       // 检查Y坐标是否在当前Canvas渲染范围内
@@ -505,8 +554,8 @@ export class CanvasTools {
       this.drawCanvasHighlight(
         ctx,
         highlight,
-        globalStart,
-        globalEnd,
+        startIdx,
+        endIdx,
         contentStartY
       );
     });
@@ -516,16 +565,16 @@ export class CanvasTools {
    * 在Canvas上绘制单个划线
    * @param {CanvasRenderingContext2D} ctx
    * @param {Object} highlight 划线对象
-   * @param {number} globalStart 起始字符索引
-   * @param {number} globalEnd 结束字符索引
+   * @param {number} startIdx 起始字符索引
+   * @param {number} endIdx 结束字符索引
    * @param {number} offsetY Canvas偏移Y
    */
-  drawCanvasHighlight(ctx, highlight, globalStart, globalEnd, offsetY) {
+  drawCanvasHighlight(ctx, highlight, startIdx, endIdx, offsetY) {
     const words = this.renderer.fullLayoutData.words;
 
     // 按行分组
     const lineMap = {};
-    for (let i = globalStart; i <= globalEnd; i++) {
+    for (let i = startIdx; i <= endIdx; i++) {
       if (i >= words.length) break;
       const word = words[i];
       if (!word) continue;

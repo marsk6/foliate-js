@@ -729,6 +729,7 @@ class LineStylist {
 
         // 使用 LineBreaker 计算的位置 + 对齐偏移 + 两端对齐偏移
         const styledWord = {
+          tokenId: `word_${this.renderer.globalTokenCounter++}`, // 添加唯一tokenId
           x: finalX,
           y: currentY,
           width: finalWidth,
@@ -919,6 +920,9 @@ export class VirtualCanvasRenderer {
 
   /** @type {number} 章节索引 */
   chapterIndex = 0;
+
+  /** @type {number} 全局tokenId计数器，为每个word生成唯一标识 */
+  globalTokenCounter = 0;
 
   /**
    * @param {VirtualRenderConfig} config
