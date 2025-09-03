@@ -886,8 +886,8 @@ export class VirtualCanvasRenderer {
   /** @type {HTMLParser} HTML转换引擎实例 */
   htmlParser;
 
-  /** @type {Array|null} 解析后的节点数据 */
-  parsedNodes = null;
+  /** @type {Array|null} 解析后的节点数据（内部存储） */
+  _parsedNodes = null;
 
   /** @type {string|undefined} 当前HTML内容 */
   currentHTML;
@@ -923,6 +923,19 @@ export class VirtualCanvasRenderer {
 
   /** @type {number} 全局tokenId计数器，为每个word生成唯一标识 */
   globalTokenCounter = 0;
+
+  // 增量计算缓存系统
+  /** @type {Map} 节点计算结果缓存 */
+  nodeCache = new Map();
+  
+  /** @type {Set} 需要重新计算的节点ID集合 */
+  dirtyNodes = new Set();
+  
+  /** @type {number} 节点ID计数器 */
+  nodeIdCounter = 0;
+  
+  /** @type {Proxy} parsedNodes的代理对象 */
+  _parsedNodesProxy = null;
 
   /**
    * @param {VirtualRenderConfig} config
@@ -978,6 +991,402 @@ export class VirtualCanvasRenderer {
 
     // 初始化划线工具（延迟到DOM创建后）
     this.canvasTools = null;
+  }
+
+  /**
+   * 获取parsedNodes的代理对象
+   */
+  get parsedNodes() {
+    return this._parsedNodesProxy;
+  }
+
+  /**
+   * 设置parsedNodes并创建代理监听
+   */
+  set parsedNodes(nodes) {
+    this._parsedNodes = nodes;
+    if (nodes) {
+      this._parsedNodesProxy = this.createParsedNodesProxy(nodes);
+      this.assignNodeIds(nodes);
+    } else {
+      this._parsedNodesProxy = null;
+    }
+  }
+
+  /**
+   * 为节点树分配唯一ID
+   * @param {Array} nodes 
+   */
+  assignNodeIds(nodes) {
+    const traverse = (nodeList) => {
+      nodeList.forEach(node => {
+        if (!node._nodeId) {
+          node._nodeId = `node_${this.nodeIdCounter++}`;
+        }
+        if (node.children) {
+          traverse(node.children);
+        }
+      });
+    };
+    traverse(nodes);
+  }
+
+  /**
+   * 创建parsedNodes的Proxy代理
+   * @param {Array} nodes 
+   * @returns {Proxy}
+   */
+  createParsedNodesProxy(nodes) {
+    const self = this;
+    
+    return new Proxy(nodes, {
+      set(target, property, value) {
+        const result = Reflect.set(target, property, value);
+        
+        // 监听数组修改操作
+        if (typeof property === 'string' && !isNaN(property)) {
+          const index = parseInt(property);
+          if (value && typeof value === 'object') {
+            // 新增或修改节点
+            self.handleNodeChange(value, 'add');
+          }
+        }
+        
+        return result;
+      },
+      
+      get(target, property) {
+        const value = Reflect.get(target, property);
+        
+        // 包装数组方法以监听变化
+        if (typeof value === 'function') {
+          return self.wrapArrayMethod(target, property, value);
+        }
+        
+        return value;
+      }
+    });
+  }
+
+  /**
+   * 包装数组方法以监听变化
+   * @param {Array} target 
+   * @param {string} methodName 
+   * @param {Function} originalMethod 
+   * @returns {Function}
+   */
+  wrapArrayMethod(target, methodName, originalMethod) {
+    const self = this;
+    
+    if (['push', 'unshift', 'splice', 'pop', 'shift'].includes(methodName)) {
+      return function(...args) {
+        const result = originalMethod.apply(target, args);
+        
+        // 处理新增的节点
+        if (methodName === 'push' || methodName === 'unshift') {
+          args.forEach(node => {
+            if (node && typeof node === 'object') {
+              self.handleNodeChange(node, 'add');
+            }
+          });
+        } else if (methodName === 'splice' && args.length > 2) {
+          // splice可能同时删除和添加
+          const addedNodes = args.slice(2);
+          addedNodes.forEach(node => {
+            if (node && typeof node === 'object') {
+              self.handleNodeChange(node, 'add');
+            }
+          });
+        }
+        
+        return result;
+      };
+    }
+    
+    return originalMethod;
+  }
+
+  /**
+   * 处理节点变化
+   * @param {Object} node 
+   * @param {string} changeType 
+   */
+  handleNodeChange(node, changeType) {
+    if (changeType === 'add') {
+      // 为新节点分配ID
+      this.assignNodeIds([node]);
+      
+      // 标记节点及其子节点为需要重新计算
+      this.markNodeDirty(node);
+      
+      // 触发增量重新布局
+      this.scheduleIncrementalLayout();
+    }
+  }
+
+  /**
+   * 标记节点为需要重新计算
+   * @param {Object} node 
+   */
+  markNodeDirty(node) {
+    if (node._nodeId) {
+      this.dirtyNodes.add(node._nodeId);
+    }
+    
+    // 递归标记子节点
+    if (node.children) {
+      node.children.forEach(child => this.markNodeDirty(child));
+    }
+  }
+
+  /**
+   * 调度增量布局计算
+   */
+  scheduleIncrementalLayout() {
+    // 防止频繁触发，使用RAF延迟执行
+    if (this._layoutTimeout) {
+      clearTimeout(this._layoutTimeout);
+    }
+    
+    this._layoutTimeout = setTimeout(() => {
+      this.performIncrementalLayout();
+    }, 16); // 大约一帧的时间
+  }
+
+  /**
+   * 执行增量布局计算
+   */
+  performIncrementalLayout() {
+    if (this.dirtyNodes.size === 0) return;
+
+    // 只重新计算脏节点的结果，然后统一重排坐标
+    this.calculateDirtyNodes();
+    
+    // 重新计算整体布局坐标
+    this.recalculateAllCoordinates();
+    
+    // 清除脏节点标记
+    this.dirtyNodes.clear();
+    
+    // 触发重新渲染
+    if (this.viewport && this.fullLayoutData) {
+      this.viewport.setContentRange(
+        this.mode === 'vertical'
+          ? this.fullLayoutData.totalHeight
+          : this.fullLayoutData.totalWidth
+      );
+      
+      this.viewport.canvasInfoList.forEach((canvasInfo) => {
+        canvasInfo.needsRerender = true;
+      });
+      
+      this.renderVisibleContent();
+    }
+  }
+
+  /**
+   * 计算脏节点的结果
+   */
+  calculateDirtyNodes() {
+    if (!this._parsedNodes) return;
+
+    const traverse = (nodeList) => {
+      nodeList.forEach(node => {
+        if (node._nodeId && this.dirtyNodes.has(node._nodeId)) {
+          // 重新计算这个节点
+          this.calculateNodeResult(node);
+        }
+        
+        if (node.children) {
+          traverse(node.children);
+        }
+      });
+    };
+    
+    traverse(this._parsedNodes);
+  }
+
+  /**
+   * 计算单个节点的结果并缓存
+   * @param {Object} node 
+   */
+  calculateNodeResult(node) {
+    const nodeId = node._nodeId;
+    if (!nodeId) return;
+
+    const cachedResult = this.nodeCache.get(nodeId);
+    
+    // 根据节点类型计算结果
+    let result = null;
+    
+    if (node.type === 'text' || node.type === 'link') {
+      result = this.calculateTextNodeResult(node);
+    } else if (node.type === 'image') {
+      result = this.calculateImageNodeResult(node);
+    } else if (node.type === 'element') {
+      result = this.calculateElementNodeResult(node);
+    }
+    
+    if (result) {
+      this.nodeCache.set(nodeId, {
+        ...result,
+        nodeId,
+        lastCalculated: Date.now()
+      });
+    }
+  }
+
+  /**
+   * 计算文本节点结果
+   * @param {Object} node 
+   * @returns {Object}
+   */
+  calculateTextNodeResult(node) {
+    // 缓存文本分割结果
+    const segments = this.segmentText(node.text, node.style || {});
+    
+    // 缓存样式计算结果
+    const fontSize = this.parseSize(this.getStyleProperty(node.style, 'fontSize')) || this.theme.baseFontSize;
+    const fontWeight = this.getStyleProperty(node.style, 'fontWeight') || 'normal';
+    const fontStyle = this.getStyleProperty(node.style, 'fontStyle') || 'normal';
+    const lineHeight = this.getLineHeight(node.style);
+    const textAlign = this.getStyleProperty(node.style, 'textAlign') || 'left';
+    
+    return {
+      type: 'text',
+      segments,
+      computedStyle: {
+        fontSize,
+        fontWeight,
+        fontStyle,
+        lineHeight,
+        textAlign
+      },
+      text: node.text,
+      originalStyle: node.style || {}
+    };
+  }
+
+  /**
+   * 计算图片节点结果
+   * @param {Object} node 
+   * @returns {Object}
+   */
+  calculateImageNodeResult(node) {
+    let originalWidth, originalHeight;
+
+    if (node.bounds && node.bounds.width && node.bounds.height) {
+      originalWidth = node.bounds.width;
+      originalHeight = node.bounds.height;
+    } else {
+      originalWidth = node.width || this.defaultImageWidth;
+      originalHeight = node.height || this.defaultImageHeight;
+    }
+
+    const availableWidth = this.canvasWidth - this.theme.paddingX * 2;
+    const scaleResult = this.scaleImageToFit(originalWidth, originalHeight, availableWidth);
+
+    return {
+      type: 'image',
+      originalWidth,
+      originalHeight,
+      computedWidth: scaleResult.width,
+      computedHeight: scaleResult.height,
+      isScaled: scaleResult.isScaled,
+      src: node.src,
+      alt: node.alt || ''
+    };
+  }
+
+  /**
+   * 计算元素节点结果
+   * @param {Object} node 
+   * @returns {Object}
+   */
+  calculateElementNodeResult(node) {
+    const style = node.style || {};
+    
+    return {
+      type: 'element',
+      isBlockElement: this.isBlockElement(style),
+      computedStyle: {
+        marginTop: this.parseSize(this.getStyleProperty(style, 'marginTop')),
+        marginBottom: this.parseSize(this.getStyleProperty(style, 'marginBottom')),
+        paddingTop: this.parseSize(this.getStyleProperty(style, 'paddingTop')),
+        paddingBottom: this.parseSize(this.getStyleProperty(style, 'paddingBottom')),
+        paddingLeft: this.parseSize(this.getStyleProperty(style, 'paddingLeft')),
+        paddingRight: this.parseSize(this.getStyleProperty(style, 'paddingRight')),
+        textIndent: this.parseSize(this.getStyleProperty(style, 'textIndent')),
+        textAlign: this.getStyleProperty(style, 'textAlign') || 'left'
+      },
+      originalStyle: style
+    };
+  }
+
+  /**
+   * 获取缓存的节点结果
+   * @param {string} nodeId 
+   * @returns {Object|null}
+   */
+  getCachedNodeResult(nodeId) {
+    return this.nodeCache.get(nodeId) || null;
+  }
+
+  /**
+   * 重新计算所有坐标
+   */
+  recalculateAllCoordinates() {
+    if (!this._parsedNodes) return;
+
+    const words = [];
+    const elements = [];
+
+    let x = this.theme.paddingX;
+    let y = 0;
+    let currentLine = 0;
+
+    // 重新初始化渲染块管理
+    this.initRenderChunks();
+
+    // 设置初始的继承样式
+    const initialInheritedStyle = {
+      color: this.theme.textColor,
+      fontFamily: this.theme.fontFamily,
+      fontSize: this.theme.baseFontSize,
+      lineHeight: this.theme.lineHeight,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+    };
+
+    // 使用缓存结果重新计算坐标
+    const result = this.layoutNodesWithCache(
+      this._parsedNodes,
+      x,
+      y,
+      currentLine,
+      words,
+      elements,
+      initialInheritedStyle
+    );
+
+    // 更新fullLayoutData
+    const contentHeight = result.y;
+    const chunkHeight = this.chunkHeight;
+    const chunkWidth = this.chunkWidth;
+    const totalChunks = Math.ceil(contentHeight / chunkHeight);
+
+    const scrollContentHeight = totalChunks * chunkHeight;
+    const scrollContentWidth = totalChunks * chunkWidth;
+    
+    this.fullLayoutData = {
+      words,
+      elements,
+      contentHeight,
+      scrollContentHeight,
+      totalHeight: scrollContentHeight,
+      totalWidth: scrollContentWidth,
+      totalChunks,
+    };
   }
 
   /**
@@ -1152,6 +1561,10 @@ export class VirtualCanvasRenderer {
     // 初始化渲染块管理
     this.initRenderChunks();
 
+    // 清空缓存和脏节点（全量重新计算）
+    this.nodeCache.clear();
+    this.dirtyNodes.clear();
+
     // 设置初始的继承样式（从主题中获取）
     const initialInheritedStyle = {
       color: this.theme.textColor,
@@ -1162,8 +1575,11 @@ export class VirtualCanvasRenderer {
       fontStyle: 'normal',
     };
 
-    // 使用原有的布局算法计算所有位置
-    const result = this.layoutNodes(
+    // 第一次完整计算时，建立所有节点的缓存
+    this.buildNodeCache(this.parsedNodes, initialInheritedStyle);
+
+    // 使用缓存结果计算布局
+    const result = this.layoutNodesWithCache(
       this.parsedNodes,
       x,
       y,
@@ -1192,6 +1608,360 @@ export class VirtualCanvasRenderer {
       totalWidth: scrollContentWidth,
       totalChunks,
     };
+  }
+
+  /**
+   * 为所有节点建立初始缓存
+   * @param {Array} nodes 
+   * @param {Object} inheritedStyle 
+   */
+  buildNodeCache(nodes, inheritedStyle = {}) {
+    const traverse = (nodeList, currentInheritedStyle) => {
+      nodeList.forEach(node => {
+        if (node._nodeId) {
+          // 计算并缓存节点结果
+          this.calculateNodeResult(node);
+        }
+        
+        if (node.children) {
+          // 计算子节点的继承样式
+          const nodeInheritedStyle = node.type === 'element' 
+            ? this.mergeInheritedStyle(currentInheritedStyle, this.extractInheritableStyles(node.style || {}))
+            : currentInheritedStyle;
+          
+          traverse(node.children, nodeInheritedStyle);
+        }
+      });
+    };
+    
+    traverse(nodes, inheritedStyle);
+  }
+
+  /**
+   * 使用缓存结果进行布局计算
+   * @param {Array} nodes 
+   * @param {number} startX 
+   * @param {number} startY 
+   * @param {number} startLine 
+   * @param {Array} words 
+   * @param {Array} elements 
+   * @param {Object} inheritedStyle 
+   * @returns {Object}
+   */
+  layoutNodesWithCache(nodes, startX, startY, startLine, words, elements, inheritedStyle = {}) {
+    let x = startX;
+    let y = startY;
+    let line = startLine;
+    let lastNodeWasInline = false;
+
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      const cachedResult = this.getCachedNodeResult(node._nodeId);
+
+      const currentNodeIsInline = this.isInlineNode(node);
+      const currentNodeIsInlineText = this.isInlineTextNode(node);
+      let isInlineTextContinuation = currentNodeIsInlineText && lastNodeWasInline;
+
+      if (i === 0) {
+        isInlineTextContinuation = currentNodeIsInlineText && false; // 第一个节点不是续接
+      }
+
+      const result = this.layoutNodeWithCache(
+        node, 
+        cachedResult, 
+        x, 
+        y, 
+        line, 
+        words, 
+        elements, 
+        inheritedStyle, 
+        isInlineTextContinuation
+      );
+
+      y = result.y;
+      line = result.line;
+      x = result.x;
+
+      lastNodeWasInline = currentNodeIsInline;
+    }
+
+    return { x, y, line };
+  }
+
+  /**
+   * 使用缓存结果布局单个节点
+   * @param {Object} node 
+   * @param {Object} cachedResult 
+   * @param {number} startX 
+   * @param {number} startY 
+   * @param {number} startLine 
+   * @param {Array} words 
+   * @param {Array} elements 
+   * @param {Object} inheritedStyle 
+   * @param {boolean} isInlineTextContinuation 
+   * @returns {Object}
+   */
+  layoutNodeWithCache(node, cachedResult, startX, startY, startLine, words, elements, inheritedStyle = {}, isInlineTextContinuation = false) {
+    if (node.type === 'text' || node.type === 'link') {
+      return this.layoutTextWithCache(cachedResult, startX, startY, startLine, words, isInlineTextContinuation);
+    }
+
+    if (node.type === 'image') {
+      return this.layoutImageWithCache(cachedResult, startX, startY, startLine, elements);
+    }
+
+    // 元素节点
+    let x = startX;
+    let y = startY;
+    let line = startLine;
+
+    if (cachedResult && cachedResult.type === 'element') {
+      const { computedStyle, isBlockElement } = cachedResult;
+      
+      // 处理块级元素的边距和内边距
+      if (isBlockElement) {
+        if (computedStyle.marginTop > 0) {
+          y += computedStyle.marginTop;
+        }
+        if (computedStyle.paddingTop > 0) {
+          y += computedStyle.paddingTop;
+        }
+
+        // 块级元素从新行开始
+        if (x > this.theme.paddingX) {
+          line++;
+          x = this.theme.paddingX;
+          y += this.getLineHeight(cachedResult.originalStyle);
+        }
+
+        if (computedStyle.paddingLeft > 0) {
+          x += computedStyle.paddingLeft;
+        }
+      }
+
+      // 处理子节点
+      if (node.children && node.children.length > 0) {
+        const currentInheritableStyles = this.extractInheritableStyles(cachedResult.originalStyle);
+        const inheritedStyleForChildren = this.mergeInheritedStyle(inheritedStyle, currentInheritableStyles);
+
+        if (isBlockElement) {
+          // 块级元素的内联流处理
+          const inlineChildren = this.inlineFlowManager.extractInlineNodes(node.children, inheritedStyleForChildren);
+
+          if (inlineChildren.length > 0) {
+            const { segments, styleMap } = this.inlineFlowManager.collectInlineFlow(inlineChildren, inheritedStyleForChildren);
+
+            if (segments.length > 0) {
+              const availableWidth = this.canvasWidth - this.theme.paddingX * 2 - (computedStyle.paddingRight || 0);
+              
+              const layoutContext = {
+                availableWidth,
+                textIndent: computedStyle.textIndent || 0,
+                startX: x,
+                isInlineTextContinuation
+              };
+              const lines = this.lineBreaker.breakIntoLines(segments, layoutContext, styleMap);
+
+              const styleContext = {
+                textAlign: computedStyle.textAlign || 'left',
+                startY: y,
+                startLine: line,
+                isInlineTextContinuation,
+                availableWidth,
+                startX: x,
+                textIndent: computedStyle.textIndent || 0
+              };
+              const styledWords = this.lineStylist.applyStylesToLines(lines, styleMap, styleContext);
+
+              let finalX = x;
+              let finalY = y;
+              let finalLine = line;
+
+              for (const styledWord of styledWords) {
+                const adjustedWord = this.addWordToChunk(styledWord);
+                words.push(adjustedWord);
+
+                finalX = adjustedWord.x + adjustedWord.width;
+                finalY = adjustedWord.y;
+                finalLine = adjustedWord.line;
+              }
+
+              x = finalX;
+              y = finalY;
+              line = finalLine;
+            }
+          }
+
+          // 处理非内联子节点
+          const nonInlineChildren = node.children.filter(child =>
+            !(child.type === 'text' || child.type === 'link' || (child.type === 'element' && this.isInlineNode(child)))
+          );
+
+          if (nonInlineChildren.length > 0) {
+            const result = this.layoutNodesWithCache(
+              nonInlineChildren,
+              x,
+              y,
+              line,
+              words,
+              elements,
+              inheritedStyleForChildren
+            );
+            x = result.x;
+            y = result.y;
+            line = result.line;
+          }
+        } else {
+          // 内联元素
+          const result = this.layoutNodesWithCache(
+            node.children,
+            x,
+            y,
+            line,
+            words,
+            elements,
+            inheritedStyleForChildren
+          );
+          x = result.x;
+          y = result.y;
+          line = result.line;
+        }
+      }
+
+      // 处理块级元素的下边距和换行
+      if (isBlockElement) {
+        if (computedStyle.paddingBottom > 0) {
+          y += computedStyle.paddingBottom;
+        }
+        if (computedStyle.marginBottom > 0) {
+          y += computedStyle.marginBottom;
+        }
+
+        line++;
+        x = this.theme.paddingX;
+        y += this.getLineHeight(cachedResult.originalStyle);
+      }
+    }
+
+    return { x, y, line };
+  }
+
+  /**
+   * 使用缓存结果布局文本
+   * @param {Object} cachedResult 
+   * @param {number} startX 
+   * @param {number} startY 
+   * @param {number} startLine 
+   * @param {Array} words 
+   * @param {boolean} isInlineTextContinuation 
+   * @returns {Object}
+   */
+  layoutTextWithCache(cachedResult, startX, startY, startLine, words, isInlineTextContinuation = false) {
+    if (!cachedResult || cachedResult.type !== 'text') {
+      return { x: startX, y: startY, line: startLine };
+    }
+
+    const { segments, computedStyle } = cachedResult;
+    const textIndent = isInlineTextContinuation ? 0 : (computedStyle.textIndent || 0);
+    const rightPadding = 0; // 从缓存中获取
+    const availableWidth = this.canvasWidth - this.theme.paddingX * 2 - rightPadding;
+
+    // 为segments创建样式映射
+    const styleMap = new Map();
+    segments.forEach((segment, index) => {
+      segment.originalSegmentIndex = index;
+      styleMap.set(index, cachedResult.originalStyle);
+    });
+
+    // 行分割
+    const layoutContext = {
+      availableWidth,
+      textIndent,
+      startX,
+      isInlineTextContinuation
+    };
+    const lines = this.lineBreaker.breakIntoLines(segments, layoutContext, styleMap);
+
+    // 样式处理
+    const styleContext = {
+      style: cachedResult.originalStyle,
+      fontSize: computedStyle.fontSize,
+      fontWeight: computedStyle.fontWeight,
+      fontStyle: computedStyle.fontStyle,
+      lineHeight: computedStyle.lineHeight,
+      textAlign: computedStyle.textAlign,
+      startY,
+      startLine,
+      isInlineTextContinuation,
+      availableWidth,
+      startX
+    };
+    const styledWords = this.lineStylist.styleLines(lines, styleContext);
+
+    let finalX = startX;
+    let finalY = startY;
+    let finalLine = startLine;
+
+    for (const styledWord of styledWords) {
+      const adjustedWord = this.addWordToChunk(styledWord);
+      words.push(adjustedWord);
+
+      finalX = adjustedWord.x + adjustedWord.width;
+      finalY = adjustedWord.y;
+      finalLine = adjustedWord.line;
+    }
+
+    if (styledWords.length === 0) {
+      finalX = startX;
+      finalY = startY;
+      finalLine = startLine;
+    }
+
+    return {
+      x: finalX,
+      y: finalY,
+      line: finalLine
+    };
+  }
+
+  /**
+   * 使用缓存结果布局图片
+   * @param {Object} cachedResult 
+   * @param {number} startX 
+   * @param {number} startY 
+   * @param {number} startLine 
+   * @param {Array} elements 
+   * @returns {Object}
+   */
+  layoutImageWithCache(cachedResult, startX, startY, startLine, elements) {
+    if (!cachedResult || cachedResult.type !== 'image') {
+      return { x: startX, y: startY, line: startLine };
+    }
+
+    const centeredX = this.calculateImageCenterPosition(cachedResult.computedWidth);
+
+    const imageElement = {
+      type: 'image',
+      x: centeredX,
+      y: startY,
+      width: cachedResult.computedWidth,
+      height: cachedResult.computedHeight,
+      src: cachedResult.src,
+      alt: cachedResult.alt,
+      originalWidth: cachedResult.originalWidth,
+      originalHeight: cachedResult.originalHeight,
+      isScaled: cachedResult.isScaled,
+    };
+
+    const adjustedImageElement = this.addElementToChunk(imageElement);
+    elements.push(adjustedImageElement);
+
+    // 图片后换行
+    const line = startLine + 1;
+    const x = this.theme.paddingX;
+    const y = adjustedImageElement.y + adjustedImageElement.height + 20;
+
+    return { x, y, line };
   }
 
   /**
@@ -2577,6 +3347,12 @@ export class VirtualCanvasRenderer {
    * 销毁渲染器
    */
   destroy() {
+    // 清理定时器
+    if (this._layoutTimeout) {
+      clearTimeout(this._layoutTimeout);
+      this._layoutTimeout = null;
+    }
+
     // 移除DOM元素
     if (this.container && this.container.parentNode) {
       this.container.parentNode.removeChild(this.container);
@@ -2590,6 +3366,8 @@ export class VirtualCanvasRenderer {
 
     // 清理引用
     this.parsedNodes = null;
+    this._parsedNodes = null;
+    this._parsedNodesProxy = null;
     this.container = null;
     this.measureCanvas = null;
     this.measureCtx = null;
@@ -2599,10 +3377,97 @@ export class VirtualCanvasRenderer {
     this.renderChunks.clear();
     this.fullLayoutData = null;
 
+    // 清理缓存系统
+    this.nodeCache.clear();
+    this.dirtyNodes.clear();
+
     // 清理图片缓存
     this.imageCache.clear();
 
     window.removeEventListener('resize', this.setupHighDPI.bind(this));
+  }
+
+  /**
+   * 动态插入节点到parsedNodes
+   * @param {Object|Array} nodes 要插入的节点或节点数组
+   * @param {number} [index] 插入位置，默认添加到末尾
+   * @returns {Promise} 布局计算完成的Promise
+   */
+  async insertNodes(nodes, index = null) {
+    if (!this.parsedNodes) {
+      this.parsedNodes = [];
+    }
+
+    const nodesToInsert = Array.isArray(nodes) ? nodes : [nodes];
+    
+    if (index === null || index >= this.parsedNodes.length) {
+      // 添加到末尾
+      this.parsedNodes.push(...nodesToInsert);
+    } else {
+      // 插入到指定位置
+      this.parsedNodes.splice(index, 0, ...nodesToInsert);
+    }
+
+    // Proxy会自动触发增量布局，等待布局完成
+    return new Promise((resolve) => {
+      const checkLayout = () => {
+        if (this.dirtyNodes.size === 0) {
+          resolve();
+        } else {
+          setTimeout(checkLayout, 16);
+        }
+      };
+      
+      // 等待一帧以确保增量布局被触发
+      setTimeout(checkLayout, 16);
+    });
+  }
+
+  /**
+   * 移除节点
+   * @param {number} startIndex 开始索引
+   * @param {number} [deleteCount=1] 删除数量
+   * @returns {Array} 被删除的节点
+   */
+  removeNodes(startIndex, deleteCount = 1) {
+    if (!this.parsedNodes || startIndex >= this.parsedNodes.length) {
+      return [];
+    }
+
+    const removedNodes = this.parsedNodes.splice(startIndex, deleteCount);
+    
+    // 清理被删除节点的缓存
+    const removeFromCache = (nodeList) => {
+      nodeList.forEach(node => {
+        if (node._nodeId) {
+          this.nodeCache.delete(node._nodeId);
+          this.dirtyNodes.delete(node._nodeId);
+        }
+        if (node.children) {
+          removeFromCache(node.children);
+        }
+      });
+    };
+    
+    removeFromCache(removedNodes);
+    
+    // 触发重新布局
+    this.scheduleIncrementalLayout();
+    
+    return removedNodes;
+  }
+
+  /**
+   * 获取缓存统计信息（用于调试和监控）
+   * @returns {Object}
+   */
+  getCacheStats() {
+    return {
+      cachedNodes: this.nodeCache.size,
+      dirtyNodes: this.dirtyNodes.size,
+      totalTokens: this.globalTokenCounter,
+      totalNodes: this.nodeIdCounter
+    };
   }
 
   initMode({ mode, poolSize }) {
