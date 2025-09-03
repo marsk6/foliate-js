@@ -917,12 +917,16 @@ export class VirtualCanvasRenderer {
   /** @type {HTMLCanvasElement[]} Canvas池 */
   canvasList = [];
 
+  /** @type {number} 章节索引 */
+  chapterIndex = 0;
+
   /**
    * @param {VirtualRenderConfig} config
    */
   constructor(config) {
     // 渲染模式配置 - 支持 'vertical' 和 'horizontal'
     this.mode = config.mode || 'vertical';
+    this.chapterIndex = config.chapterIndex;
 
     // 布局计算模式 - 是否自动调整跨块内容
     this.adjustCrossChunkContent = this.mode === 'horizontal'; // 默认启用
@@ -1098,7 +1102,6 @@ export class VirtualCanvasRenderer {
     // 1. 先将 HTML 字符串转换为 DOM
     const htmlParse = new HTMLParser2();
     const root = await htmlParse.parse(url);
-    console.log('🚨🚨🚨👉👉📢', 'root', JSON.stringify(root));
 
     this.parsedNodes = root ? [root] : [];
 
@@ -1120,24 +1123,10 @@ export class VirtualCanvasRenderer {
     this.viewport.canvasInfoList.forEach((canvasInfo) => {
       canvasInfo.needsRerender = true;
     });
-
-    // 布局完成后恢复划线
-    setTimeout(() => {
-      if (this.canvasTools) {
-        this.canvasTools.restoreHighlights();
-      }
-    }, 100);
   }
 
   render() {
     this.renderVisibleContent();
-
-    // 渲染完成后恢复划线
-    setTimeout(() => {
-      if (this.canvasTools) {
-        this.canvasTools.restoreHighlights();
-      }
-    }, 50);
   }
 
   /**
@@ -1182,7 +1171,6 @@ export class VirtualCanvasRenderer {
 
     // 📐 正确的总高度计算方式：使用实际的Y坐标
     const contentHeight = result.y;
-    console.log('🚨🚨🚨👉👉📢', 'contentHeight', JSON.stringify(words));
     // 计算需要的总块数
     const chunkHeight = this.chunkHeight;
     const chunkWidth = this.chunkWidth;

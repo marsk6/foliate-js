@@ -1,4 +1,3 @@
-import { HighlightManager } from './highlight-manager.js';
 
 export class CanvasTools {
   static instance = null;
@@ -25,10 +24,10 @@ export class CanvasTools {
    * @type {import('./virtual-canvas-renderer').VirtualCanvasRenderer}
    */
   renderer = null;
-  /**
-   * @type {HighlightManager}
-   */
-  highlightManager = null;
+
+  // 新增：高亮存储
+  highlights = new Map(); // 存储所有高亮，key为高亮ID，value为高亮对象
+  highlightCounter = 0; // 高亮计数器，用于生成唯一ID
 
   anchors = {
     start: null,
@@ -47,9 +46,6 @@ export class CanvasTools {
 
     this.renderer = renderer;
     this.createDOMStructure();
-
-    // 初始化划线管理器
-    this.highlightManager = new HighlightManager(renderer);
   }
 
   async createDOMStructure() {
@@ -97,22 +93,12 @@ export class CanvasTools {
   setupMenuEvents() {
     if (!this.selectionMenu) return;
 
-    const menuItems = this.selectionMenu.querySelectorAll(
-      '.selection-menu-item'
-    );
-    menuItems.forEach((item) => {
-      item.addEventListener('click', (e) => {
-        const action = e.target.dataset.action;
-        this.handleMenuAction(action);
-        this.hideSelectionMenu();
-      });
-    });
-
-    // 点击其他地方隐藏菜单
-    document.addEventListener('click', (e) => {
-      if (!this.selectionMenu.contains(e.target) && !this.isSelecting) {
-        this.hideSelectionMenu();
-      }
+    this.selectionMenu.addEventListener('touchstart', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const action = e.target.dataset.action;
+      this.handleMenuAction(action);
+      this.hideSelectionMenu();
     });
   }
 
@@ -122,7 +108,6 @@ export class CanvasTools {
    */
   handleMenuAction(action) {
     const selection = this.getSelection();
-
     switch (action) {
       case 'copy':
         if (selection.text && navigator.clipboard) {
@@ -130,31 +115,29 @@ export class CanvasTools {
         }
         break;
       case 'highlight':
-        if (selection && selection.text && this.highlightManager) {
+        if (selection && selection.text) {
           // 添加划线，使用默认黄色高亮
-          const highlight = this.highlightManager.addHighlight(selection, {
-            color: '#FFFF00',
-            opacity: 0.3,
-            type: 'highlight'
+          const highlightId = this.addHighlight({
+            chapterIndex: selection.chapterIndex,
+            startIdx: selection.startIdx,
+            endIdx: selection.endIdx,
+            text: selection.text,
+            style: {
+              type: 'highlight',
+              color: '#FFFF00',
+              opacity: 0.3
+            }
           });
-          console.log('添加划线:', highlight.id);
+          // 清除选择状态
+          this.handleTouch();
+          
+          // 触发重新渲染以显示新高亮
+          this.triggerCanvasRerender();
         }
         break;
       case 'note':
-        if (selection && selection.text && this.highlightManager) {
-          // 添加带笔记的划线，使用蓝色
-          const note = prompt('请输入笔记内容:');
-          if (note !== null) {
-            const highlight = this.highlightManager.addHighlight(selection, {
-              color: '#87CEEB',
-              opacity: 0.3,
-              type: 'highlight',
-              note: note,
-              tags: ['note']
-            });
-            console.log('添加笔记划线:', highlight.id, note);
-          }
-        }
+        console.log('add note', selection.text);
+        // 添加带笔记的划线，使用蓝色
         break;
     }
   }
@@ -173,12 +156,12 @@ export class CanvasTools {
 
     // 根据单行/多行调整箭头样式
     const arrow = this.selectionMenu.querySelector('.selection-menu-arrow');
-    this.selectionMenu.style.top = (this.anchors.start.y - 12) + 'px';
+    this.selectionMenu.style.top = this.anchors.start.y - 12 + 'px';
     this.selectionMenu.style.display = 'block';
-    this.selectionMenu.style.top = (this.anchors.start.y - 38) + 'px';
+    this.selectionMenu.style.top = this.anchors.start.y - 38 + 'px';
     if (isSingleLine) {
     } else {
-      this.selectionMenu.style.top = (this.anchors.start.y - 38) + 'px';
+      this.selectionMenu.style.top = this.anchors.start.y - 38 + 'px';
     }
   }
 
@@ -243,7 +226,6 @@ export class CanvasTools {
       };
       this.startAnchor.style.left = this.anchors.start.x + 'px';
       this.startAnchor.style.top = this.anchors.start.y + 'px';
-
     }
 
     if (linesArr.length > 0 && bars.length > 0) {
@@ -275,32 +257,18 @@ export class CanvasTools {
     const charPos = renderer.fullLayoutData.words;
     let selectedText = '';
     for (let i = min; i <= max; i++) {
-      if (i < charPos.length && charPos[i].char) {
-        selectedText += charPos[i].char;
+      if (i < charPos.length) {
+        selectedText += charPos[i].text;
       }
     }
-
-    // 获取选中文本的章节索引
-    // 使用起始位置的章节索引，如果跨章节，则使用起始章节
-    const chapterIndex = renderer.getChapterIndexForChar
-      ? renderer.getChapterIndexForChar(min)
-      : renderer.currentChapterIndex || 0;
-
-    // 获取在章节内的相对位置（用于创建正确的DOM Range）
-    const startRelative = renderer.getRelativeCharIndex
-      ? renderer.getRelativeCharIndex(min)
-      : { chapterIndex, relativeCharIndex: min };
-    const endRelative = renderer.getRelativeCharIndex
-      ? renderer.getRelativeCharIndex(max)
-      : { chapterIndex, relativeCharIndex: max };
 
     // 创建一个伪造的 range 对象，包含 getCFI 需要的信息
     const range = {
       toString: () => selectedText,
       startContainer: document.body, // 使用 body 作为容器
       endContainer: document.body,
-      startOffset: startRelative.relativeCharIndex, // 使用章节内相对位置
-      endOffset: endRelative.relativeCharIndex, // 使用章节内相对位置
+      startOffset: min, // 使用章节内相对位置
+      endOffset: max, // 使用章节内相对位置
       collapsed: min === max,
       commonAncestorContainer: document.body,
       // 添加必要的方法
@@ -330,10 +298,7 @@ export class CanvasTools {
       text: selectedText,
       startIdx: min,
       endIdx: max,
-      chapterIndex: chapterIndex, // 添加章节索引
-      // 添加相对位置信息
-      relativeStartIdx: startRelative.relativeCharIndex,
-      relativeEndIdx: endRelative.relativeCharIndex,
+      chapterIndex: renderer.chapterIndex, // 添加章节索引
     };
 
     // 按行分组高亮
@@ -368,42 +333,16 @@ export class CanvasTools {
     return this.selection;
   }
 
-  /**
-   * 在渲染器重新布局后恢复划线
-   */
-  restoreHighlights() {
-    if (this.highlightManager) {
-      // 等待下一帧确保布局完成
-      requestAnimationFrame(() => {
-        this.highlightManager.restoreHighlights();
-      });
-    }
-  }
-
-  /**
-   * 清除所有划线
-   */
-  clearHighlights() {
-    if (this.highlightManager) {
-      this.highlightManager.clearAllHighlights();
-    }
-  }
-
-  /**
-   * 获取所有划线
-   */
-  getAllHighlights() {
-    return this.highlightManager ? this.highlightManager.getAllHighlights() : [];
-  }
-
   handleTouch(e) {
     if (this.isSelecting) {
       this.isSelecting = false;
       this.startIdx = null;
       this.endIdx = null;
+      this.selection = { range: null };
       this.updateHighlightBar();
       this.updateAnchors();
       this.hideSelectionMenu();
+      window.native.postMessage('webviewTouch');
     }
   }
 
@@ -470,25 +409,82 @@ export class CanvasTools {
   }
 
   /**
+   * 添加新的高亮
+   * @param {Object} highlightData 高亮数据 {startIdx, endIdx, text, style}
+   * @returns {string} 高亮ID
+   */
+  addHighlight(highlightData) {
+    const id = `highlight_${this.highlightCounter++}`;
+    const highlight = {
+      id,
+      position: {
+        chapterIndex: highlightData.chapterIndex,
+        startIdx: highlightData.startIdx,
+        endIdx: highlightData.endIdx,
+      },
+      text: highlightData.text,
+      style: highlightData.style || {
+        type: 'highlight',
+        color: '#FFFF00',
+        opacity: 0.3
+      }
+    };
+    
+    this.highlights.set(id, highlight);
+    return id;
+  }
+
+  /**
+   * 获取所有高亮
+   * @returns {Array} 高亮数组
+   */
+  getAllHighlights() {
+    return Array.from(this.highlights.values());
+  }
+
+  /**
+   * 移除高亮
+   * @param {string} highlightId 高亮ID
+   */
+  removeHighlight(highlightId) {
+    return this.highlights.delete(highlightId);
+  }
+
+  /**
+   * 触发Canvas重新渲染以显示新的高亮
+   * TODO: 获取 canvas ctx 渲染
+   */
+  triggerCanvasRerender() {
+    if (!this.renderer || !this.renderer.viewport) return;
+    
+    // 标记所有canvas需要重新渲染
+    const { canvasInfoList } = this.renderer.viewport;
+    if (canvasInfoList) {
+      canvasInfoList.forEach(canvasInfo => {
+        canvasInfo.needsRerender = true;
+      });
+    }
+    
+    // 触发重新渲染
+    if (this.renderer.renderMultiCanvas) {
+      this.renderer.renderMultiCanvas();
+    }
+  }
+
+  /**
    * 渲染Canvas中的高亮
    * @param {CanvasRenderingContext2D} ctx - Canvas上下文
    * @param {number} contentStartY - 内容起始Y坐标
    * @param {number} contentEndY - 内容结束Y坐标
    */
   renderCanvasHighlights(ctx, contentStartY, contentEndY) {
-    if (!this.highlightManager) return;
-
-    const highlights = this.highlightManager.getAllHighlights();
-    if (highlights.length === 0) return;
-
-    const words = this.renderer.fullLayoutData.words;
-    if (!words) return;
-
-    highlights.forEach(highlight => {
+    // 使用新的高亮存储
+    const highlights = this.getAllHighlights();
+    highlights.forEach((highlight) => {
       // 检查划线是否在当前Canvas可视区域内
-      if (!highlight.currentPosition) return;
+      if (!highlight.position) return;
 
-      const { globalStart, globalEnd } = highlight.currentPosition;
+      const { startIdx, endIdx } = highlight.position;
 
       // 检查划线是否与当前Canvas区域有交集
       if (globalStart >= words.length || globalEnd >= words.length) return;
@@ -506,13 +502,19 @@ export class CanvasTools {
       }
 
       // 按行分组绘制划线
-      this.drawCanvasHighlight(ctx, highlight, globalStart, globalEnd, contentStartY);
+      this.drawCanvasHighlight(
+        ctx,
+        highlight,
+        globalStart,
+        globalEnd,
+        contentStartY
+      );
     });
   }
 
   /**
    * 在Canvas上绘制单个划线
-   * @param {CanvasRenderingContext2D} ctx 
+   * @param {CanvasRenderingContext2D} ctx
    * @param {Object} highlight 划线对象
    * @param {number} globalStart 起始字符索引
    * @param {number} globalEnd 结束字符索引
@@ -541,7 +543,7 @@ export class CanvasTools {
     const { style } = highlight;
 
     // 为每行绘制划线
-    Object.values(lineMap).forEach(lineData => {
+    Object.values(lineMap).forEach((lineData) => {
       const { start, end } = lineData;
       const startWord = words[start];
       const endWord = words[end];
@@ -554,19 +556,23 @@ export class CanvasTools {
 
       // 只渲染在当前Canvas范围内的部分
       if (canvasY > -height && canvasY < this.renderer.canvasHeight + height) {
-        this.drawHighlightShape(ctx, {
-          x: x,
-          y: canvasY - this.renderer.theme.baseFontSize + 2,
-          width: width,
-          height: height
-        }, style);
+        this.drawHighlightShape(
+          ctx,
+          {
+            x: x,
+            y: canvasY - this.renderer.theme.baseFontSize + 2,
+            width: width,
+            height: height,
+          },
+          style
+        );
       }
     });
   }
 
   /**
    * 绘制划线形状
-   * @param {CanvasRenderingContext2D} ctx 
+   * @param {CanvasRenderingContext2D} ctx
    * @param {Object} rect 矩形区域 {x, y, width, height}
    * @param {Object} style 样式配置
    */

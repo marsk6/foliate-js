@@ -229,6 +229,7 @@ export class MultiChapterManager {
       // 创建渲染器实例（如果还没有）
       if (!chapter.renderer) {
         chapter.renderer = new VirtualCanvasRenderer({
+          chapterIndex: chapterIndex,
           theme: this.theme,
           mode: this.mode,
         });
