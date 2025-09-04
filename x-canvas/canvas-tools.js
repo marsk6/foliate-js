@@ -119,8 +119,8 @@ export class CanvasTools {
           // 添加划线，使用默认黄色高亮
           const highlightId = this.addHighlight({
             chapterIndex: selection.chapterIndex,
-            startTokenId: selection.startTokenId,
-            endTokenId: selection.endTokenId,
+            startWordId: selection.startWordId,
+            endWordId: selection.endWordId,
             text: selection.text,
             style: {
               type: 'highlight',
@@ -293,17 +293,17 @@ export class CanvasTools {
       _globalEndOffset: max,
     };
 
-    // 获取起始和结束词的tokenId
-    const startTokenId = charPos[min] ? charPos[min].tokenId : null;
-    const endTokenId = charPos[max] ? charPos[max].tokenId : null;
+    // 获取起始和结束词的wordId
+    const startWordId = charPos[min] ? charPos[min].wordId : null;
+    const endWordId = charPos[max] ? charPos[max].wordId : null;
 
     this.selection = {
       range: range,
       text: selectedText,
       startIdx: min,
       endIdx: max,
-      startTokenId: startTokenId,
-      endTokenId: endTokenId,
+      startWordId: startWordId,
+      endWordId: endWordId,
       chapterIndex: renderer.chapterIndex, // 添加章节索引
     };
 
@@ -416,7 +416,7 @@ export class CanvasTools {
 
   /**
    * 添加新的高亮
-   * @param {Object} highlightData 高亮数据 {startTokenId, endTokenId, text, style}
+   * @param {Object} highlightData 高亮数据 {startWordId, endWordId, text, style}
    * @returns {string} 高亮ID
    */
   addHighlight(highlightData) {
@@ -425,8 +425,8 @@ export class CanvasTools {
       id,
       position: {
         chapterIndex: highlightData.chapterIndex,
-        startTokenId: highlightData.startTokenId,
-        endTokenId: highlightData.endTokenId,
+        startWordId: highlightData.startWordId,
+        endWordId: highlightData.endWordId,
       },
       text: highlightData.text,
       style: highlightData.style || {
@@ -457,18 +457,18 @@ export class CanvasTools {
   }
 
   /**
-   * 根据tokenId查找word在words数组中的索引
-   * @param {string} tokenId 
+   * 根据wordId查找word在words数组中的索引
+   * @param {string} wordId 格式：nodeId_wordIndex
    * @returns {number|null} word索引，如果未找到返回null
    */
-  findWordIndexByTokenId(tokenId) {
+  findWordIndexByWordId(wordId) {
     if (!this.renderer.fullLayoutData || !this.renderer.fullLayoutData.words) {
       return null;
     }
     
     const words = this.renderer.fullLayoutData.words;
     for (let i = 0; i < words.length; i++) {
-      if (words[i].tokenId === tokenId) {
+      if (words[i].wordId === wordId) {
         return i;
       }
     }
@@ -476,20 +476,34 @@ export class CanvasTools {
   }
 
   /**
-   * 根据tokenId范围获取对应的索引范围
-   * @param {string} startTokenId 
-   * @param {string} endTokenId 
+   * 根据wordId范围获取对应的索引范围
+   * @param {string} startWordId 
+   * @param {string} endWordId 
    * @returns {Object|null} {startIdx, endIdx} 或 null
    */
-  getIndexRangeByTokenIds(startTokenId, endTokenId) {
-    const startIdx = this.findWordIndexByTokenId(startTokenId);
-    const endIdx = this.findWordIndexByTokenId(endTokenId);
+  getIndexRangeByWordIds(startWordId, endWordId) {
+    const startIdx = this.findWordIndexByWordId(startWordId);
+    const endIdx = this.findWordIndexByWordId(endWordId);
     
     if (startIdx === null || endIdx === null) {
       return null;
     }
     
     return { startIdx, endIdx };
+  }
+
+  /**
+   * 根据highlight position获取索引范围
+   * @param {Object} highlightPosition 
+   * @returns {Object|null}
+   */
+  getHighlightIndexRange(highlightPosition) {
+    // 使用wordId获取索引范围
+    if (highlightPosition.startWordId && highlightPosition.endWordId) {
+      return this.getIndexRangeByWordIds(highlightPosition.startWordId, highlightPosition.endWordId);
+    }
+    
+    return null;
   }
 
   /**
@@ -526,11 +540,9 @@ export class CanvasTools {
       // 检查划线是否在当前Canvas可视区域内
       if (!highlight.position) return;
 
-      const { startTokenId, endTokenId } = highlight.position;
-      
-      // 根据tokenId获取索引范围
-      const indexRange = this.getIndexRangeByTokenIds(startTokenId, endTokenId);
-      if (!indexRange) return; // tokenId未找到，可能是文本已更新
+              // 根据wordId获取索引范围
+        const indexRange = this.getHighlightIndexRange(highlight.position);
+        if (!indexRange) return; // wordId未找到，可能是文本已更新
       
       const { startIdx, endIdx } = indexRange;
       const words = this.renderer.fullLayoutData.words;

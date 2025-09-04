@@ -33,8 +33,6 @@
  * // 进度操作
  * console.log('当前进度:', renderer.getProgress()); // 0-1之间的数值
  * renderer.setProgress(0.5); // 跳转到50%位置
- * renderer.pageDown(); // 向下翻页
- * renderer.goToEnd(); // 跳转到结尾
  *
  * // 获取和设置模式
  * console.log(renderer.getMode()); // 'vertical' 或 'horizontal'
@@ -48,6 +46,7 @@ import HTMLParser2 from './html-parser/index.js';
 import { HorizontalSlideManager } from './slide-canvas.js';
 import { VirtualViewport } from './scroll-canvas.js';
 import { CanvasTools } from './canvas-tools.js';
+import { LayoutEngine } from './layout-engine/LayoutEngine.js';
 
 /**
  * @typedef {Object} VirtualRenderConfig
@@ -156,696 +155,6 @@ import { CanvasTools } from './canvas-tools.js';
  * @property {boolean} canScroll - 是否可以滚动
  */
 
-/**
- * 内联流管理器 - 负责收集块级元素内的所有内联内容，形成统一的文本流
- * 这是布局的第0阶段：收集整个内联流，而不是单个text node
- */
-class InlineFlowManager {
-  constructor(renderer) {
-    this.renderer = renderer;
-  }
-
-  /**
-   * 收集块级元素内的所有内联内容，形成统一的文本流
-   * @param {Array} inlineNodes - 同一块级元素下的所有内联节点
-   * @param {Object} inheritedStyle - 继承的样式
-   * @returns {Object} 包含segments和styleMap的统一文本流
-   */
-  collectInlineFlow(inlineNodes, inheritedStyle = {}) {
-    const segments = [];
-    const styleMap = new Map(); // 记录每个segment对应的样式
-
-    let globalTextIndex = 0;
-    let segmentIndex = 0;
-
-    for (const node of inlineNodes) {
-      if (node.type === 'text' || node.type === 'link') {
-        // 合并继承样式和节点样式
-        const nodeStyle = this.renderer.mergeInheritedStyle(inheritedStyle, node.style || {});
-
-        // 分割文本为segments（传递样式用于空白符处理）
-        const nodeSegments = this.renderer.segmentText(node.text, nodeStyle);
-
-        for (const segment of nodeSegments) {
-          const globalSegment = {
-            ...segment,
-            // 调整为全局文本索引
-            startIndex: globalTextIndex + segment.startIndex,
-            endIndex: globalTextIndex + segment.endIndex,
-            originalNodeId: node.id || `${node.type}_${segmentIndex}`, // 用于调试
-            originalSegmentIndex: segmentIndex // 用于样式映射
-          };
-
-          segments.push(globalSegment);
-
-          // 建立segment到样式的映射
-          styleMap.set(segmentIndex, nodeStyle);
-
-          segmentIndex++;
-        }
-
-        globalTextIndex += node.text.length;
-      }
-    }
-
-    return { segments, styleMap };
-  }
-
-  /**
-   * 从节点树中提取所有内联节点
-   * @param {Array} children - 子节点数组
-   * @param {Object} inheritedStyle - 继承的样式
-   * @returns {Array} 内联节点数组
-   */
-  extractInlineNodes(children, inheritedStyle = {}) {
-    const inlineNodes = [];
-
-    for (const child of children) {
-      if (child.type === 'text' || child.type === 'link') {
-        inlineNodes.push(child);
-      } else if (child.type === 'element' && this.renderer.isInlineNode(child)) {
-        // 内联元素：递归提取其子内容
-        const childInheritedStyle = this.renderer.mergeInheritedStyle(
-          inheritedStyle,
-          this.renderer.extractInheritableStyles(child.style || {})
-        );
-        const childInlineNodes = this.extractInlineNodes(child.children || [], childInheritedStyle);
-        inlineNodes.push(...childInlineNodes);
-      }
-    }
-
-    return inlineNodes;
-  }
-}
-
-/**
- * 行分割器 - 负责将统一的文本流按照可用宽度分行
- * 这是布局的第一阶段：确定哪些内容在同一行
- */
-class LineBreaker {
-  constructor(renderer) {
-    this.renderer = renderer;
-    this.measureCtx = renderer.measureCtx;
-
-    // 定义不能出现在行首的英语标点符号
-    this.englishEndPunctuation = new Set([
-      ',', '.', ';', ':', '?', '!', ')', ']', '}',
-      '»', '"', "'", '…'
-    ]);
-
-    // 定义不能出现在行末的英语标点符号
-    this.englishStartPunctuation = new Set([
-      '(', '[', '{', '«', '"', "'"
-    ]);
-  }
-
-  /**
-   * 检查标点符号是否不应该出现在行首
-   * @param {string} punctuation - 标点符号
-   * @returns {boolean}
-   */
-  isEnglishEndPunctuation(punctuation) {
-    return this.englishEndPunctuation.has(punctuation);
-  }
-
-  /**
-   * 检查标点符号是否不应该出现在行末
-   * @param {string} punctuation - 标点符号
-   * @returns {boolean}
-   */
-  isEnglishStartPunctuation(punctuation) {
-    return this.englishStartPunctuation.has(punctuation);
-  }
-
-  /**
-   * 将文本段落分解为行（优化版：边测量边排版边决定换行点）
-   * @param {Array} segments - 文本段落数组
-   * @param {Object} layoutContext - 布局上下文
-   * @param {Map} [styleMap] - segment索引到样式的映射（用于准确测量）
-   * @returns {Array<LineBox>} 行盒数组
-   */
-  breakIntoLines(segments, layoutContext, styleMap = null) {
-    const {
-      availableWidth,
-      textIndent = 0,
-      startX,
-      isInlineTextContinuation = false
-    } = layoutContext;
-
-    const lines = [];
-    let currentLine = new LineBox();
-    let isFirstLine = !isInlineTextContinuation; // 如果是续接文本，则不是首行
-
-    // 关键修复：正确设置当前X位置
-    let currentX = isFirstLine ? startX + textIndent : startX;
-
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
-
-      // 使用正确的字体样式测量宽度
-      let segmentWidth;
-      if (styleMap && segment.originalSegmentIndex !== undefined) {
-        const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
-        const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
-        const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
-        const fontStyle = this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
-
-        // 设置正确的字体
-        this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
-        segmentWidth = this.measureCtx.measureText(segment.content).width;
-      } else {
-        // 回退到默认测量
-        segmentWidth = this.measureCtx.measureText(segment.content).width;
-      }
-
-      // 简化的换行判断逻辑：直接计算是否超出右边界
-      const rightBoundary = startX + availableWidth;
-      const willExceedBoundary = currentX + segmentWidth > rightBoundary;
-
-      const breakResult = this.shouldBreakBefore(
-        segment,
-        segmentWidth,
-        currentX,
-        rightBoundary,
-        willExceedBoundary,
-        segments,
-        i
-      );
-
-      if (breakResult.shouldBreak) {
-        // 处理需要回溯的情况（如英语标点符号不能在行首）
-        if (breakResult.needBacktrack && currentLine.segments.length > 0) {
-          // 找到需要回溯的段数
-          const backtrackCount = this.findBacktrackCount(currentLine.segments, segment);
-
-          if (backtrackCount > 0) {
-            // 从当前行移除需要回溯的段
-            const backtrackSegments = currentLine.segments.splice(-backtrackCount);
-            const backtrackPositions = currentLine.positions.splice(-backtrackCount);
-
-            // 完成当前行（如果还有内容）
-            if (currentLine.hasContent()) {
-              currentLine.computeMetrics(this.measureCtx);
-              lines.push(currentLine);
-            }
-
-            // 创建新行
-            currentLine = new LineBox();
-            currentX = startX; // 新行从基础起始位置开始
-            isFirstLine = false;
-
-            // 将回溯的段添加到新行
-            for (let j = 0; j < backtrackSegments.length; j++) {
-              const backtrackSegment = backtrackSegments[j];
-
-              // 重新测量回溯段的宽度
-              let backtrackWidth;
-              if (styleMap && backtrackSegment.originalSegmentIndex !== undefined) {
-                const segmentStyle = styleMap.get(backtrackSegment.originalSegmentIndex) || {};
-                const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
-                const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
-                const fontStyle = this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
-
-                this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
-                backtrackWidth = this.measureCtx.measureText(backtrackSegment.content).width;
-              } else {
-                backtrackWidth = this.measureCtx.measureText(backtrackSegment.content).width;
-              }
-
-              currentLine.addSegment(backtrackSegment, currentX);
-              currentX += backtrackWidth;
-            }
-          }
-        } else {
-          // 完成当前行（如果有内容）
-          if (currentLine.hasContent()) {
-            currentLine.computeMetrics(this.measureCtx);
-            lines.push(currentLine);
-          }
-
-          // 创建新行
-          currentLine = new LineBox();
-          currentX = startX; // 新行从基础起始位置开始（没有缩进）
-          isFirstLine = false;
-        }
-
-        // 如果是空格导致的换行，跳过这个空格
-        if (breakResult.skipSegment) {
-          continue;
-        }
-      }
-
-      // 添加段落到当前行
-      currentLine.addSegment(segment, currentX);
-      currentX += segmentWidth;
-
-      // 第一个非空格字符后，不再是首行
-      if (segment.type !== 'space') {
-        isFirstLine = false;
-      }
-    }
-
-    // 添加最后一行
-    if (currentLine.hasContent()) {
-      currentLine.computeMetrics(this.measureCtx);
-      lines.push(currentLine);
-    }
-
-    // 为行盒设置上下文信息
-    lines.forEach((line, index) => {
-      line.isFirstLine = index === 0 && !isInlineTextContinuation;
-      line.textIndent = line.isFirstLine ? textIndent : 0;
-      line.startX = startX;
-    });
-
-    return lines;
-  }
-
-  /**
-   * 计算需要回溯的段数
-   * @param {Array} currentSegments - 当前行的段
-   * @param {Object} problematicSegment - 有问题的段（如不能出现在行首的标点符号）
-   * @returns {number}
-   */
-  findBacktrackCount(currentSegments, problematicSegment) {
-    // 对于不能出现在行首的标点符号，至少要回溯1个非空格段
-    let backtrackCount = 0;
-
-    // 从行末开始向前查找，跳过空格
-    for (let i = currentSegments.length - 1; i >= 0; i--) {
-      const segment = currentSegments[i];
-      backtrackCount++;
-
-      // 如果遇到非空格的段，停止回溯
-      if (segment.type !== 'space') {
-        break;
-      }
-
-      // 避免回溯过多
-      if (backtrackCount >= 3) {
-        break;
-      }
-    }
-
-    return backtrackCount;
-  }
-
-  /**
-   * 判断是否需要在某个段落前换行（改进版：支持英语标点符号规则）
-   * @param {Object} segment - 文本段落
-   * @param {number} segmentWidth - 段落宽度
-   * @param {number} currentX - 当前X位置
-   * @param {number} rightBoundary - 右边界位置
-   * @param {boolean} willExceedBoundary - 是否会超出边界
-   * @param {Array} allSegments - 所有段落数组（用于上下文判断）
-   * @param {number} currentIndex - 当前段落的索引
-   * @returns {Object} 分行结果
-   */
-  shouldBreakBefore(segment, segmentWidth, currentX, rightBoundary, willExceedBoundary, allSegments, currentIndex) {
-    // 如果不会超出边界，无需换行
-    if (!willExceedBoundary) {
-      return { shouldBreak: false, skipSegment: false, needBacktrack: false };
-    }
-
-    // 通过比较可用宽度来判断是否已有内容在当前行
-    // 如果 currentX 接近 startX 或 startX + textIndent，说明是行首
-    const availableWidthFromCurrentPos = rightBoundary - currentX;
-    const totalAvailableWidth = rightBoundary - this.renderer.theme.paddingX; // 总可用宽度
-    const hasContentInLine = availableWidthFromCurrentPos < totalAvailableWidth * 0.95; // 有5%容差
-
-    if (segment.type === 'word') {
-      // 英文单词：整个单词必须在同一行，超出则换行
-      // 但如果是行首且单词过长，强制放置以避免无限循环
-      return hasContentInLine
-        ? { shouldBreak: true, skipSegment: false, needBacktrack: false }
-        : { shouldBreak: false, skipSegment: false, needBacktrack: false }; // 强制放置，即使超出
-    }
-
-    if (segment.type === 'cjk') {
-      // 中文字符：可以在任意位置换行
-      // 但如果是行首，强制放置以避免无限循环
-      return hasContentInLine
-        ? { shouldBreak: true, skipSegment: false, needBacktrack: false }
-        : { shouldBreak: false, skipSegment: false, needBacktrack: false }; // 强制放置
-    }
-
-    if (segment.type === 'punctuation') {
-      // 标点符号的特殊处理
-      const punctuation = segment.content;
-
-      // 检查是否是不能出现在行首的英语标点符号
-      if (this.isEnglishEndPunctuation(punctuation)) {
-        // 这类标点符号不能出现在行首
-        if (hasContentInLine) {
-          // 当前行有内容，需要换行并回溯
-          return {
-            shouldBreak: true,
-            skipSegment: false,
-            needBacktrack: true
-          };
-        } else {
-          // 如果是行首，强制放置以避免无限循环
-          return {
-            shouldBreak: false,
-            skipSegment: false,
-            needBacktrack: false
-          };
-        }
-      }
-
-      // 其他标点符号（包括中文标点）可以正常换行
-      return hasContentInLine
-        ? { shouldBreak: true, skipSegment: false, needBacktrack: false }
-        : { shouldBreak: false, skipSegment: false, needBacktrack: false };
-    }
-
-    if (segment.type === 'space') {
-      // 空格：如果导致换行则跳过这个空格
-      // 行首的空格直接跳过（不显示）
-      return hasContentInLine
-        ? { shouldBreak: true, skipSegment: true, needBacktrack: false }
-        : { shouldBreak: false, skipSegment: true, needBacktrack: false }; // 行首空格跳过
-    }
-
-    // 其他类型默认不换行
-    return { shouldBreak: false, skipSegment: false, needBacktrack: false };
-  }
-}
-
-/**
- * 行盒 - 表示一行内容的容器
- */
-class LineBox {
-  constructor() {
-    this.segments = []; // 此行包含的段落
-    this.positions = []; // 每个段落的相对位置信息
-    this.width = 0; // 行的总宽度
-    this.isFirstLine = false; // 是否是首行
-    this.textIndent = 0; // 首行缩进
-    this.startX = 0; // 行的起始X坐标
-  }
-
-  /**
-   * 添加段落到行中
-   * @param {Object} segment - 文本段落
-   * @param {number} x - 段落的X位置
-   */
-  addSegment(segment, x) {
-    this.segments.push(segment);
-    this.positions.push({ x, segment });
-  }
-
-  /**
-   * 检查行是否有内容
-   * @returns {boolean}
-   */
-  hasContent() {
-    return this.segments.length > 0;
-  }
-
-  /**
-   * 计算行的度量信息
-   * @param {CanvasRenderingContext2D} measureCtx - 用于测量文本的上下文
-   * @param {Map} styleMap - 可选的样式映射，用于准确计算不同样式的文本宽度
-   */
-  computeMetrics(measureCtx = null, styleMap = null) {
-    if (this.positions.length === 0) {
-      this.width = 0;
-      return;
-    }
-
-    // 计算行的总宽度
-    let totalWidth = 0;
-    for (const segment of this.segments) {
-      if (measureCtx) {
-        // 如果有样式映射，为每个segment设置正确的字体
-        if (styleMap && segment.originalSegmentIndex !== undefined) {
-          const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
-          const fontSize = segmentStyle.fontSize || '16px';
-          const fontWeight = segmentStyle.fontWeight || 'normal';
-          const fontStyle = segmentStyle.fontStyle || 'normal';
-          const fontFamily = segmentStyle.fontFamily || 'system-ui, sans-serif';
-
-          measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize} ${fontFamily}`;
-        }
-
-        totalWidth += measureCtx.measureText(segment.content).width;
-      } else {
-        // 回退到近似计算
-        totalWidth += segment.content.length * 10; // 粗略估算
-      }
-    }
-    this.width = totalWidth;
-  }
-}
-
-/**
- * 行样式处理器 - 负责处理行内的样式、对齐和定位
- * 这是布局的第二阶段：在确定的行内应用样式映射
- */
-class LineStylist {
-  constructor(renderer) {
-    this.renderer = renderer;
-    this.measureCtx = renderer.measureCtx;
-  }
-
-  /**
-   * 为行盒应用样式和定位（支持样式映射）
-   * @param {Array<LineBox>} lines - 行盒数组
-   * @param {Map} styleMap - segment索引到样式的映射
-   * @param {Object} layoutContext - 布局上下文
-   * @returns {Array} 样式化的单词数组
-   */
-  applyStylesToLines(lines, styleMap, layoutContext) {
-    const {
-      textAlign = 'left',
-      startY,
-      startLine,
-      isInlineTextContinuation = false,
-      availableWidth,
-      startX,
-      textIndent = 0
-    } = layoutContext;
-
-    const styledWords = [];
-    let currentLineNumber = startLine;
-
-    // 预计算每行的行高（可能包含不同字体大小）
-    const lineMetrics = this.calculateLineMetrics(lines, styleMap);
-
-    let currentY = startY;
-    if (!isInlineTextContinuation) {
-      // 使用第一行的基线作为起始位置
-      const firstLineHeight = lineMetrics[0]?.lineHeight || this.renderer.theme.baseFontSize * this.renderer.theme.lineHeight;
-      const baseline = this.renderer.getTextBaseline(firstLineHeight);
-      currentY = startY + baseline;
-    }
-
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-      const line = lines[lineIndex];
-      const lineMetric = lineMetrics[lineIndex];
-
-      // 计算文本对齐的偏移量（基于已有位置进行调整）
-      let alignmentOffsetX = 0;
-      let justifySpaceDistribution = new Map(); // 用于存储每个空格应该增加的宽度
-
-      if (textAlign === 'center' || textAlign === 'right' || textAlign === 'justify') {
-        // 重新计算行的实际宽度
-        let lineWidth = 0;
-        for (let i = 0; i < line.segments.length; i++) {
-          const segment = line.segments[i];
-          const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
-          const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
-          const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
-          const fontStyle = this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
-
-          this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
-          lineWidth += this.measureCtx.measureText(segment.content).width;
-        }
-
-        const contentWidth = availableWidth - (line.isFirstLine ? textIndent : 0);
-        const remainingSpace = contentWidth - lineWidth;
-
-        if (textAlign === 'center') {
-          alignmentOffsetX = remainingSpace / 2;
-        } else if (textAlign === 'right') {
-          alignmentOffsetX = remainingSpace;
-        } else if (textAlign === 'justify') {
-          // 两端对齐：将剩余空间均分到空格中
-          // 只对非最后一行进行两端对齐，最后一行保持左对齐
-          const isLastLine = lineIndex === lines.length - 1;
-          if (!isLastLine && remainingSpace > 0) {
-            // 计算该行中空格的数量
-            const spaceSegments = [];
-            for (let i = 0; i < line.segments.length; i++) {
-              const segment = line.segments[i];
-              if (segment.type === 'space') {
-                spaceSegments.push(i);
-              }
-            }
-
-            if (spaceSegments.length > 0) {
-              // 将剩余空间均分到每个空格
-              const additionalSpacePerGap = remainingSpace / spaceSegments.length;
-              spaceSegments.forEach(segmentIndex => {
-                justifySpaceDistribution.set(segmentIndex, additionalSpacePerGap);
-              });
-            }
-          }
-        }
-      }
-
-      // 计算两端对齐时的累积偏移
-      let justifyOffsetX = 0;
-
-      for (let segmentIndex = 0; segmentIndex < line.segments.length; segmentIndex++) {
-        const segment = line.segments[segmentIndex];
-        const position = line.positions[segmentIndex];
-
-        // 获取该segment的样式
-        const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
-
-        // 解析样式属性
-        const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
-        const fontWeight = this.renderer.getStyleProperty(segmentStyle, 'fontWeight') || 'normal';
-        const fontStyle = this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
-        const color = this.renderer.getStyleProperty(segmentStyle, 'color') || this.renderer.theme.textColor;
-
-        // 设置测量上下文字体
-        this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
-        const segmentWidth = this.measureCtx.measureText(segment.content).width;
-
-        // 计算最终的X位置（包含对齐偏移和两端对齐偏移）
-        let finalX = position.x + alignmentOffsetX + justifyOffsetX;
-
-        // 如果是空格且需要两端对齐，则增加额外的宽度
-        let finalWidth = segmentWidth;
-        if (segment.type === 'space' && justifySpaceDistribution.has(segmentIndex)) {
-          const additionalSpace = justifySpaceDistribution.get(segmentIndex);
-          finalWidth += additionalSpace;
-          // 这个空格之后的所有段都需要增加相应的偏移
-          justifyOffsetX += additionalSpace;
-        }
-
-        // 使用 LineBreaker 计算的位置 + 对齐偏移 + 两端对齐偏移
-        const styledWord = {
-          tokenId: `word_${this.renderer.globalTokenCounter++}`, // 添加唯一tokenId
-          x: finalX,
-          y: currentY,
-          width: finalWidth,
-          height: fontSize,
-          line: currentLineNumber,
-          text: segment.content,
-          type: segment.type,
-          style: {
-            ...segmentStyle,
-            fontSize,
-            fontWeight,
-            fontStyle,
-            color,
-          },
-          startIndex: segment.startIndex,
-          endIndex: segment.endIndex,
-        };
-
-        styledWords.push(styledWord);
-      }
-
-      // 准备下一行
-      if (lineIndex < lines.length - 1) {
-        currentLineNumber++;
-        currentY += lineMetric.lineHeight;
-      }
-    }
-
-    return styledWords;
-  }
-
-  /**
-   * 计算每行的度量信息（考虑不同字体大小）
-   * @param {Array<LineBox>} lines - 行盒数组
-   * @param {Map} styleMap - 样式映射
-   * @returns {Array} 每行的度量信息
-   */
-  calculateLineMetrics(lines, styleMap) {
-    return lines.map(line => {
-      let maxFontSize = this.renderer.theme.baseFontSize;
-      let maxLineHeight = maxFontSize * this.renderer.theme.lineHeight;
-
-      // 找到行内最大的字体大小和行高
-      for (const segment of line.segments) {
-        const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
-        const fontSize = this.renderer.parseSize(this.renderer.getStyleProperty(segmentStyle, 'fontSize')) || this.renderer.theme.baseFontSize;
-        const lineHeight = this.renderer.getLineHeight(segmentStyle);
-
-        if (fontSize > maxFontSize) {
-          maxFontSize = fontSize;
-        }
-        if (lineHeight > maxLineHeight) {
-          maxLineHeight = lineHeight;
-        }
-      }
-
-      return {
-        maxFontSize,
-        lineHeight: maxLineHeight
-      };
-    });
-  }
-
-  /**
-   * 旧版本的styleLines方法（保持兼容性）
-   * @deprecated 推荐使用applyStylesToLines方法
-   */
-  styleLines(lines, styleContext) {
-    // 创建简单的样式映射（所有segment使用相同样式）
-    const styleMap = new Map();
-    let segmentIndex = 0;
-
-    for (const line of lines) {
-      for (const segment of line.segments) {
-        styleMap.set(segmentIndex, styleContext.style || {});
-        segmentIndex++;
-      }
-    }
-
-    return this.applyStylesToLines(lines, styleMap, styleContext);
-  }
-
-  /**
-   * 计算行的对齐起始位置
-   * @param {LineBox} line - 行盒
-   * @param {string} textAlign - 文本对齐方式
-   * @param {Object} styleContext - 样式上下文
-   * @returns {number} 对齐后的起始X坐标
-   */
-  calculateLineAlignment(line, textAlign, styleContext) {
-    const { availableWidth, startX } = styleContext;
-
-    // 重新计算行的实际宽度
-    let lineWidth = 0;
-    for (const segment of line.segments) {
-      lineWidth += this.measureCtx.measureText(segment.content).width;
-    }
-
-    switch (textAlign) {
-      case 'center':
-        return startX + (availableWidth - lineWidth) / 2;
-
-      case 'right':
-        return startX + availableWidth - lineWidth;
-
-      case 'justify':
-        // 两端对齐：起始位置是左对齐，具体的空间分布在 applyStylesToLines 中处理
-        return startX;
-
-      case 'left':
-      default:
-        return startX;
-    }
-  }
-}
-
 export class VirtualCanvasRenderer {
   /** @type {HTMLElement} 滚动容器 */
   container;
@@ -886,9 +195,6 @@ export class VirtualCanvasRenderer {
   /** @type {HTMLParser} HTML转换引擎实例 */
   htmlParser;
 
-  /** @type {Array|null} 解析后的节点数据（内部存储） */
-  _parsedNodes = null;
-
   /** @type {string|undefined} 当前HTML内容 */
   currentHTML;
 
@@ -921,21 +227,6 @@ export class VirtualCanvasRenderer {
   /** @type {number} 章节索引 */
   chapterIndex = 0;
 
-  /** @type {number} 全局tokenId计数器，为每个word生成唯一标识 */
-  globalTokenCounter = 0;
-
-  // 增量计算缓存系统
-  /** @type {Map} 节点计算结果缓存 */
-  nodeCache = new Map();
-  
-  /** @type {Set} 需要重新计算的节点ID集合 */
-  dirtyNodes = new Set();
-  
-  /** @type {number} 节点ID计数器 */
-  nodeIdCounter = 0;
-  
-  /** @type {Proxy} parsedNodes的代理对象 */
-  _parsedNodesProxy = null;
 
   /**
    * @param {VirtualRenderConfig} config
@@ -944,6 +235,9 @@ export class VirtualCanvasRenderer {
     // 渲染模式配置 - 支持 'vertical' 和 'horizontal'
     this.mode = config.mode || 'vertical';
     this.chapterIndex = config.chapterIndex;
+
+    // 进度变化回调
+    this.onProgressChange = config.onProgressChange || null;
 
     // 布局计算模式 - 是否自动调整跨块内容
     this.adjustCrossChunkContent = this.mode === 'horizontal'; // 默认启用
@@ -971,18 +265,16 @@ export class VirtualCanvasRenderer {
     this.chunkHeight = this.canvasHeight;
     this.chunkWidth = this.canvasWidth;
 
-    // 转换引擎实例
-
+    // 解析后的节点数据
+    /** @type {Array|null} 解析后的节点数据 */
     this.parsedNodes = null;
 
     // 创建隐藏的canvas用于测量文本
     this.measureCanvas = document.createElement('canvas');
     this.measureCtx = this.measureCanvas.getContext('2d');
 
-    // 初始化新的布局工具
-    this.inlineFlowManager = new InlineFlowManager(this);
-    this.lineBreaker = new LineBreaker(this);
-    this.lineStylist = new LineStylist(this);
+    // 初始化布局引擎
+    this.layoutEngine = new LayoutEngine(this);
 
     // 设置高DPI
     this.setupHighDPI();
@@ -991,402 +283,6 @@ export class VirtualCanvasRenderer {
 
     // 初始化划线工具（延迟到DOM创建后）
     this.canvasTools = null;
-  }
-
-  /**
-   * 获取parsedNodes的代理对象
-   */
-  get parsedNodes() {
-    return this._parsedNodesProxy;
-  }
-
-  /**
-   * 设置parsedNodes并创建代理监听
-   */
-  set parsedNodes(nodes) {
-    this._parsedNodes = nodes;
-    if (nodes) {
-      this._parsedNodesProxy = this.createParsedNodesProxy(nodes);
-      this.assignNodeIds(nodes);
-    } else {
-      this._parsedNodesProxy = null;
-    }
-  }
-
-  /**
-   * 为节点树分配唯一ID
-   * @param {Array} nodes 
-   */
-  assignNodeIds(nodes) {
-    const traverse = (nodeList) => {
-      nodeList.forEach(node => {
-        if (!node._nodeId) {
-          node._nodeId = `node_${this.nodeIdCounter++}`;
-        }
-        if (node.children) {
-          traverse(node.children);
-        }
-      });
-    };
-    traverse(nodes);
-  }
-
-  /**
-   * 创建parsedNodes的Proxy代理
-   * @param {Array} nodes 
-   * @returns {Proxy}
-   */
-  createParsedNodesProxy(nodes) {
-    const self = this;
-    
-    return new Proxy(nodes, {
-      set(target, property, value) {
-        const result = Reflect.set(target, property, value);
-        
-        // 监听数组修改操作
-        if (typeof property === 'string' && !isNaN(property)) {
-          const index = parseInt(property);
-          if (value && typeof value === 'object') {
-            // 新增或修改节点
-            self.handleNodeChange(value, 'add');
-          }
-        }
-        
-        return result;
-      },
-      
-      get(target, property) {
-        const value = Reflect.get(target, property);
-        
-        // 包装数组方法以监听变化
-        if (typeof value === 'function') {
-          return self.wrapArrayMethod(target, property, value);
-        }
-        
-        return value;
-      }
-    });
-  }
-
-  /**
-   * 包装数组方法以监听变化
-   * @param {Array} target 
-   * @param {string} methodName 
-   * @param {Function} originalMethod 
-   * @returns {Function}
-   */
-  wrapArrayMethod(target, methodName, originalMethod) {
-    const self = this;
-    
-    if (['push', 'unshift', 'splice', 'pop', 'shift'].includes(methodName)) {
-      return function(...args) {
-        const result = originalMethod.apply(target, args);
-        
-        // 处理新增的节点
-        if (methodName === 'push' || methodName === 'unshift') {
-          args.forEach(node => {
-            if (node && typeof node === 'object') {
-              self.handleNodeChange(node, 'add');
-            }
-          });
-        } else if (methodName === 'splice' && args.length > 2) {
-          // splice可能同时删除和添加
-          const addedNodes = args.slice(2);
-          addedNodes.forEach(node => {
-            if (node && typeof node === 'object') {
-              self.handleNodeChange(node, 'add');
-            }
-          });
-        }
-        
-        return result;
-      };
-    }
-    
-    return originalMethod;
-  }
-
-  /**
-   * 处理节点变化
-   * @param {Object} node 
-   * @param {string} changeType 
-   */
-  handleNodeChange(node, changeType) {
-    if (changeType === 'add') {
-      // 为新节点分配ID
-      this.assignNodeIds([node]);
-      
-      // 标记节点及其子节点为需要重新计算
-      this.markNodeDirty(node);
-      
-      // 触发增量重新布局
-      this.scheduleIncrementalLayout();
-    }
-  }
-
-  /**
-   * 标记节点为需要重新计算
-   * @param {Object} node 
-   */
-  markNodeDirty(node) {
-    if (node._nodeId) {
-      this.dirtyNodes.add(node._nodeId);
-    }
-    
-    // 递归标记子节点
-    if (node.children) {
-      node.children.forEach(child => this.markNodeDirty(child));
-    }
-  }
-
-  /**
-   * 调度增量布局计算
-   */
-  scheduleIncrementalLayout() {
-    // 防止频繁触发，使用RAF延迟执行
-    if (this._layoutTimeout) {
-      clearTimeout(this._layoutTimeout);
-    }
-    
-    this._layoutTimeout = setTimeout(() => {
-      this.performIncrementalLayout();
-    }, 16); // 大约一帧的时间
-  }
-
-  /**
-   * 执行增量布局计算
-   */
-  performIncrementalLayout() {
-    if (this.dirtyNodes.size === 0) return;
-
-    // 只重新计算脏节点的结果，然后统一重排坐标
-    this.calculateDirtyNodes();
-    
-    // 重新计算整体布局坐标
-    this.recalculateAllCoordinates();
-    
-    // 清除脏节点标记
-    this.dirtyNodes.clear();
-    
-    // 触发重新渲染
-    if (this.viewport && this.fullLayoutData) {
-      this.viewport.setContentRange(
-        this.mode === 'vertical'
-          ? this.fullLayoutData.totalHeight
-          : this.fullLayoutData.totalWidth
-      );
-      
-      this.viewport.canvasInfoList.forEach((canvasInfo) => {
-        canvasInfo.needsRerender = true;
-      });
-      
-      this.renderVisibleContent();
-    }
-  }
-
-  /**
-   * 计算脏节点的结果
-   */
-  calculateDirtyNodes() {
-    if (!this._parsedNodes) return;
-
-    const traverse = (nodeList) => {
-      nodeList.forEach(node => {
-        if (node._nodeId && this.dirtyNodes.has(node._nodeId)) {
-          // 重新计算这个节点
-          this.calculateNodeResult(node);
-        }
-        
-        if (node.children) {
-          traverse(node.children);
-        }
-      });
-    };
-    
-    traverse(this._parsedNodes);
-  }
-
-  /**
-   * 计算单个节点的结果并缓存
-   * @param {Object} node 
-   */
-  calculateNodeResult(node) {
-    const nodeId = node._nodeId;
-    if (!nodeId) return;
-
-    const cachedResult = this.nodeCache.get(nodeId);
-    
-    // 根据节点类型计算结果
-    let result = null;
-    
-    if (node.type === 'text' || node.type === 'link') {
-      result = this.calculateTextNodeResult(node);
-    } else if (node.type === 'image') {
-      result = this.calculateImageNodeResult(node);
-    } else if (node.type === 'element') {
-      result = this.calculateElementNodeResult(node);
-    }
-    
-    if (result) {
-      this.nodeCache.set(nodeId, {
-        ...result,
-        nodeId,
-        lastCalculated: Date.now()
-      });
-    }
-  }
-
-  /**
-   * 计算文本节点结果
-   * @param {Object} node 
-   * @returns {Object}
-   */
-  calculateTextNodeResult(node) {
-    // 缓存文本分割结果
-    const segments = this.segmentText(node.text, node.style || {});
-    
-    // 缓存样式计算结果
-    const fontSize = this.parseSize(this.getStyleProperty(node.style, 'fontSize')) || this.theme.baseFontSize;
-    const fontWeight = this.getStyleProperty(node.style, 'fontWeight') || 'normal';
-    const fontStyle = this.getStyleProperty(node.style, 'fontStyle') || 'normal';
-    const lineHeight = this.getLineHeight(node.style);
-    const textAlign = this.getStyleProperty(node.style, 'textAlign') || 'left';
-    
-    return {
-      type: 'text',
-      segments,
-      computedStyle: {
-        fontSize,
-        fontWeight,
-        fontStyle,
-        lineHeight,
-        textAlign
-      },
-      text: node.text,
-      originalStyle: node.style || {}
-    };
-  }
-
-  /**
-   * 计算图片节点结果
-   * @param {Object} node 
-   * @returns {Object}
-   */
-  calculateImageNodeResult(node) {
-    let originalWidth, originalHeight;
-
-    if (node.bounds && node.bounds.width && node.bounds.height) {
-      originalWidth = node.bounds.width;
-      originalHeight = node.bounds.height;
-    } else {
-      originalWidth = node.width || this.defaultImageWidth;
-      originalHeight = node.height || this.defaultImageHeight;
-    }
-
-    const availableWidth = this.canvasWidth - this.theme.paddingX * 2;
-    const scaleResult = this.scaleImageToFit(originalWidth, originalHeight, availableWidth);
-
-    return {
-      type: 'image',
-      originalWidth,
-      originalHeight,
-      computedWidth: scaleResult.width,
-      computedHeight: scaleResult.height,
-      isScaled: scaleResult.isScaled,
-      src: node.src,
-      alt: node.alt || ''
-    };
-  }
-
-  /**
-   * 计算元素节点结果
-   * @param {Object} node 
-   * @returns {Object}
-   */
-  calculateElementNodeResult(node) {
-    const style = node.style || {};
-    
-    return {
-      type: 'element',
-      isBlockElement: this.isBlockElement(style),
-      computedStyle: {
-        marginTop: this.parseSize(this.getStyleProperty(style, 'marginTop')),
-        marginBottom: this.parseSize(this.getStyleProperty(style, 'marginBottom')),
-        paddingTop: this.parseSize(this.getStyleProperty(style, 'paddingTop')),
-        paddingBottom: this.parseSize(this.getStyleProperty(style, 'paddingBottom')),
-        paddingLeft: this.parseSize(this.getStyleProperty(style, 'paddingLeft')),
-        paddingRight: this.parseSize(this.getStyleProperty(style, 'paddingRight')),
-        textIndent: this.parseSize(this.getStyleProperty(style, 'textIndent')),
-        textAlign: this.getStyleProperty(style, 'textAlign') || 'left'
-      },
-      originalStyle: style
-    };
-  }
-
-  /**
-   * 获取缓存的节点结果
-   * @param {string} nodeId 
-   * @returns {Object|null}
-   */
-  getCachedNodeResult(nodeId) {
-    return this.nodeCache.get(nodeId) || null;
-  }
-
-  /**
-   * 重新计算所有坐标
-   */
-  recalculateAllCoordinates() {
-    if (!this._parsedNodes) return;
-
-    const words = [];
-    const elements = [];
-
-    let x = this.theme.paddingX;
-    let y = 0;
-    let currentLine = 0;
-
-    // 重新初始化渲染块管理
-    this.initRenderChunks();
-
-    // 设置初始的继承样式
-    const initialInheritedStyle = {
-      color: this.theme.textColor,
-      fontFamily: this.theme.fontFamily,
-      fontSize: this.theme.baseFontSize,
-      lineHeight: this.theme.lineHeight,
-      fontWeight: 'normal',
-      fontStyle: 'normal',
-    };
-
-    // 使用缓存结果重新计算坐标
-    const result = this.layoutNodesWithCache(
-      this._parsedNodes,
-      x,
-      y,
-      currentLine,
-      words,
-      elements,
-      initialInheritedStyle
-    );
-
-    // 更新fullLayoutData
-    const contentHeight = result.y;
-    const chunkHeight = this.chunkHeight;
-    const chunkWidth = this.chunkWidth;
-    const totalChunks = Math.ceil(contentHeight / chunkHeight);
-
-    const scrollContentHeight = totalChunks * chunkHeight;
-    const scrollContentWidth = totalChunks * chunkWidth;
-    
-    this.fullLayoutData = {
-      words,
-      elements,
-      contentHeight,
-      scrollContentHeight,
-      totalHeight: scrollContentHeight,
-      totalWidth: scrollContentWidth,
-      totalChunks,
-    };
   }
 
   /**
@@ -1538,430 +434,31 @@ export class VirtualCanvasRenderer {
     });
   }
 
-  render() {
+  /**
+   * 渲染HTML内容（公共API）
+   * @param {string} htmlContent HTML字符串
+   * @returns {Promise} 渲染完成的Promise
+   */
+  async render(htmlContent) {
+    await this.layout(htmlContent);
     this.renderVisibleContent();
   }
 
   /**
+   * 渲染可视内容
+   */
+  renderVisibleContent() {
+    if (!this.fullLayoutData) return;
+    // 多Canvas模式：分别渲染每个Canvas
+    this.renderMultiCanvas();
+  }
+
+  /**
    * 计算完整布局（不进行Canvas渲染）
-   * 
-   * 布局说明：
-   * - paddingX 代表左右对称的全局内边距
-   * - 可用宽度 = canvasWidth - paddingX * 2 - 元素特定的内边距
-   * - 起始X坐标 = paddingX（左内边距）
    */
   calculateFullLayout() {
-    const words = [];
-    const elements = [];
-
-    let x = this.theme.paddingX; // 从左内边距开始
-    let y = 0;
-    let currentLine = 0;
-
-    // 初始化渲染块管理
-    this.initRenderChunks();
-
-    // 清空缓存和脏节点（全量重新计算）
-    this.nodeCache.clear();
-    this.dirtyNodes.clear();
-
-    // 设置初始的继承样式（从主题中获取）
-    const initialInheritedStyle = {
-      color: this.theme.textColor,
-      fontFamily: this.theme.fontFamily,
-      fontSize: this.theme.baseFontSize,
-      lineHeight: this.theme.lineHeight,
-      fontWeight: 'normal',
-      fontStyle: 'normal',
-    };
-
-    // 第一次完整计算时，建立所有节点的缓存
-    this.buildNodeCache(this.parsedNodes, initialInheritedStyle);
-
-    // 使用缓存结果计算布局
-    const result = this.layoutNodesWithCache(
-      this.parsedNodes,
-      x,
-      y,
-      currentLine,
-      words,
-      elements,
-      initialInheritedStyle
-    );
-
-    // 📐 正确的总高度计算方式：使用实际的Y坐标
-    const contentHeight = result.y;
-    // 计算需要的总块数
-    const chunkHeight = this.chunkHeight;
-    const chunkWidth = this.chunkWidth;
-    const totalChunks = Math.ceil(contentHeight / chunkHeight);
-
-    // scrollContent 的高度基于块数量，而不是内容高度
-    const scrollContentHeight = totalChunks * chunkHeight;
-    const scrollContentWidth = totalChunks * chunkWidth;
-    this.fullLayoutData = {
-      words,
-      elements,
-      contentHeight, // 实际内容高度
-      scrollContentHeight, // 滚动容器高度
-      totalHeight: scrollContentHeight, // 兼容性，使用滚动容器高度
-      totalWidth: scrollContentWidth,
-      totalChunks,
-    };
-  }
-
-  /**
-   * 为所有节点建立初始缓存
-   * @param {Array} nodes 
-   * @param {Object} inheritedStyle 
-   */
-  buildNodeCache(nodes, inheritedStyle = {}) {
-    const traverse = (nodeList, currentInheritedStyle) => {
-      nodeList.forEach(node => {
-        if (node._nodeId) {
-          // 计算并缓存节点结果
-          this.calculateNodeResult(node);
-        }
-        
-        if (node.children) {
-          // 计算子节点的继承样式
-          const nodeInheritedStyle = node.type === 'element' 
-            ? this.mergeInheritedStyle(currentInheritedStyle, this.extractInheritableStyles(node.style || {}))
-            : currentInheritedStyle;
-          
-          traverse(node.children, nodeInheritedStyle);
-        }
-      });
-    };
-    
-    traverse(nodes, inheritedStyle);
-  }
-
-  /**
-   * 使用缓存结果进行布局计算
-   * @param {Array} nodes 
-   * @param {number} startX 
-   * @param {number} startY 
-   * @param {number} startLine 
-   * @param {Array} words 
-   * @param {Array} elements 
-   * @param {Object} inheritedStyle 
-   * @returns {Object}
-   */
-  layoutNodesWithCache(nodes, startX, startY, startLine, words, elements, inheritedStyle = {}) {
-    let x = startX;
-    let y = startY;
-    let line = startLine;
-    let lastNodeWasInline = false;
-
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      const cachedResult = this.getCachedNodeResult(node._nodeId);
-
-      const currentNodeIsInline = this.isInlineNode(node);
-      const currentNodeIsInlineText = this.isInlineTextNode(node);
-      let isInlineTextContinuation = currentNodeIsInlineText && lastNodeWasInline;
-
-      if (i === 0) {
-        isInlineTextContinuation = currentNodeIsInlineText && false; // 第一个节点不是续接
-      }
-
-      const result = this.layoutNodeWithCache(
-        node, 
-        cachedResult, 
-        x, 
-        y, 
-        line, 
-        words, 
-        elements, 
-        inheritedStyle, 
-        isInlineTextContinuation
-      );
-
-      y = result.y;
-      line = result.line;
-      x = result.x;
-
-      lastNodeWasInline = currentNodeIsInline;
-    }
-
-    return { x, y, line };
-  }
-
-  /**
-   * 使用缓存结果布局单个节点
-   * @param {Object} node 
-   * @param {Object} cachedResult 
-   * @param {number} startX 
-   * @param {number} startY 
-   * @param {number} startLine 
-   * @param {Array} words 
-   * @param {Array} elements 
-   * @param {Object} inheritedStyle 
-   * @param {boolean} isInlineTextContinuation 
-   * @returns {Object}
-   */
-  layoutNodeWithCache(node, cachedResult, startX, startY, startLine, words, elements, inheritedStyle = {}, isInlineTextContinuation = false) {
-    if (node.type === 'text' || node.type === 'link') {
-      return this.layoutTextWithCache(cachedResult, startX, startY, startLine, words, isInlineTextContinuation);
-    }
-
-    if (node.type === 'image') {
-      return this.layoutImageWithCache(cachedResult, startX, startY, startLine, elements);
-    }
-
-    // 元素节点
-    let x = startX;
-    let y = startY;
-    let line = startLine;
-
-    if (cachedResult && cachedResult.type === 'element') {
-      const { computedStyle, isBlockElement } = cachedResult;
-      
-      // 处理块级元素的边距和内边距
-      if (isBlockElement) {
-        if (computedStyle.marginTop > 0) {
-          y += computedStyle.marginTop;
-        }
-        if (computedStyle.paddingTop > 0) {
-          y += computedStyle.paddingTop;
-        }
-
-        // 块级元素从新行开始
-        if (x > this.theme.paddingX) {
-          line++;
-          x = this.theme.paddingX;
-          y += this.getLineHeight(cachedResult.originalStyle);
-        }
-
-        if (computedStyle.paddingLeft > 0) {
-          x += computedStyle.paddingLeft;
-        }
-      }
-
-      // 处理子节点
-      if (node.children && node.children.length > 0) {
-        const currentInheritableStyles = this.extractInheritableStyles(cachedResult.originalStyle);
-        const inheritedStyleForChildren = this.mergeInheritedStyle(inheritedStyle, currentInheritableStyles);
-
-        if (isBlockElement) {
-          // 块级元素的内联流处理
-          const inlineChildren = this.inlineFlowManager.extractInlineNodes(node.children, inheritedStyleForChildren);
-
-          if (inlineChildren.length > 0) {
-            const { segments, styleMap } = this.inlineFlowManager.collectInlineFlow(inlineChildren, inheritedStyleForChildren);
-
-            if (segments.length > 0) {
-              const availableWidth = this.canvasWidth - this.theme.paddingX * 2 - (computedStyle.paddingRight || 0);
-              
-              const layoutContext = {
-                availableWidth,
-                textIndent: computedStyle.textIndent || 0,
-                startX: x,
-                isInlineTextContinuation
-              };
-              const lines = this.lineBreaker.breakIntoLines(segments, layoutContext, styleMap);
-
-              const styleContext = {
-                textAlign: computedStyle.textAlign || 'left',
-                startY: y,
-                startLine: line,
-                isInlineTextContinuation,
-                availableWidth,
-                startX: x,
-                textIndent: computedStyle.textIndent || 0
-              };
-              const styledWords = this.lineStylist.applyStylesToLines(lines, styleMap, styleContext);
-
-              let finalX = x;
-              let finalY = y;
-              let finalLine = line;
-
-              for (const styledWord of styledWords) {
-                const adjustedWord = this.addWordToChunk(styledWord);
-                words.push(adjustedWord);
-
-                finalX = adjustedWord.x + adjustedWord.width;
-                finalY = adjustedWord.y;
-                finalLine = adjustedWord.line;
-              }
-
-              x = finalX;
-              y = finalY;
-              line = finalLine;
-            }
-          }
-
-          // 处理非内联子节点
-          const nonInlineChildren = node.children.filter(child =>
-            !(child.type === 'text' || child.type === 'link' || (child.type === 'element' && this.isInlineNode(child)))
-          );
-
-          if (nonInlineChildren.length > 0) {
-            const result = this.layoutNodesWithCache(
-              nonInlineChildren,
-              x,
-              y,
-              line,
-              words,
-              elements,
-              inheritedStyleForChildren
-            );
-            x = result.x;
-            y = result.y;
-            line = result.line;
-          }
-        } else {
-          // 内联元素
-          const result = this.layoutNodesWithCache(
-            node.children,
-            x,
-            y,
-            line,
-            words,
-            elements,
-            inheritedStyleForChildren
-          );
-          x = result.x;
-          y = result.y;
-          line = result.line;
-        }
-      }
-
-      // 处理块级元素的下边距和换行
-      if (isBlockElement) {
-        if (computedStyle.paddingBottom > 0) {
-          y += computedStyle.paddingBottom;
-        }
-        if (computedStyle.marginBottom > 0) {
-          y += computedStyle.marginBottom;
-        }
-
-        line++;
-        x = this.theme.paddingX;
-        y += this.getLineHeight(cachedResult.originalStyle);
-      }
-    }
-
-    return { x, y, line };
-  }
-
-  /**
-   * 使用缓存结果布局文本
-   * @param {Object} cachedResult 
-   * @param {number} startX 
-   * @param {number} startY 
-   * @param {number} startLine 
-   * @param {Array} words 
-   * @param {boolean} isInlineTextContinuation 
-   * @returns {Object}
-   */
-  layoutTextWithCache(cachedResult, startX, startY, startLine, words, isInlineTextContinuation = false) {
-    if (!cachedResult || cachedResult.type !== 'text') {
-      return { x: startX, y: startY, line: startLine };
-    }
-
-    const { segments, computedStyle } = cachedResult;
-    const textIndent = isInlineTextContinuation ? 0 : (computedStyle.textIndent || 0);
-    const rightPadding = 0; // 从缓存中获取
-    const availableWidth = this.canvasWidth - this.theme.paddingX * 2 - rightPadding;
-
-    // 为segments创建样式映射
-    const styleMap = new Map();
-    segments.forEach((segment, index) => {
-      segment.originalSegmentIndex = index;
-      styleMap.set(index, cachedResult.originalStyle);
-    });
-
-    // 行分割
-    const layoutContext = {
-      availableWidth,
-      textIndent,
-      startX,
-      isInlineTextContinuation
-    };
-    const lines = this.lineBreaker.breakIntoLines(segments, layoutContext, styleMap);
-
-    // 样式处理
-    const styleContext = {
-      style: cachedResult.originalStyle,
-      fontSize: computedStyle.fontSize,
-      fontWeight: computedStyle.fontWeight,
-      fontStyle: computedStyle.fontStyle,
-      lineHeight: computedStyle.lineHeight,
-      textAlign: computedStyle.textAlign,
-      startY,
-      startLine,
-      isInlineTextContinuation,
-      availableWidth,
-      startX
-    };
-    const styledWords = this.lineStylist.styleLines(lines, styleContext);
-
-    let finalX = startX;
-    let finalY = startY;
-    let finalLine = startLine;
-
-    for (const styledWord of styledWords) {
-      const adjustedWord = this.addWordToChunk(styledWord);
-      words.push(adjustedWord);
-
-      finalX = adjustedWord.x + adjustedWord.width;
-      finalY = adjustedWord.y;
-      finalLine = adjustedWord.line;
-    }
-
-    if (styledWords.length === 0) {
-      finalX = startX;
-      finalY = startY;
-      finalLine = startLine;
-    }
-
-    return {
-      x: finalX,
-      y: finalY,
-      line: finalLine
-    };
-  }
-
-  /**
-   * 使用缓存结果布局图片
-   * @param {Object} cachedResult 
-   * @param {number} startX 
-   * @param {number} startY 
-   * @param {number} startLine 
-   * @param {Array} elements 
-   * @returns {Object}
-   */
-  layoutImageWithCache(cachedResult, startX, startY, startLine, elements) {
-    if (!cachedResult || cachedResult.type !== 'image') {
-      return { x: startX, y: startY, line: startLine };
-    }
-
-    const centeredX = this.calculateImageCenterPosition(cachedResult.computedWidth);
-
-    const imageElement = {
-      type: 'image',
-      x: centeredX,
-      y: startY,
-      width: cachedResult.computedWidth,
-      height: cachedResult.computedHeight,
-      src: cachedResult.src,
-      alt: cachedResult.alt,
-      originalWidth: cachedResult.originalWidth,
-      originalHeight: cachedResult.originalHeight,
-      isScaled: cachedResult.isScaled,
-    };
-
-    const adjustedImageElement = this.addElementToChunk(imageElement);
-    elements.push(adjustedImageElement);
-
-    // 图片后换行
-    const line = startLine + 1;
-    const x = this.theme.paddingX;
-    const y = adjustedImageElement.y + adjustedImageElement.height + 20;
-
-    return { x, y, line };
+    // 使用布局引擎计算完整布局
+    this.layoutEngine.calculateFullLayout();
   }
 
   /**
@@ -2005,8 +502,8 @@ export class VirtualCanvasRenderer {
    * @returns {Object} 可能调整后的单词对象
    */
   addWordToChunk(word) {
-    const lineHeight = this.getLineHeight(word.style);
-    const baseline = this.getTextBaseline(lineHeight);
+    const lineHeight = this.layoutEngine.getLineHeight(word.style);
+    const baseline = this.layoutEngine.getTextBaseline(lineHeight);
     const chunkHeight = this.chunkHeight;
 
     let wordTop = word.y - baseline;
@@ -2230,16 +727,16 @@ export class VirtualCanvasRenderer {
       const { style } = word;
 
       // 使用兼容的样式访问方式
-      const fontStyle = this.getStyleProperty(style, 'fontStyle') || 'normal';
-      const fontWeight = this.getStyleProperty(style, 'fontWeight') || 'normal';
-      const fontSize = this.getStyleProperty(style, 'fontSize');
+      const fontStyle = this.layoutEngine.getStyleProperty(style, 'fontStyle') || 'normal';
+      const fontWeight = this.layoutEngine.getStyleProperty(style, 'fontWeight') || 'normal';
+      const fontSize = this.layoutEngine.getStyleProperty(style, 'fontSize');
       const color =
-        this.getStyleProperty(style, 'color') || this.theme.textColor;
+        this.layoutEngine.getStyleProperty(style, 'color') || this.theme.textColor;
 
       // 处理 fontSize - 如果是带单位的字符串，解析数值部分
       let fontSizeValue;
       if (fontSize) {
-        fontSizeValue = this.parseSize(fontSize);
+        fontSizeValue = this.layoutEngine.parseSize(fontSize);
       } else {
         fontSizeValue = this.theme.baseFontSize;
       }
@@ -2258,9 +755,6 @@ export class VirtualCanvasRenderer {
       ctx.fillText(word.text, word.x, canvasY);
     });
   }
-
-
-
 
   /**
    * 渲染Canvas中的元素
@@ -2322,63 +816,6 @@ export class VirtualCanvasRenderer {
   }
 
   /**
-   * 计算图片的居中位置
-   * @param {number} imageWidth - 图片宽度
-   * @param {number} containerStart - 容器起始X坐标（默认为paddingX）
-   * @param {number} containerWidth - 容器可用宽度
-   * @returns {number} 图片居中的X坐标
-   */
-  calculateImageCenterPosition(
-    imageWidth,
-    containerStart = this.theme.paddingX,
-    containerWidth = null
-  ) {
-    // 如果没有指定容器宽度，使用默认的可用宽度
-    if (containerWidth === null) {
-      containerWidth = this.canvasWidth - this.theme.paddingX * 2;
-    }
-
-    // 计算居中位置
-    return containerStart + (containerWidth - imageWidth) / 2;
-  }
-
-  /**
-   * 处理图片缩放以适应容器
-   * @param {number} originalWidth - 原始宽度
-   * @param {number} originalHeight - 原始高度
-   * @param {number} maxWidth - 最大宽度
-   * @param {number} maxHeight - 最大高度（可选）
-   * @returns {{width: number, height: number, isScaled: boolean}}
-   */
-  scaleImageToFit(originalWidth, originalHeight, maxWidth, maxHeight = null) {
-    let finalWidth = originalWidth;
-    let finalHeight = originalHeight;
-    let isScaled = false;
-
-    // 宽度缩放
-    if (originalWidth > maxWidth) {
-      const widthScale = maxWidth / originalWidth;
-      finalWidth = maxWidth;
-      finalHeight = originalHeight * widthScale;
-      isScaled = true;
-    }
-
-    // 高度缩放（如果指定了最大高度）
-    if (maxHeight && finalHeight > maxHeight) {
-      const heightScale = maxHeight / finalHeight;
-      finalWidth = finalWidth * heightScale;
-      finalHeight = maxHeight;
-      isScaled = true;
-    }
-
-    return {
-      width: finalWidth,
-      height: finalHeight,
-      isScaled,
-    };
-  }
-
-  /**
    * 绘制图片占位符
    * @param {CanvasRenderingContext2D} ctx - Canvas上下文
    * @param {ImageElement} element - 图片元素
@@ -2423,8 +860,9 @@ export class VirtualCanvasRenderer {
     if (element.isScaled) {
       ctx.fillStyle = '#888';
       ctx.font = '10px system-ui';
-      const scaleText = `${element.originalWidth}×${element.originalHeight
-        } → ${Math.round(element.width)}×${Math.round(element.height)}`;
+      const scaleText = `${element.originalWidth}×${
+        element.originalHeight
+      } → ${Math.round(element.width)}×${Math.round(element.height)}`;
       const scaleWidth = ctx.measureText(scaleText).width;
       const scaleX = element.x + (element.width - scaleWidth) / 2;
       const scaleY = canvasY + element.height - 8;
@@ -2470,8 +908,8 @@ export class VirtualCanvasRenderer {
 
     // 5. 在所有单词中查找最匹配的
     const { words } = this.fullLayoutData;
-    const lineHeight = this.getLineHeight();
-    const baseline = this.getTextBaseline(lineHeight);
+    const lineHeight = this.layoutEngine.getLineHeight();
+    const baseline = this.layoutEngine.getTextBaseline(lineHeight);
 
     let bestMatchIndex = null;
     let minDistance = Infinity;
@@ -2500,7 +938,7 @@ export class VirtualCanvasRenderer {
       const wordCenterY = word.y; // 基线位置
       const distance = Math.sqrt(
         Math.pow(contentX - wordCenterX, 2) +
-        Math.pow(contentY - wordCenterY, 2)
+          Math.pow(contentY - wordCenterY, 2)
       );
 
       if (distance < minDistance) {
@@ -2511,760 +949,6 @@ export class VirtualCanvasRenderer {
 
     // 返回最近的单词索引
     return bestMatchIndex;
-  }
-
-  /**
-   * 滚动到指定字符
-   * @param {number} charIndex
-   */
-  scrollToChar(charIndex) {
-    if (!this.fullLayoutData || charIndex >= this.fullLayoutData.words.length) {
-      return;
-    }
-
-    const word = this.fullLayoutData.words[charIndex];
-
-    // 计算字符所在的Y位置
-    const wordY = word.y - this.getTextBaseline(this.getLineHeight(word.style));
-
-    // 滚动到该位置，居中显示
-    const targetY = wordY - this.viewport.state.viewportHeight / 2;
-    this.viewport.scrollTo(Math.max(0, targetY));
-  }
-
-  /**
-   * 启用/禁用虚拟滚动
-   * @param {boolean} enabled
-   */
-  setVirtualScrollEnabled(enabled) {
-    this.virtualScrollEnabled = enabled;
-
-    if (this.currentHTML) {
-      this.render(this.currentHTML);
-    }
-  }
-
-  /**
-   * 判断是否为块级元素（通过样式判断）
-   * @param {Object} style - 样式对象
-   * @returns {boolean}
-   */
-  isBlockElement(style = {}) {
-    const display = this.getStyleProperty(style, 'display') || 'inline';
-    // 块级显示类型包括：block, list-item, table等
-    return (
-      display === 'block' || display === 'list-item' || display === 'table'
-    );
-  }
-
-  /**
-   * 判断节点是否是内联文本节点
-   * @param {Object} node - 节点对象
-   * @returns {boolean}
-   */
-  isInlineTextNode(node) {
-    return node.type === 'text' || node.type === 'link';
-  }
-
-  /**
-   * 判断节点是否是内联节点（包括内联文本和内联元素）
-   * @param {Object} node - 节点对象
-   * @returns {boolean}
-   */
-  isInlineNode(node) {
-    if (node.type === 'text' || node.type === 'link') {
-      return true;
-    }
-
-    // 检查元素节点是否为内联元素
-    if (node.type === 'element') {
-      const style = node.style || {};
-      return !this.isBlockElement(style);
-    }
-
-    return false;
-  }
-
-  /**
-   * 获取可继承的样式属性列表
-   * @returns {string[]}
-   */
-  getInheritableStyleProperties() {
-    return [
-      // 字体相关
-      'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
-      'lineHeight', 'letterSpacing', 'wordSpacing',
-
-      // 文本相关  
-      'color', 'textAlign', 'textIndent'
-    ];
-  }
-
-  /**
-   * 从样式对象中提取可继承的样式
-   * @param {Object} style - 样式对象
-   * @returns {Object} 可继承的样式
-   */
-  extractInheritableStyles(style) {
-    const inheritableStyles = {};
-    const inheritableProps = this.getInheritableStyleProperties();
-
-    inheritableProps.forEach(prop => {
-      if (style && style[prop] !== undefined) {
-        inheritableStyles[prop] = style[prop];
-      }
-    });
-
-    return inheritableStyles;
-  }
-
-
-
-  /**
-   * 合并继承样式和节点样式
-   * @param {Object} inheritedStyle - 继承的样式
-   * @param {Object} nodeStyle - 节点自身的样式
-   * @returns {Object} 合并后的样式
-   */
-  mergeInheritedStyle(inheritedStyle = {}, nodeStyle = {}) {
-    // 先应用继承样式，再覆盖节点样式（节点样式优先级更高）
-    return {
-      ...inheritedStyle,
-      ...nodeStyle
-    };
-  }
-
-  /**
-   * 获取样式属性值（camelCase 格式）
-   * @param {Object} style - camelCase 格式的样式对象
-   * @param {string} property - 属性名（camelCase 格式，如 'fontSize'）
-   * @returns {string|undefined} 样式值
-   */
-  getStyleProperty(style, property) {
-    if (!style) return undefined;
-
-    // 直接获取 camelCase 格式的属性
-    return style[property];
-  }
-
-  /**
-   * 批量获取样式属性，返回 camelCase 格式的对象
-   * @param {Object} style - 原始样式对象
-   * @param {Array<string>} properties - 需要获取的属性列表（camelCase 格式）
-   * @returns {Object} camelCase 格式的样式对象
-   */
-  extractNormalizedStyles(style, properties) {
-    const normalized = {};
-
-    properties.forEach((prop) => {
-      const value = this.getStyleProperty(style, prop);
-      if (value !== undefined) {
-        // 特殊处理：跳过默认值，避免写入不必要的样式
-
-        if (prop === 'textAlign' && (value === 'start' || value === 'left')) {
-          return; // 跳过默认的对齐方式
-        }
-
-
-        normalized[prop] = value;
-      }
-    });
-
-    return normalized;
-  }
-
-  /**
-   * 布局节点
-   * @param {Array} nodes
-   * @param {number} startX
-   * @param {number} startY
-   * @param {number} startLine
-   * @param {Array} words
-   * @param {Array} elements
-   * @param {Object} inheritedStyle - 从父元素继承的样式
-   * @returns {Object}
-   */
-  layoutNodes(nodes, startX, startY, startLine, words, elements, inheritedStyle = {}) {
-    return this.layoutNodesWithInlineState(nodes, startX, startY, startLine, words, elements, inheritedStyle, false);
-  }
-
-  layoutNodesWithInlineState(nodes, startX, startY, startLine, words, elements, inheritedStyle = {}, firstNodeInlineTextContinuation = false) {
-    let x = startX;
-    let y = startY;
-    let line = startLine;
-    let lastNodeWasInline = firstNodeInlineTextContinuation; // 使用传入的状态作为初始状态
-
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-
-      // 检查当前节点是否是内联节点且前一个节点也是内联节点
-      const currentNodeIsInline = this.isInlineNode(node);
-      const currentNodeIsInlineText = this.isInlineTextNode(node);
-      let isInlineTextContinuation = currentNodeIsInlineText && lastNodeWasInline;
-
-      // 对于第一个节点，使用传入的状态
-      if (i === 0) {
-        isInlineTextContinuation = currentNodeIsInlineText && firstNodeInlineTextContinuation;
-      }
-
-      const result = this.layoutNode(node, x, y, line, words, elements, inheritedStyle, isInlineTextContinuation);
-
-      // 更新坐标
-      y = result.y;
-      line = result.line;
-
-      // X坐标的处理：
-      // - 如果当前节点是块级元素，它已经在layoutNode中处理了换行，
-      //   result.x 应该是 paddingX（新行的开始）
-      // - 如果当前节点是内联元素，result.x 是当前行的结束位置
-      // - 无论哪种情况，都直接使用 result.x，因为 layoutNode 已经正确处理了
-      x = result.x;
-
-      lastNodeWasInline = currentNodeIsInline;
-    }
-
-    return { x, y, line };
-  }
-
-  /**
-   * 布局单个节点
-   * @param {Object} node
-   * @param {number} startX
-   * @param {number} startY
-   * @param {number} startLine
-   * @param {Array} words
-   * @param {Array} elements
-   * @param {Object} inheritedStyle - 从父元素继承的样式
-   * @param {boolean} isInlineTextContinuation - 是否是同一行内联文本的续接部分
-   * @returns {Object}
-   */
-  layoutNode(node, startX, startY, startLine, words, elements, inheritedStyle = {}, isInlineTextContinuation = false) {
-    if (node.type === 'text') {
-      // 文本节点的样式：继承的样式 + 节点自身的特有样式
-      const nodeStyle = node.style || {};
-
-      // 合并继承样式和节点特有样式（节点样式优先）
-      const textStyle = this.mergeInheritedStyle(inheritedStyle, nodeStyle);
-
-      return this.layoutText(
-        node.text,
-        textStyle,
-        startX,
-        startY,
-        startLine,
-        words,
-        isInlineTextContinuation
-      );
-    }
-
-    if (node.type === 'link') {
-      // 链接节点：继承的样式 + 节点自身的样式
-      const linkStyle = node.style || {};
-      const textStyle = this.mergeInheritedStyle(inheritedStyle, linkStyle);
-
-      return this.layoutText(
-        node.text,
-        textStyle,
-        startX,
-        startY,
-        startLine,
-        words,
-        isInlineTextContinuation
-      );
-    }
-
-    let x = startX;
-    let y = startY;
-    let line = startLine;
-
-    // 直接使用节点的样式，HTMLParser已经处理了默认样式合并
-    const currentNodeStyle = node.style || {};
-
-    // 准备传递给子节点的继承样式：从当前节点提取可继承样式并与父节点继承样式合并
-    const currentInheritableStyles = this.extractInheritableStyles(currentNodeStyle);
-    const inheritedStyleForChildren = this.mergeInheritedStyle(inheritedStyle, currentInheritableStyles);
-
-    // 处理块级元素的上边距和上内边距
-    if (this.isBlockElement(currentNodeStyle)) {
-      const marginTop = this.parseSize(
-        this.getStyleProperty(currentNodeStyle, 'marginTop')
-      );
-      const paddingTop = this.parseSize(
-        this.getStyleProperty(currentNodeStyle, 'paddingTop')
-      );
-
-      if (marginTop > 0) {
-        y += marginTop;
-      }
-
-      if (paddingTop > 0) {
-        y += paddingTop;
-      }
-
-      // 块级元素从新行开始
-      if (x > this.theme.paddingX) {
-        line++;
-        x = this.theme.paddingX;
-        y += this.getLineHeight(currentNodeStyle); // 使用完整行高
-      }
-
-      // 处理块级元素的左右内边距（影响文本宽度）
-      const paddingLeft = this.parseSize(
-        this.getStyleProperty(currentNodeStyle, 'paddingLeft')
-      );
-      const paddingRight = this.parseSize(
-        this.getStyleProperty(currentNodeStyle, 'paddingRight')
-      );
-
-      if (paddingLeft > 0) {
-        x += paddingLeft;
-      }
-
-      // paddingRight 会在布局文本时影响可用宽度，这里存储以备后用
-      if (paddingRight > 0) {
-        // 可以存储在currentNodeStyle中供其他方法使用
-        currentNodeStyle.effectivePaddingRight = paddingRight;
-      }
-    }
-
-    // 处理特殊元素
-    if (node.type === 'image') {
-      // 优先使用新 parser 提供的 bounds 信息
-      let originalWidth, originalHeight;
-
-      if (node.bounds && node.bounds.width && node.bounds.height) {
-        originalWidth = node.bounds.width;
-        originalHeight = node.bounds.height;
-      } else {
-        // 回退到手动获取或默认值
-        originalWidth = node.width || this.defaultImageWidth;
-        originalHeight = node.height || this.defaultImageHeight;
-      }
-
-      // 计算可用容器宽度
-      const availableWidth = this.canvasWidth - this.theme.paddingX * 2;
-
-      // 处理图片缩放
-      const scaleResult = this.scaleImageToFit(
-        originalWidth,
-        originalHeight,
-        availableWidth
-      );
-
-      // 计算图片居中位置
-      const centeredX = this.calculateImageCenterPosition(scaleResult.width);
-
-      const imageElement = {
-        type: 'image',
-        x: centeredX,
-        y: y,
-        width: scaleResult.width,
-        height: scaleResult.height,
-        src: node.src,
-        alt: node.alt || '',
-        originalWidth: originalWidth,
-        originalHeight: originalHeight,
-        isScaled: scaleResult.isScaled,
-      };
-
-      // 立即添加到渲染块（可能会调整位置）
-      const adjustedImageElement = this.addElementToChunk(imageElement);
-
-      // 添加调整后的元素到elements数组
-      elements.push(adjustedImageElement);
-
-      // 图片后换行，使用调整后的图片位置和高度
-      line++;
-      x = this.theme.paddingX;
-      y = adjustedImageElement.y + adjustedImageElement.height + 20; // 使用调整后的图片高度 + 间距
-    } else if (node.children && node.children.length > 0) {
-      // 判断是否为块级元素
-      const isBlockElement = this.isBlockElement(currentNodeStyle);
-
-      if (isBlockElement) {
-        // 块级元素：使用内联流处理方式
-        const inlineChildren = this.inlineFlowManager.extractInlineNodes(node.children, inheritedStyleForChildren);
-
-        if (inlineChildren.length > 0) {
-          // 收集整个内联流
-          const { segments, styleMap } = this.inlineFlowManager.collectInlineFlow(inlineChildren, inheritedStyleForChildren);
-
-          if (segments.length > 0) {
-            // 计算布局参数
-            const rightPadding = this.parseSize(this.getStyleProperty(currentNodeStyle, 'paddingRight')) || 0;
-            const availableWidth = this.canvasWidth - this.theme.paddingX * 2 - rightPadding;
-            const textIndent = this.parseSize(this.getStyleProperty(currentNodeStyle, 'textIndent')) || 0;
-            const textAlign = this.getStyleProperty(currentNodeStyle, 'textAlign') || 'left';
-
-            // 第一阶段：统一分行
-            const layoutContext = {
-              availableWidth,
-              textIndent,
-              startX: x,
-              isInlineTextContinuation
-            };
-            const lines = this.lineBreaker.breakIntoLines(segments, layoutContext, styleMap);
-
-            // 第二阶段：样式应用
-            const styleContext = {
-              textAlign,
-              startY: y,
-              startLine: line,
-              isInlineTextContinuation,
-              availableWidth,
-              startX: x,
-              textIndent
-            };
-            const styledWords = this.lineStylist.applyStylesToLines(lines, styleMap, styleContext);
-
-            // 添加到渲染系统
-            let finalX = x;
-            let finalY = y;
-            let finalLine = line;
-
-            for (const styledWord of styledWords) {
-              const adjustedWord = this.addWordToChunk(styledWord);
-              words.push(adjustedWord);
-
-              finalX = adjustedWord.x + adjustedWord.width;
-              finalY = adjustedWord.y;
-              finalLine = adjustedWord.line;
-            }
-
-            x = finalX;
-            y = finalY;
-            line = finalLine;
-          }
-        }
-
-        // 处理非内联子节点（如图片等）
-        const nonInlineChildren = node.children.filter(child =>
-          !(child.type === 'text' || child.type === 'link' || (child.type === 'element' && this.isInlineNode(child)))
-        );
-
-        if (nonInlineChildren.length > 0) {
-          const result = this.layoutNodesWithInlineState(
-            nonInlineChildren,
-            x,
-            y,
-            line,
-            words,
-            elements,
-            inheritedStyleForChildren,
-            false
-          );
-          x = result.x;
-          y = result.y;
-          line = result.line;
-        }
-      } else {
-        // 内联元素：继续使用原有的递归处理方式
-        const result = this.layoutNodesWithInlineState(
-          node.children,
-          x,
-          y,
-          line,
-          words,
-          elements,
-          inheritedStyleForChildren,
-          isInlineTextContinuation
-        );
-        x = result.x;
-        y = result.y;
-        line = result.line;
-      }
-    }
-
-    // 处理块级元素的下边距、下内边距和换行
-    if (this.isBlockElement(currentNodeStyle)) {
-      const marginBottom = this.parseSize(
-        this.getStyleProperty(currentNodeStyle, 'marginBottom')
-      );
-      const paddingBottom = this.parseSize(
-        this.getStyleProperty(currentNodeStyle, 'paddingBottom')
-      );
-
-      if (paddingBottom > 0) {
-        y += paddingBottom;
-      }
-
-      if (marginBottom > 0) {
-        y += marginBottom;
-      }
-
-      // 块级元素后换行
-      line++;
-      x = this.theme.paddingX;
-      y += this.getLineHeight(currentNodeStyle); // 使用完整行高
-    }
-
-    return { x, y, line };
-  }
-
-  /**
-   * 布局文本 - 兼容性方法
-   * 
-   * 注意：新架构中，块级元素的内联流处理已经在layoutNode中完成。
-   * 此方法主要用于向后兼容和处理单个text节点的情况。
-   * 
-   * @param {string} text
-   * @param {Object} style
-   * @param {number} startX
-   * @param {number} startY
-   * @param {number} startLine
-   * @param {Array} words
-   * @param {boolean} isInlineTextContinuation - 是否是同一行内联文本的续接部分
-   * @returns {Object}
-   */
-  layoutText(text, style, startX, startY, startLine, words, isInlineTextContinuation = false) {
-    // 解析样式属性
-    const fontSize =
-      this.parseSize(this.getStyleProperty(style, 'fontSize')) ||
-      this.theme.baseFontSize;
-    const fontWeight = this.getStyleProperty(style, 'fontWeight') || 'normal';
-    const fontStyle = this.getStyleProperty(style, 'fontStyle') || 'normal';
-    const lineHeight = this.getLineHeight(style);
-    const textAlign = this.getStyleProperty(style, 'textAlign') || 'left';
-    const textIndent = isInlineTextContinuation ? 0 :
-      (this.parseSize(this.getStyleProperty(style, 'textIndent')) || 0);
-
-    // 更新测量上下文的字体
-    this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.theme.fontFamily}`;
-
-    // 计算可用宽度
-    const rightPadding = this.parseSize(this.getStyleProperty(style, 'paddingRight')) || 0;
-    const availableWidth = this.canvasWidth - this.theme.paddingX * 2 - rightPadding;
-
-    // 将文本按照单词和中文字符分割（传递样式用于空白符处理）
-    const segments = this.segmentText(text, style);
-
-    // 为所有 segments 创建统一的样式映射
-    const styleMap = new Map();
-    segments.forEach((segment, index) => {
-      segment.originalSegmentIndex = index; // 确保有索引
-      styleMap.set(index, style);
-    });
-
-    // ===== 第一阶段：行分割 =====
-    const layoutContext = {
-      availableWidth,
-      textIndent,
-      startX,
-      isInlineTextContinuation
-    };
-
-    const lines = this.lineBreaker.breakIntoLines(segments, layoutContext, styleMap);
-
-    // ===== 第二阶段：样式处理 =====
-    const styleContext = {
-      style,
-      fontSize,
-      fontWeight,
-      fontStyle,
-      lineHeight,
-      textAlign,
-      startY,
-      startLine,
-      isInlineTextContinuation,
-      availableWidth,
-      startX
-    };
-
-    const styledWords = this.lineStylist.styleLines(lines, styleContext);
-
-    // 将样式化的单词添加到渲染块并收集到words数组
-    let finalX = startX;
-    let finalY = startY;
-    let finalLine = startLine;
-
-    for (const styledWord of styledWords) {
-      // 立即添加到渲染块（可能会调整位置）
-      const adjustedWord = this.addWordToChunk(styledWord);
-      words.push(adjustedWord);
-
-      // 更新最终位置信息
-      finalX = adjustedWord.x + adjustedWord.width;
-      finalY = adjustedWord.y;
-      finalLine = adjustedWord.line;
-    }
-
-    // 如果没有生成任何单词，保持原始位置
-    if (styledWords.length === 0) {
-      finalX = startX;
-      finalY = startY;
-      finalLine = startLine;
-    }
-
-    // 返回最终位置信息
-    return {
-      x: finalX,
-      y: finalY,
-      line: finalLine
-    };
-  }
-
-  /**
-   * 规范化空白符（统一折叠处理）
-   * @param {string} text - 原始文本
-   * @returns {string} 规范化后的文本
-   */
-  normalizeWhitespace(text) {
-    // 统一的空白符处理：折叠所有连续空白符为单个空格，移除首尾空白
-    return text
-      .replace(/\s+/g, ' ')  // 折叠所有连续空白符为单个空格
-      .trim();               // 移除首尾空白
-  }
-
-  /**
-   * 将文本分割为单词、字符和空格段
-   * @param {string} text
-   * @param {Object} [style] - 样式对象（保留参数以维持兼容性）
-   * @returns {Array}
-   */
-  segmentText(text, style = {}) {
-    // 首先规范化空白符
-    const normalizedText = this.normalizeWhitespace(text);
-
-    // 如果文本为空，直接返回
-    if (!normalizedText) {
-      return [];
-    }
-
-    const segments = [];
-
-    const regex =
-      /(\w+(?:[-']\w+)*)|([\u4e00-\u9fff\u3400-\u4dbf\u20000-\u2a6df\u2a700-\u2b73f\u2b740-\u2b81f\u2b820-\u2ceaf\uf900-\ufaff\u3300-\u33ff])|(\s+)|([\p{P}\p{S}])|(.)/gu;
-
-    let match;
-
-    while ((match = regex.exec(normalizedText)) !== null) {
-      const [fullMatch, englishWord, cjkChar, whitespace, punctuation, other] =
-        match;
-      const startIndex = match.index;
-      const endIndex = startIndex + fullMatch.length;
-
-      if (englishWord) {
-        segments.push({
-          type: 'word',
-          content: englishWord,
-          startIndex,
-          endIndex,
-        });
-      } else if (cjkChar) {
-        segments.push({
-          type: 'cjk',
-          content: cjkChar,
-          startIndex,
-          endIndex,
-        });
-      } else if (whitespace) {
-        segments.push({
-          type: 'space',
-          content: whitespace,
-          startIndex,
-          endIndex,
-        });
-      } else if (punctuation) {
-        segments.push({
-          type: 'punctuation',
-          content: punctuation,
-          startIndex,
-          endIndex,
-        });
-      } else if (other) {
-        segments.push({
-          type: 'other',
-          content: other,
-          startIndex,
-          endIndex,
-        });
-      }
-    }
-
-    return segments;
-  }
-
-  /**
-   * 解析尺寸值（支持em、px、pt等）
-   * @param {string|number} value
-   * @returns {number}
-   */
-  parseSize(value) {
-    if (!value) return 0;
-
-    if (typeof value === 'number') return value;
-
-    // 移除多余的空格
-    const trimmedValue = value.toString().trim();
-
-    if (trimmedValue.endsWith('em')) {
-      return parseFloat(trimmedValue) * this.theme.baseFontSize;
-    }
-
-    if (trimmedValue.endsWith('px')) {
-      return parseFloat(trimmedValue);
-    }
-
-    // EPUB常用pt单位转换 (1pt = 1.33px)
-    if (trimmedValue.endsWith('pt')) {
-      return parseFloat(trimmedValue) * 1.33;
-    }
-
-    // rem单位处理
-    if (trimmedValue.endsWith('rem')) {
-      return parseFloat(trimmedValue) * this.theme.baseFontSize;
-    }
-
-    // 百分比单位（相对于容器宽度）
-    if (trimmedValue.endsWith('%')) {
-      const percentage = parseFloat(trimmedValue) / 100;
-      return this.canvasWidth * percentage;
-    }
-
-    return parseFloat(trimmedValue) || 0;
-  }
-
-  /**
-   * 获取行高
-   * @param {Object} style
-   * @returns {number}
-   */
-  getLineHeight(style = {}) {
-    const fontSize =
-      this.parseSize(this.getStyleProperty(style, 'fontSize')) ||
-      this.theme.baseFontSize;
-
-    // 如果样式中指定了line-height，使用样式中的值
-    const lineHeightValue = this.getStyleProperty(style, 'lineHeight');
-    if (lineHeightValue) {
-      // 如果是数值（如 1.5），直接乘以字体大小
-      if (
-        typeof lineHeightValue === 'number' ||
-        /^[\d.]+$/.test(lineHeightValue)
-      ) {
-        return fontSize * parseFloat(lineHeightValue);
-      }
-
-      // 如果是具体单位（如 20px, 1.5em），解析单位
-      const parsedLineHeight = this.parseSize(lineHeightValue);
-      if (parsedLineHeight > 0) {
-        return parsedLineHeight;
-      }
-    }
-
-    // 默认使用主题的行高倍数
-    return fontSize * this.theme.lineHeight;
-  }
-
-  /**
-   * 获取文本基线位置
-   * @param {number} lineHeight - 行高
-   * @param {number} fontSize - 字体大小
-   * @returns {number} 基线相对于行顶部的偏移
-   */
-  getTextBaseline(lineHeight) {
-    const ascentRatio = 0.8;
-    return lineHeight * ascentRatio;
   }
 
   /**
@@ -3347,11 +1031,6 @@ export class VirtualCanvasRenderer {
    * 销毁渲染器
    */
   destroy() {
-    // 清理定时器
-    if (this._layoutTimeout) {
-      clearTimeout(this._layoutTimeout);
-      this._layoutTimeout = null;
-    }
 
     // 移除DOM元素
     if (this.container && this.container.parentNode) {
@@ -3366,8 +1045,6 @@ export class VirtualCanvasRenderer {
 
     // 清理引用
     this.parsedNodes = null;
-    this._parsedNodes = null;
-    this._parsedNodesProxy = null;
     this.container = null;
     this.measureCanvas = null;
     this.measureCtx = null;
@@ -3377,10 +1054,6 @@ export class VirtualCanvasRenderer {
     this.renderChunks.clear();
     this.fullLayoutData = null;
 
-    // 清理缓存系统
-    this.nodeCache.clear();
-    this.dirtyNodes.clear();
-
     // 清理图片缓存
     this.imageCache.clear();
 
@@ -3388,86 +1061,27 @@ export class VirtualCanvasRenderer {
   }
 
   /**
-   * 动态插入节点到parsedNodes
-   * @param {Object|Array} nodes 要插入的节点或节点数组
-   * @param {number} [index] 插入位置，默认添加到末尾
-   * @returns {Promise} 布局计算完成的Promise
+   * 根据nodeId查找节点
+   * @param {string} nodeId
+   * @returns {Object|null}
    */
-  async insertNodes(nodes, index = null) {
-    if (!this.parsedNodes) {
-      this.parsedNodes = [];
-    }
+  findNodeById(nodeId) {
+    if (!this.parsedNodes) return null;
 
-    const nodesToInsert = Array.isArray(nodes) ? nodes : [nodes];
-    
-    if (index === null || index >= this.parsedNodes.length) {
-      // 添加到末尾
-      this.parsedNodes.push(...nodesToInsert);
-    } else {
-      // 插入到指定位置
-      this.parsedNodes.splice(index, 0, ...nodesToInsert);
-    }
-
-    // Proxy会自动触发增量布局，等待布局完成
-    return new Promise((resolve) => {
-      const checkLayout = () => {
-        if (this.dirtyNodes.size === 0) {
-          resolve();
-        } else {
-          setTimeout(checkLayout, 16);
-        }
-      };
-      
-      // 等待一帧以确保增量布局被触发
-      setTimeout(checkLayout, 16);
-    });
-  }
-
-  /**
-   * 移除节点
-   * @param {number} startIndex 开始索引
-   * @param {number} [deleteCount=1] 删除数量
-   * @returns {Array} 被删除的节点
-   */
-  removeNodes(startIndex, deleteCount = 1) {
-    if (!this.parsedNodes || startIndex >= this.parsedNodes.length) {
-      return [];
-    }
-
-    const removedNodes = this.parsedNodes.splice(startIndex, deleteCount);
-    
-    // 清理被删除节点的缓存
-    const removeFromCache = (nodeList) => {
-      nodeList.forEach(node => {
-        if (node._nodeId) {
-          this.nodeCache.delete(node._nodeId);
-          this.dirtyNodes.delete(node._nodeId);
+    const traverse = (nodeList) => {
+      for (const node of nodeList) {
+        if (node._nodeId === nodeId) {
+          return node;
         }
         if (node.children) {
-          removeFromCache(node.children);
+          const found = traverse(node.children);
+          if (found) return found;
         }
-      });
+      }
+      return null;
     };
-    
-    removeFromCache(removedNodes);
-    
-    // 触发重新布局
-    this.scheduleIncrementalLayout();
-    
-    return removedNodes;
-  }
 
-  /**
-   * 获取缓存统计信息（用于调试和监控）
-   * @returns {Object}
-   */
-  getCacheStats() {
-    return {
-      cachedNodes: this.nodeCache.size,
-      dirtyNodes: this.dirtyNodes.size,
-      totalTokens: this.globalTokenCounter,
-      totalNodes: this.nodeIdCounter
-    };
+    return traverse(this.parsedNodes);
   }
 
   initMode({ mode, poolSize }) {
@@ -3488,5 +1102,99 @@ export class VirtualCanvasRenderer {
     this.viewport = new Viewport(config);
   }
 
+  /**
+   * 获取详细进度信息
+   * @returns {DetailedProgressInfo}
+   */
+  getDetailedProgress() {
+    if (!this.viewport) {
+      return {
+        progress: 0,
+        scrollTop: 0,
+        contentHeight: 0,
+        viewportHeight: 0,
+        maxScrollTop: 0,
+        scrollableHeight: 0,
+        isAtTop: true,
+        isAtBottom: true,
+        canScroll: false
+      };
+    }
+
+    const state = this.viewport.state;
+    const scrollableHeight = Math.max(0, state.contentHeight - state.viewportHeight);
+    const maxScrollTop = scrollableHeight;
+    const progress = maxScrollTop > 0 ? Math.min(1, Math.max(0, state.scrollTop / maxScrollTop)) : 0;
+
+    return {
+      progress,
+      scrollTop: state.scrollTop,
+      contentHeight: state.contentHeight,
+      viewportHeight: state.viewportHeight,
+      maxScrollTop,
+      scrollableHeight,
+      isAtTop: state.scrollTop <= 0,
+      isAtBottom: state.scrollTop >= maxScrollTop,
+      canScroll: scrollableHeight > 0
+    };
+  }
+
+  /**
+   * 获取当前进度（0-1之间的数值）
+   * @returns {number}
+   */
+  getProgress() {
+    return this.getDetailedProgress().progress;
+  }
+
+  /**
+   * 设置进度
+   * @param {number} progress 进度值（0-1之间）
+   */
+  setProgress(progress) {
+    if (!this.viewport) return;
+
+    const clampedProgress = Math.min(1, Math.max(0, progress));
+    const detailedProgress = this.getDetailedProgress();
+    const targetScrollTop = clampedProgress * detailedProgress.maxScrollTop;
+
+    this.viewport.scrollTo(targetScrollTop);
+  }
+
+  /**
+   * 获取当前渲染模式
+   * @returns {string} 'vertical' 或 'horizontal'
+   */
+  getMode() {
+    return this.mode;
+  }
+
+  /**
+   * 设置渲染模式
+   * @param {string} newMode 'vertical' 或 'horizontal'
+   */
+  setMode(newMode) {
+    if (newMode !== this.mode && (newMode === 'vertical' || newMode === 'horizontal')) {
+      this.mode = newMode;
+      // 重新初始化viewport系统
+      if (this.fullLayoutData) {
+        this.createDOMStructure();
+        this.viewport.setContentRange(
+          this.mode === 'vertical'
+            ? this.fullLayoutData.totalHeight
+            : this.fullLayoutData.totalWidth
+        );
+        this.renderVisibleContent();
+      }
+    }
+  }
+
+  /**
+   * 获取完整的布局节点列表（调试和检查用）
+   * @returns {Array} layoutNodesList的深拷贝
+   */
+  getLayoutNodesList() {
+    return this.layoutEngine ? this.layoutEngine.getLayoutNodesList() : null;
+  }
 }
 export default VirtualCanvasRenderer;

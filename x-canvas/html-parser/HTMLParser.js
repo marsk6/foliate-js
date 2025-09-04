@@ -1,16 +1,76 @@
-import { getDefaultStyles, mergeStyles, normalizeStyleValue, isDefaultValue, isTextStyleProperty, getTextDefaults } from './DefaultStyles.js';
+import {
+  getDefaultStyles,
+  mergeStyles,
+  normalizeStyleValue,
+  isDefaultValue,
+  isTextStyleProperty,
+  getTextDefaults,
+} from './DefaultStyles.js';
 import { normalizeEnglishText } from './EnglishTextNormalizer.js';
+
+/**
+ * ElementNode 类，用于表示所有类型的节点
+ */
+export class ElementNode {
+  static nodeIdCounter = 0;
+  constructor(type, options = {}) {
+    this.type = type;
+    this.nodeId = `node_${++ElementNode.nodeIdCounter}`; // 将由 HTMLParser 分配
+
+    // 根据节点类型设置相应的属性
+    switch (type) {
+      case 'element':
+        this.tag = options.tag || '';
+        this.style = options.style || {};
+        this.bounds = options.bounds || {};
+        this.children = options.children || [];
+        break;
+
+      case 'text':
+        this.text = options.text || '';
+        this.style = options.style || {};
+        break;
+
+      case 'image':
+        this.src = options.src || '';
+        this.alt = options.alt || '';
+        this.bounds = options.bounds || {};
+        break;
+
+      case 'link':
+        this.text = options.text || '';
+        this.href = options.href || '';
+        this.style = options.style || {};
+        break;
+
+      case 'fragment':
+        this.children = options.children || [];
+        break;
+
+      default:
+        // 对于其他类型，直接复制所有选项
+        Object.assign(this, options);
+    }
+  }
+
+  /**
+   * 重置 nodeId 计数器
+   */
+  static resetNodeIdCounter() {
+    ElementNode.nodeIdCounter = 0;
+  }
+}
 
 export class HTMLParser {
   constructor(options = {}) {
     this.pseudoElementCounter = 0;
     this.options = {
-      useDefaultStyles: true,         // 是否使用默认样式
-      mergeComputedStyles: true,      // 是否合并计算后的样式
-      optimizeOutput: true,           // 是否优化输出（移除默认值）
-      debug: false,                   // 是否启用调试输出
-      normalizeText: true,            // 是否规范化英语文本
-      ...options
+      useDefaultStyles: true, // 是否使用默认样式
+      mergeComputedStyles: true, // 是否合并计算后的样式
+      optimizeOutput: true, // 是否优化输出（移除默认值）
+      debug: false, // 是否启用调试输出
+      normalizeText: true, // 是否规范化英语文本
+      ...options,
     };
   }
 
@@ -18,23 +78,22 @@ export class HTMLParser {
    * 创建规范化的文本节点
    * @param {string} text - 原始文本
    * @param {Object} style - 文本样式
-   * @returns {Object} 文本节点对象
+   * @returns {ElementNode} 文本节点对象
    */
   createTextNode(text, style = {}) {
     if (!text) return null;
-    
+
     const trimmedText = text.trim();
     if (!trimmedText) return null;
-    
+
     // 如果启用文本规范化，对英语文本进行规范化处理
-    const finalText = this.options.normalizeText ?
-      normalizeEnglishText(trimmedText) : trimmedText;
-    
-    return {
-      type: 'text',
-      text: finalText,
-      style: style
-    };
+    const finalText = this.options.normalizeText
+      ? normalizeEnglishText(trimmedText)
+      : trimmedText;
+
+    const textNode = new ElementNode('text', { text: finalText, style });
+
+    return textNode;
   }
 
   /**
@@ -48,7 +107,7 @@ export class HTMLParser {
 
   /**
    * 解析单个元素
-   * @param {Element} element 
+   * @param {Element} element
    * @returns {Object}
    */
   parseElement(element) {
@@ -64,16 +123,16 @@ export class HTMLParser {
         return contentNodes[0];
       } else if (contentNodes.length > 1) {
         // 返回一个虚拟的fragment节点来包装多个内容
-        return {
-          type: 'fragment',
-          children: contentNodes
-        };
+        const fragmentData = new ElementNode('fragment', {
+          children: contentNodes,
+        });
+        return fragmentData;
       }
       return null;
     }
 
     const computedStyle = window.getComputedStyle(element);
-    
+
     // 检查元素是否可见
     if (!this.isVisible(computedStyle)) {
       return null;
@@ -81,14 +140,13 @@ export class HTMLParser {
 
     // 按优先级提取样式：className样式 → 内联样式 → computedStyle补充
     const allStyles = this.extractAllElementStyles(element, computedStyle);
-    
-    const elementData = {
-      type: 'element',
+
+    const elementData = new ElementNode('element', {
       tag: element.tagName.toLowerCase(),
       style: allStyles, // 合并所有来源的样式
       bounds: this.getBounds(element),
-      children: []
-    };
+      children: [],
+    });
 
     // 处理伪元素 ::before
     const beforeElement = this.processPseudoElement(element, '::before');
@@ -117,7 +175,7 @@ export class HTMLParser {
             elementData.children.push(svgElement);
           }
         }
-        // 特殊处理 IMG 元素 
+        // 特殊处理 IMG 元素
         else if (child.tagName.toLowerCase() === 'img') {
           const imgElement = this.processImgElement(child);
           if (imgElement) {
@@ -161,7 +219,7 @@ export class HTMLParser {
         }
       }
     }
-    // 处理伪元素 ::after  
+    // 处理伪元素 ::after
     const afterElement = this.processPseudoElement(element, '::after');
     if (afterElement) {
       elementData.children.push(afterElement);
@@ -172,24 +230,26 @@ export class HTMLParser {
 
   /**
    * 检查元素是否可见
-   * @param {CSSStyleDeclaration} style 
+   * @param {CSSStyleDeclaration} style
    * @returns {boolean}
    */
   isVisible(style) {
-    return style.display !== 'none' && 
-           style.visibility !== 'hidden' && 
-           parseFloat(style.opacity) > 0;
+    return (
+      style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      parseFloat(style.opacity) > 0
+    );
   }
 
   /**
- * 提取和合并样式属性（输出 camelCase 格式）
- * @param {CSSStyleDeclaration} computedStyle 
- * @param {string} tagName 
- * @returns {Object} camelCase 格式的样式对象
- */
+   * 提取和合并样式属性（输出 camelCase 格式）
+   * @param {CSSStyleDeclaration} computedStyle
+   * @param {string} tagName
+   * @returns {Object} camelCase 格式的样式对象
+   */
   extractStyles(computedStyle, tagName) {
     let finalStyles = {};
-    
+
     // 1. 先获取默认样式（如果启用）
     if (this.options.useDefaultStyles) {
       const defaultStyles = getDefaultStyles(tagName);
@@ -215,7 +275,7 @@ export class HTMLParser {
 
   /**
    * 从计算样式中提取所有样式属性
-   * @param {CSSStyleDeclaration} style 
+   * @param {CSSStyleDeclaration} style
    * @returns {Object}
    */
   extractAllStyles(style) {
@@ -238,28 +298,29 @@ export class HTMLParser {
 
   /**
    * 过滤出布局相关样式，移除文本相关样式（只保留有实际效果的）
-   * @param {Object} styles 
+   * @param {Object} styles
    * @returns {Object}
    */
   filterLayoutStyles(styles) {
     const layoutStyles = {};
-    
+
     // 只保留非文本相关且有实际效果的样式
     for (const [property, value] of Object.entries(styles)) {
-      if (!isTextStyleProperty(property) && this.isEffectiveLayoutStyle(property, value)) {
+      if (
+        !isTextStyleProperty(property) &&
+        this.isEffectiveLayoutStyle(property, value)
+      ) {
         layoutStyles[property] = value;
       }
     }
-    
+
     return layoutStyles;
   }
-  
-
 
   /**
    * 判断布局样式是否有实际效果
-   * @param {string} property 
-   * @param {string} value 
+   * @param {string} property
+   * @param {string} value
    * @returns {boolean}
    */
   isEffectiveLayoutStyle(property, value) {
@@ -267,17 +328,17 @@ export class HTMLParser {
     if (property === 'display') {
       return value && value !== 'inherit' && value !== 'initial';
     }
-    
+
     // 基本的无效值检查（display 之后进行）
     if (!this.hasNonZeroValue(value, property)) {
       return false;
     }
-    
+
     // 背景色：透明色不需要（仅用于特殊标签）
     if (property === 'backgroundColor') {
       return value !== 'rgba(0, 0, 0, 0)' && value !== 'transparent';
     }
-    
+
     return true;
   }
 
@@ -296,10 +357,18 @@ export class HTMLParser {
    */
   addBoxModelStyles(styles, style) {
     // 宽度和高度：图片元素需要（只有设置了具体值的才需要）
-    if (style.width && style.width !== 'auto' && this.hasNonZeroValue(style.width, 'width')) {
+    if (
+      style.width &&
+      style.width !== 'auto' &&
+      this.hasNonZeroValue(style.width, 'width')
+    ) {
       styles.width = style.width;
     }
-    if (style.height && style.height !== 'auto' && this.hasNonZeroValue(style.height, 'height')) {
+    if (
+      style.height &&
+      style.height !== 'auto' &&
+      this.hasNonZeroValue(style.height, 'height')
+    ) {
       styles.height = style.height;
     }
 
@@ -325,7 +394,7 @@ export class HTMLParser {
         styles[`${property}Left`] = spacingValues.left;
       }
     }
-    
+
     // 处理各个方向的具体值（会覆盖简写值）
     const top = style[`${property}Top`];
     const right = style[`${property}Right`];
@@ -356,87 +425,101 @@ export class HTMLParser {
     if (!spacingValue || spacingValue === '0' || spacingValue === '0px') {
       return null;
     }
-    
+
     const values = spacingValue.trim().split(/\s+/);
-    
+
     switch (values.length) {
       case 1:
         // 一个值：应用到所有方向
         return {
           top: values[0],
-          right: values[0], 
+          right: values[0],
           bottom: values[0],
-          left: values[0]
+          left: values[0],
         };
-        
+
       case 2:
         // 两个值：上下, 左右
         return {
           top: values[0],
           right: values[1],
-          bottom: values[0], 
-          left: values[1]
+          bottom: values[0],
+          left: values[1],
         };
-        
+
       case 3:
         // 三个值：上, 左右, 下
         return {
           top: values[0],
           right: values[1],
           bottom: values[2],
-          left: values[1]
+          left: values[1],
         };
-        
+
       case 4:
         // 四个值：上, 右, 下, 左
         return {
           top: values[0],
-          right: values[1], 
+          right: values[1],
           bottom: values[2],
-          left: values[3]
+          left: values[3],
         };
-        
+
       default:
         return null;
     }
   }
 
-
-
-
-
   /**
    * 判断样式值是否有实际意义（对Canvas渲染有影响）
-   * @param {string} value 
-   * @param {string} property 
+   * @param {string} value
+   * @param {string} property
    * @returns {boolean}
    */
   hasNonZeroValue(value, property = '') {
     if (!value) return false;
-    
+
     // display 属性需要特殊处理，所有值都有意义（包括 'none'）
     if (property === 'display') {
       return value !== 'initial' && value !== 'inherit';
     }
-    
+
     // textIndent 特殊处理：即使是0值也要保留，因为在继承系统中有意义
     if (property === 'textIndent') {
-      return value !== 'initial' && value !== 'inherit' && value !== 'unset' && value !== 'normal';
+      return (
+        value !== 'initial' &&
+        value !== 'inherit' &&
+        value !== 'unset' &&
+        value !== 'normal'
+      );
     }
-    
+
     // 明确的无意义值（扩展列表，包含更多 Canvas 渲染无关的值）
     const meaninglessValues = [
-      'auto', 'none', 'normal', 'initial', 'inherit', 'unset',
-      'transparent', 'rgba(0, 0, 0, 0)', 'rgb(0, 0, 0, 0)',
-      'visible', 'static', 'content-box', 'start', 'left'
+      'auto',
+      'none',
+      'normal',
+      'initial',
+      'inherit',
+      'unset',
+      'transparent',
+      'rgba(0, 0, 0, 0)',
+      'rgb(0, 0, 0, 0)',
+      'visible',
+      'static',
+      'content-box',
+      'start',
+      'left',
     ];
-    
+
     if (meaninglessValues.includes(value)) {
       return false;
     }
-    
+
     // 处理数值类型（px、%、em等）
-    const numericMatch = value.match(/^(-?\d*\.?\d+)(px|%|em|rem|ex|ch|vw|vh|vmin|vmax|pt|pc|in|cm|mm|q|fr)$/);
+    const numericMatch = value.match(
+      /^(-?\d*\.?\d+)(px|%|em|rem|ex|ch|vw|vh|vmin|vmax|pt|pc|in|cm|mm|q|fr)$/
+    );
     if (numericMatch) {
       const numericValue = parseFloat(numericMatch[1]);
       // textIndent 即使为0也保留
@@ -445,7 +528,7 @@ export class HTMLParser {
       }
       return numericValue !== 0;
     }
-    
+
     // 处理无单位数字
     if (!isNaN(parseFloat(value)) && isFinite(value)) {
       // textIndent 即使为0也保留
@@ -454,7 +537,7 @@ export class HTMLParser {
       }
       return parseFloat(value) !== 0;
     }
-    
+
     // 处理特殊的"无效果"值
     if (value === '0' || value === '0px' || value === '0%' || value === '0em') {
       // textIndent 即使为0也保留
@@ -463,62 +546,63 @@ export class HTMLParser {
       }
       return false;
     }
-    
+
     // 处理默认值（对 Canvas 渲染没有特殊效果的值）
     const defaultValues = {
       // 文本样式
-      'fontWeight': ['400', 'normal'],
-      'fontStyle': ['normal'],
-      'textAlign': ['start', 'left'], 
-      'lineHeight': ['normal'],
-      'letterSpacing': ['normal'],
-      'wordSpacing': ['normal'],
-      'fontSize': ['16px', '1em', '100%'],
-      'color': ['rgb(0, 0, 0)', 'black', '#000', '#000000'],
-      
+      fontWeight: ['400', 'normal'],
+      fontStyle: ['normal'],
+      textAlign: ['start', 'left'],
+      lineHeight: ['normal'],
+      letterSpacing: ['normal'],
+      wordSpacing: ['normal'],
+      fontSize: ['16px', '1em', '100%'],
+      color: ['rgb(0, 0, 0)', 'black', '#000', '#000000'],
+
       // 尺寸样式（图片需要）
-      'width': ['auto'],
-      'height': ['auto'],
-      
+      width: ['auto'],
+      height: ['auto'],
+
       // 背景样式（仅用于特殊标签）
-      'backgroundColor': ['rgba(0, 0, 0, 0)', 'transparent'],
-      
+      backgroundColor: ['rgba(0, 0, 0, 0)', 'transparent'],
+
       // 间距样式
-      'marginTop': ['0px', '0'],
-      'marginRight': ['0px', '0'],
-      'marginBottom': ['0px', '0'],
-      'marginLeft': ['0px', '0'],
-      'paddingTop': ['0px', '0'],
-      'paddingRight': ['0px', '0'],
-      'paddingBottom': ['0px', '0'],
-      'paddingLeft': ['0px', '0']
+      marginTop: ['0px', '0'],
+      marginRight: ['0px', '0'],
+      marginBottom: ['0px', '0'],
+      marginLeft: ['0px', '0'],
+      paddingTop: ['0px', '0'],
+      paddingRight: ['0px', '0'],
+      paddingBottom: ['0px', '0'],
+      paddingLeft: ['0px', '0'],
     };
-    
+
     if (defaultValues[property] && defaultValues[property].includes(value)) {
       return false;
     }
-    
-
 
     // 处理字体相关（只支持 camelCase）
     if (property === 'fontFamily') {
-      return value !== 'inherit' && value !== 'initial' && 
-             !value.match(/^(serif|sans-serif|monospace|cursive|fantasy)$/i);
+      return (
+        value !== 'inherit' &&
+        value !== 'initial' &&
+        !value.match(/^(serif|sans-serif|monospace|cursive|fantasy)$/i)
+      );
     }
-    
+
     // 其他有值的都认为有意义
     return true;
   }
 
   /**
    * 提取文本相关样式（用于文本节点，包含继承的样式，输出 camelCase 格式）
-   * @param {CSSStyleDeclaration} computedStyle 
-   * @param {string} tagName 
+   * @param {CSSStyleDeclaration} computedStyle
+   * @param {string} tagName
    * @returns {Object} camelCase 格式的文本样式对象
    */
   extractTextStyles(computedStyle, tagName = 'span') {
     let allStyles = {};
-    
+
     // 1. 先获取默认样式
     if (this.options.useDefaultStyles) {
       const defaultStyles = getDefaultStyles(tagName);
@@ -542,26 +626,29 @@ export class HTMLParser {
 
   /**
    * 过滤出文本相关样式（只保留有实际效果的）
-   * @param {Object} styles 
+   * @param {Object} styles
    * @returns {Object}
    */
   filterTextStyles(styles) {
     const textStyles = {};
-    
+
     // 只保留文本相关且有实际效果的样式
     for (const [property, value] of Object.entries(styles)) {
-      if (isTextStyleProperty(property) && this.isEffectiveTextStyle(property, value)) {
+      if (
+        isTextStyleProperty(property) &&
+        this.isEffectiveTextStyle(property, value)
+      ) {
         textStyles[property] = value;
       }
     }
-    
+
     return textStyles;
   }
 
   /**
    * 判断文本样式是否有实际效果
-   * @param {string} property 
-   * @param {string} value 
+   * @param {string} property
+   * @param {string} value
    * @returns {boolean}
    */
   isEffectiveTextStyle(property, value) {
@@ -569,52 +656,56 @@ export class HTMLParser {
     if (!this.hasNonZeroValue(value, property)) {
       return false;
     }
-    
+
     // 字体族：系统默认字体不需要记录
     if (property === 'fontFamily') {
-      return !value.match(/^(serif|sans-serif|monospace|cursive|fantasy)$/i) &&
-             value !== 'inherit' && value !== 'initial';
+      return (
+        !value.match(/^(serif|sans-serif|monospace|cursive|fantasy)$/i) &&
+        value !== 'inherit' &&
+        value !== 'initial'
+      );
     }
-    
+
     // 字体大小：默认大小不需要记录
     if (property === 'fontSize') {
       return value !== '16px' && value !== '1em' && value !== '100%';
     }
-    
+
     // 字体粗细：正常粗细不需要记录
     if (property === 'fontWeight') {
       return value !== '400' && value !== 'normal';
     }
-    
+
     // 文本对齐：默认对齐不需要记录
     if (property === 'textAlign') {
       return value !== 'start' && value !== 'left';
     }
-    
+
     // 颜色：默认黑色不需要记录
     if (property === 'color') {
-      return value !== 'rgb(0, 0, 0)' && value !== 'black' && value !== '#000' && value !== '#000000';
+      return (
+        value !== 'rgb(0, 0, 0)' &&
+        value !== 'black' &&
+        value !== '#000' &&
+        value !== '#000000'
+      );
     }
-    
 
-    
-
-    
     // 字体样式：normal 值不需要记录
     if (property === 'fontStyle') {
       return value !== 'normal';
     }
-    
+
     // 行高：normal 值不需要记录
     if (property === 'lineHeight') {
       return value !== 'normal';
     }
-    
+
     // 字符间距和词间距：normal 值不需要记录
     if (property === 'letterSpacing' || property === 'wordSpacing') {
       return value !== 'normal' && this.hasNonZeroValue(value, property);
     }
-    
+
     return true;
   }
 
@@ -634,52 +725,77 @@ export class HTMLParser {
         if (fontValues.lineHeight) styles.lineHeight = fontValues.lineHeight;
       }
     }
-    
+
     // 字体族：只有设置了具体字体名的才需要（会覆盖简写值）
-    if (style.fontFamily && 
-        !style.fontFamily.match(/^(serif|sans-serif|monospace|cursive|fantasy)$/i) &&
-        style.fontFamily !== 'inherit' && 
-        style.fontFamily !== 'initial') {
+    if (
+      style.fontFamily &&
+      !style.fontFamily.match(
+        /^(serif|sans-serif|monospace|cursive|fantasy)$/i
+      ) &&
+      style.fontFamily !== 'inherit' &&
+      style.fontFamily !== 'initial'
+    ) {
       styles.fontFamily = style.fontFamily;
     }
-    
+
     // 字体大小：只有非默认16px的才需要
-    if (style.fontSize && style.fontSize !== '16px' && this.hasNonZeroValue(style.fontSize, 'fontSize')) {
+    if (
+      style.fontSize &&
+      style.fontSize !== '16px' &&
+      this.hasNonZeroValue(style.fontSize, 'fontSize')
+    ) {
       styles.fontSize = style.fontSize;
     }
-    
+
     // 字体粗细：只有非正常粗细的才需要
-    if (style.fontWeight && style.fontWeight !== '400' && style.fontWeight !== 'normal') {
+    if (
+      style.fontWeight &&
+      style.fontWeight !== '400' &&
+      style.fontWeight !== 'normal'
+    ) {
       styles.fontWeight = style.fontWeight;
     }
-    
+
     // 字体样式：只有非正常的才需要
     if (style.fontStyle && style.fontStyle !== 'normal') {
       styles.fontStyle = style.fontStyle;
     }
-    
+
     // 行高：只有设置了具体值的才需要
-    if (style.lineHeight && style.lineHeight !== 'normal' && this.hasNonZeroValue(style.lineHeight, 'lineHeight')) {
+    if (
+      style.lineHeight &&
+      style.lineHeight !== 'normal' &&
+      this.hasNonZeroValue(style.lineHeight, 'lineHeight')
+    ) {
       styles.lineHeight = style.lineHeight;
     }
-    
+
     // 字符间距：只有设置了间距的才需要
-    if (style.letterSpacing && style.letterSpacing !== 'normal' && this.hasNonZeroValue(style.letterSpacing, 'letterSpacing')) {
+    if (
+      style.letterSpacing &&
+      style.letterSpacing !== 'normal' &&
+      this.hasNonZeroValue(style.letterSpacing, 'letterSpacing')
+    ) {
       styles.letterSpacing = style.letterSpacing;
     }
-    
+
     // 词间距：只有设置了间距的才需要
-    if (style.wordSpacing && style.wordSpacing !== 'normal' && this.hasNonZeroValue(style.wordSpacing, 'wordSpacing')) {
+    if (
+      style.wordSpacing &&
+      style.wordSpacing !== 'normal' &&
+      this.hasNonZeroValue(style.wordSpacing, 'wordSpacing')
+    ) {
       styles.wordSpacing = style.wordSpacing;
     }
-    
+
     // 文本对齐：只有非默认的才需要
-    if (style.textAlign && style.textAlign !== 'start' && style.textAlign !== 'left') {
+    if (
+      style.textAlign &&
+      style.textAlign !== 'start' &&
+      style.textAlign !== 'left'
+    ) {
       styles.textAlign = style.textAlign;
     }
-
-    
-
   }
 
   /**
@@ -691,14 +807,14 @@ export class HTMLParser {
     if (!fontValue || fontValue === 'inherit' || fontValue === 'initial') {
       return null;
     }
-    
+
     // 字体简写的基本格式：[font-style] [font-weight] font-size[/line-height] font-family
     // 简化解析：提取主要部分
     const parts = fontValue.trim().split(/\s+/);
     const result = {};
-    
+
     let fontSizeIndex = -1;
-    
+
     // 查找字体大小（包含数字和单位的部分）
     for (let i = 0; i < parts.length; i++) {
       if (parts[i].match(/^\d+(\.\d+)?(px|em|rem|%|pt)$/)) {
@@ -716,24 +832,40 @@ export class HTMLParser {
         }
       }
     }
-    
+
     if (fontSizeIndex >= 0) {
       // 设置字体大小（如果还没设置）
       if (!result.fontSize) {
         result.fontSize = parts[fontSizeIndex];
       }
-      
+
       // 字体族是字体大小之后的所有部分
       if (fontSizeIndex + 1 < parts.length) {
         result.fontFamily = parts.slice(fontSizeIndex + 1).join(' ');
       }
-      
+
       // 字体样式和粗细在字体大小之前
       for (let i = 0; i < fontSizeIndex; i++) {
         const part = parts[i];
-        
+
         // 检查字体粗细
-        if (['normal', 'bold', 'bolder', 'lighter', '100', '200', '300', '400', '500', '600', '700', '800', '900'].includes(part)) {
+        if (
+          [
+            'normal',
+            'bold',
+            'bolder',
+            'lighter',
+            '100',
+            '200',
+            '300',
+            '400',
+            '500',
+            '600',
+            '700',
+            '800',
+            '900',
+          ].includes(part)
+        ) {
           result.fontWeight = part;
         }
         // 检查字体样式
@@ -742,7 +874,7 @@ export class HTMLParser {
         }
       }
     }
-    
+
     return Object.keys(result).length > 0 ? result : null;
   }
 
@@ -751,12 +883,20 @@ export class HTMLParser {
    */
   addColorStyles(styles, style) {
     // 文本颜色：只有非默认黑色才需要记录
-    if (style.color && style.color !== 'rgb(0, 0, 0)' && style.color !== 'black') {
+    if (
+      style.color &&
+      style.color !== 'rgb(0, 0, 0)' &&
+      style.color !== 'black'
+    ) {
       styles.color = style.color;
     }
-    
+
     // 背景色：仅用于特殊标签（如 ins）
-    if (style.backgroundColor && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent') {
+    if (
+      style.backgroundColor &&
+      style.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+      style.backgroundColor !== 'transparent'
+    ) {
       styles.backgroundColor = style.backgroundColor;
     }
   }
@@ -770,73 +910,115 @@ export class HTMLParser {
     if (!value || typeof value !== 'string') {
       return false;
     }
-    
+
     const trimmedValue = value.trim();
-    
+
     // 检查 hex 颜色
     if (trimmedValue.match(/^#[0-9a-fA-F]{3,6}$/)) {
       return true;
     }
-    
+
     // 检查 rgb/rgba 颜色
-    if (trimmedValue.match(/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+)?\s*\)$/)) {
+    if (
+      trimmedValue.match(
+        /^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+)?\s*\)$/
+      )
+    ) {
       return true;
     }
-    
+
     // 检查 hsl/hsla 颜色
-    if (trimmedValue.match(/^hsla?\(\s*\d+\s*,\s*\d+%\s*,\s*\d+%\s*(,\s*[\d.]+)?\s*\)$/)) {
+    if (
+      trimmedValue.match(
+        /^hsla?\(\s*\d+\s*,\s*\d+%\s*,\s*\d+%\s*(,\s*[\d.]+)?\s*\)$/
+      )
+    ) {
       return true;
     }
-    
+
     // 检查命名颜色
     const namedColors = [
-      'red', 'blue', 'green', 'yellow', 'white', 'black', 'gray', 'grey', 
-      'orange', 'purple', 'pink', 'brown', 'cyan', 'magenta', 'lime', 
-      'navy', 'olive', 'maroon', 'teal', 'silver', 'aqua', 'fuchsia',
-      'darkred', 'darkblue', 'darkgreen', 'lightblue', 'lightgreen', 
-      'lightgray', 'lightgrey', 'darkgray', 'darkgrey', 'transparent',
-      'currentColor', 'inherit', 'initial'
+      'red',
+      'blue',
+      'green',
+      'yellow',
+      'white',
+      'black',
+      'gray',
+      'grey',
+      'orange',
+      'purple',
+      'pink',
+      'brown',
+      'cyan',
+      'magenta',
+      'lime',
+      'navy',
+      'olive',
+      'maroon',
+      'teal',
+      'silver',
+      'aqua',
+      'fuchsia',
+      'darkred',
+      'darkblue',
+      'darkgreen',
+      'lightblue',
+      'lightgreen',
+      'lightgray',
+      'lightgrey',
+      'darkgray',
+      'darkgrey',
+      'transparent',
+      'currentColor',
+      'inherit',
+      'initial',
     ];
-    
+
     return namedColors.includes(trimmedValue.toLowerCase());
   }
 
   /**
    * 优化样式输出，移除默认值和重复值
-   * @param {Object} styles 
-   * @param {string} tagName 
+   * @param {Object} styles
+   * @param {string} tagName
    * @returns {Object}
    */
   optimizeStyles(styles, tagName) {
     const optimized = {};
     const defaultStyles = getDefaultStyles(tagName);
-    
+
     // 关键样式列表 - 这些样式即使是"默认值"也要保留
     const criticalProperties = [
-      'display', 'fontSize', 'textIndent', 'fontFamily', 'fontWeight', 'color'
+      'display',
+      'fontSize',
+      'textIndent',
+      'fontFamily',
+      'fontWeight',
+      'color',
     ];
-    
+
     for (const [property, value] of Object.entries(styles)) {
       const normalizedValue = normalizeStyleValue(property, value);
-      
+
       // 跳过空值
       if (!normalizedValue) continue;
-      
+
       // 关键属性永远保留
       if (criticalProperties.includes(property)) {
         optimized[property] = normalizedValue;
         continue;
       }
-      
+
       // 跳过与默认样式相同的值（但不包括关键属性）
       if (defaultStyles[property] === normalizedValue) continue;
-      
+
       // 跳过通用默认值（但不包括关键属性）
       if (isDefaultValue(property, normalizedValue)) continue;
-      
+
       optimized[property] = normalizedValue;
     }
-    
+
     return optimized;
   }
 
@@ -846,9 +1028,6 @@ export class HTMLParser {
    * @param {CSSStyleDeclaration} computedStyle - 计算样式
    * @returns {Object} 合并后的样式对象
    */
-
-
-
 
   /**
    * 提取元素的所有样式（按优先级合并多个来源）
@@ -875,7 +1054,11 @@ export class HTMLParser {
     allStyles = mergeStyles(allStyles, inlineStyles);
 
     // 4. 从computedStyle补充有用的样式（优先级最高，但不覆盖已明确指定的样式）
-    const computedStyles = this.extractComputedStyles(computedStyle, tagName, allStyles);
+    const computedStyles = this.extractComputedStyles(
+      computedStyle,
+      tagName,
+      allStyles
+    );
     allStyles = mergeStyles(allStyles, computedStyles);
 
     // 5. 优化输出
@@ -894,7 +1077,7 @@ export class HTMLParser {
   extractClassStyles(element) {
     const classStyles = {};
     const classList = element.classList;
-    
+
     if (!classList || classList.length === 0) {
       return classStyles;
     }
@@ -902,15 +1085,15 @@ export class HTMLParser {
     try {
       // 获取所有样式表
       const styleSheets = Array.from(element.ownerDocument.styleSheets);
-      
+
       for (const className of classList) {
         // 尝试多种选择器格式
         const selectors = [
-          `.${className}`,           // 基本类选择器
-          `*.${className}`,          // 通用选择器加类
-          `${element.tagName.toLowerCase()}.${className}`  // 标签加类选择器
+          `.${className}`, // 基本类选择器
+          `*.${className}`, // 通用选择器加类
+          `${element.tagName.toLowerCase()}.${className}`, // 标签加类选择器
         ];
-        
+
         let foundRule = false;
         for (const selector of selectors) {
           const classRule = this.findCSSRule(selector, styleSheets);
@@ -918,7 +1101,7 @@ export class HTMLParser {
             const ruleStyles = this.parseCSSStyleDeclaration(classRule.style);
             Object.assign(classStyles, ruleStyles);
             foundRule = true;
-            
+
             // 调试信息
             if (this.options.debug) {
               console.log(`Found CSS rule for ${selector}:`, ruleStyles);
@@ -926,22 +1109,25 @@ export class HTMLParser {
             break; // 找到规则后跳出内层循环
           }
         }
-        
+
         // 如果找不到规则，尝试从计算样式中推断
         if (!foundRule) {
           const inferredStyles = this.inferClassStyles(element, className);
           if (Object.keys(inferredStyles).length > 0) {
             Object.assign(classStyles, inferredStyles);
-            
+
             if (this.options.debug) {
-              console.log(`Inferred styles for class ${className}:`, inferredStyles);
+              console.log(
+                `Inferred styles for class ${className}:`,
+                inferredStyles
+              );
             }
           }
         }
       }
     } catch (error) {
       console.warn('Failed to extract class styles:', error);
-      
+
       // 作为后备，尝试从计算样式中推断所有类的样式
       try {
         for (const className of classList) {
@@ -963,7 +1149,7 @@ export class HTMLParser {
    */
   extractInlineStyles(element) {
     const inlineStyles = {};
-    
+
     if (element.style && element.style.length > 0) {
       const ruleStyles = this.parseCSSStyleDeclaration(element.style);
       Object.assign(inlineStyles, ruleStyles);
@@ -984,25 +1170,34 @@ export class HTMLParser {
 
     // 提取所有相关的样式
     const relevantStyles = this.extractAllStyles(computedStyle);
-    
+
     // 关键样式列表 - 这些样式即使存在也要检查是否需要更新
     const criticalStyleProperties = [
-      'fontSize', 'textIndent', 'lineHeight', 'fontFamily', 'fontWeight',
-      'color', 'backgroundColor', 'display', 'textAlign'
+      'fontSize',
+      'textIndent',
+      'lineHeight',
+      'fontFamily',
+      'fontWeight',
+      'color',
+      'backgroundColor',
+      'display',
+      'textAlign',
     ];
-    
+
     for (const [property, value] of Object.entries(relevantStyles)) {
       // 如果属性不存在，直接添加
       if (!(property in existingStyles)) {
         computedStyles[property] = value;
-      } 
+      }
       // 如果是关键样式，检查现有值是否有效
       else if (criticalStyleProperties.includes(property)) {
         const existingValue = existingStyles[property];
-        
+
         // 如果现有值无效或是占位符，用计算值替换
-        if (!this.isValidStyleValue(property, existingValue) || 
-            this.isPlaceholderValue(property, existingValue)) {
+        if (
+          !this.isValidStyleValue(property, existingValue) ||
+          this.isPlaceholderValue(property, existingValue)
+        ) {
           computedStyles[property] = value;
         }
       }
@@ -1021,7 +1216,7 @@ export class HTMLParser {
     for (const styleSheet of styleSheets) {
       try {
         if (!styleSheet.cssRules) continue;
-        
+
         for (const rule of Array.from(styleSheet.cssRules)) {
           if (rule instanceof CSSStyleRule && rule.selectorText === selector) {
             return rule;
@@ -1043,60 +1238,74 @@ export class HTMLParser {
    */
   inferClassStyles(element, className) {
     const inferredStyles = {};
-    
+
     try {
       // 获取元素的计算样式
       const computedStyle = window.getComputedStyle(element);
-      
+
       // 创建一个临时的相同标签元素，但不包含这个类
       const testElement = element.ownerDocument.createElement(element.tagName);
-      
+
       // 复制除了目标类之外的所有类
-      const otherClasses = Array.from(element.classList).filter(cls => cls !== className);
+      const otherClasses = Array.from(element.classList).filter(
+        (cls) => cls !== className
+      );
       if (otherClasses.length > 0) {
         testElement.className = otherClasses.join(' ');
       }
-      
+
       // 复制内联样式
       if (element.style.cssText) {
         testElement.style.cssText = element.style.cssText;
       }
-      
+
       // 将测试元素添加到DOM中（隐藏状态）
       testElement.style.position = 'absolute';
       testElement.style.visibility = 'hidden';
       testElement.style.top = '-9999px';
       element.parentNode.appendChild(testElement);
-      
+
       // 获取测试元素的计算样式
       const testComputedStyle = window.getComputedStyle(testElement);
-      
+
       // 比较两个计算样式，找出差异
       const importantProperties = [
-        'fontSize', 'fontFamily', 'fontWeight', 'fontStyle',
-        'color', 'backgroundColor', 'textAlign', 'textIndent',
-        'lineHeight', 'marginTop', 'marginBottom', 'paddingTop', 'paddingBottom'
+        'fontSize',
+        'fontFamily',
+        'fontWeight',
+        'fontStyle',
+        'color',
+        'backgroundColor',
+        'textAlign',
+        'textIndent',
+        'lineHeight',
+        'marginTop',
+        'marginBottom',
+        'paddingTop',
+        'paddingBottom',
       ];
-      
+
       for (const property of importantProperties) {
         const originalValue = computedStyle[property];
         const testValue = testComputedStyle[property];
-        
-        if (originalValue !== testValue && this.hasNonZeroValue(originalValue, property)) {
+
+        if (
+          originalValue !== testValue &&
+          this.hasNonZeroValue(originalValue, property)
+        ) {
           inferredStyles[property] = originalValue;
         }
       }
-      
+
       // 清理测试元素
       element.parentNode.removeChild(testElement);
-      
     } catch (error) {
       // 如果推断失败，静默忽略
       if (this.options.debug) {
         console.warn(`Failed to infer styles for class ${className}:`, error);
       }
     }
-    
+
     return inferredStyles;
   }
 
@@ -1107,11 +1316,11 @@ export class HTMLParser {
    */
   parseCSSStyleDeclaration(styleDeclaration) {
     const styles = {};
-    
+
     for (let i = 0; i < styleDeclaration.length; i++) {
       const property = styleDeclaration[i];
       const value = styleDeclaration.getPropertyValue(property);
-      
+
       if (value) {
         // 转换为camelCase格式
         const camelCaseProperty = this.toCamelCase(property);
@@ -1128,7 +1337,9 @@ export class HTMLParser {
    * @returns {string} camelCase格式的属性名
    */
   toCamelCase(property) {
-    return property.replace(/-([a-z])/g, (match, letter) => letter.toUpperCase());
+    return property.replace(/-([a-z])/g, (match, letter) =>
+      letter.toUpperCase()
+    );
   }
 
   /**
@@ -1139,9 +1350,17 @@ export class HTMLParser {
    */
   isValidStyleValue(property, value) {
     if (!value || value.trim() === '') return false;
-    
+
     // 检查是否为明显的无效值
-    const invalidValues = ['none', 'normal', 'auto', 'initial', 'inherit', 'unset', ''];
+    const invalidValues = [
+      'none',
+      'normal',
+      'auto',
+      'initial',
+      'inherit',
+      'unset',
+      '',
+    ];
     if (invalidValues.includes(value.toLowerCase().trim())) {
       // textIndent 的 0 值是有效的
       if (property === 'textIndent' && (value === '0' || value === '0px')) {
@@ -1149,13 +1368,17 @@ export class HTMLParser {
       }
       return false;
     }
-    
+
     // 检查数值类型的属性
     if (['fontSize', 'lineHeight', 'textIndent'].includes(property)) {
       // 检查是否包含有效数值
-      return value.match(/\d+(\.\d+)?(px|em|rem|%|pt|in|cm|mm|ex|ch|vw|vh|vmin|vmax)?/) !== null;
+      return (
+        value.match(
+          /\d+(\.\d+)?(px|em|rem|%|pt|in|cm|mm|ex|ch|vw|vh|vmin|vmax)?/
+        ) !== null
+      );
     }
-    
+
     return true;
   }
 
@@ -1167,12 +1390,18 @@ export class HTMLParser {
    */
   isPlaceholderValue(property, value) {
     if (!value) return true;
-    
+
     // 常见的占位符或无效值
     const placeholderValues = [
-      '', 'undefined', 'null', 'NaN', 'inherit', 'initial', 'unset'
+      '',
+      'undefined',
+      'null',
+      'NaN',
+      'inherit',
+      'initial',
+      'unset',
     ];
-    
+
     return placeholderValues.includes(value);
   }
 
@@ -1194,10 +1423,19 @@ export class HTMLParser {
    */
   isBookSpecialElement(element) {
     const tagName = element.tagName.toLowerCase();
-    const specialTags = ['br', 'sup', 'sub', 'del', 'ins', 'mark', 'small', 'a'];
+    const specialTags = [
+      'br',
+      'sup',
+      'sub',
+      'del',
+      'ins',
+      'mark',
+      'small',
+      'a',
+    ];
     return specialTags.includes(tagName);
   }
-  
+
   /**
    * 判断是否为纯文本样式标签（不需要创建独立element节点）
    */
@@ -1212,7 +1450,7 @@ export class HTMLParser {
    */
   isIgnoreWrapperTag(element) {
     const tagName = element.tagName.toLowerCase();
-    const ignoreWrapperTags = ['time', 'span'];  // time标签对阅读器无用，span通常也只是语义包装
+    const ignoreWrapperTags = ['time', 'span']; // time标签对阅读器无用，span通常也只是语义包装
     return ignoreWrapperTags.includes(tagName);
   }
 
@@ -1223,7 +1461,7 @@ export class HTMLParser {
    */
   processIgnoreWrapperTag(element) {
     const contentNodes = [];
-    
+
     // 遍历子节点，直接提取内容，不保留包装元素
     for (let child = element.firstChild; child; child = child.nextSibling) {
       if (child.nodeType === Node.TEXT_NODE) {
@@ -1244,7 +1482,7 @@ export class HTMLParser {
         }
       }
     }
-    
+
     return contentNodes;
   }
 
@@ -1257,20 +1495,23 @@ export class HTMLParser {
   processTextStyleTag(element, parentStyle) {
     const textNodes = [];
     const tagName = element.tagName.toLowerCase();
-    
+
     // 获取这个标签的计算样式
     const elementStyle = window.getComputedStyle(element);
-    
+
     // 直接从计算样式中提取关键的文本样式，避免被优化过滤
     const elementTextStyles = this.extractRawTextStyles(elementStyle, tagName);
-    
+
     // 注意：不再合并父元素样式，父元素的textStyle会在渲染时继承
     // 这里只保存元素特有的样式（如<i>的italic、<b>的bold等）
-    
+
     // 遍历子节点
     for (let child = element.firstChild; child; child = child.nextSibling) {
       if (child.nodeType === Node.TEXT_NODE) {
-        const textNode = this.createTextNode(child.textContent, elementTextStyles);
+        const textNode = this.createTextNode(
+          child.textContent,
+          elementTextStyles
+        );
         if (textNode) {
           textNodes.push(textNode);
         }
@@ -1302,78 +1543,78 @@ export class HTMLParser {
         }
       }
     }
-    
+
     return textNodes;
   }
-  
+
   /**
    * 提取文本样式标签本身贡献的样式（不包括继承样式）
-   * @param {CSSStyleDeclaration} computedStyle 
-   * @param {string} tagName 
+   * @param {CSSStyleDeclaration} computedStyle
+   * @param {string} tagName
    * @returns {Object} 该标签特有的文本样式对象
    */
   extractRawTextStyles(computedStyle, tagName) {
     const rawStyles = {};
-    
+
     // 定义各种文本样式标签应该贡献的样式
     const tagStyleContributions = {
-      'i': ['fontStyle'],
-      'em': ['fontStyle'], 
-      'b': ['fontWeight'],
-      'strong': ['fontWeight'],
-      'small': ['fontSize'],
-      'big': ['fontSize'],
-      'u': ['textDecoration'],
-      's': ['textDecoration'],
-      'del': ['textDecoration'],
-      'ins': ['textDecoration'],
-      'mark': ['backgroundColor'],
-      'sup': ['verticalAlign', 'fontSize'],
-      'sub': ['verticalAlign', 'fontSize']
+      i: ['fontStyle'],
+      em: ['fontStyle'],
+      b: ['fontWeight'],
+      strong: ['fontWeight'],
+      small: ['fontSize'],
+      big: ['fontSize'],
+      u: ['textDecoration'],
+      s: ['textDecoration'],
+      del: ['textDecoration'],
+      ins: ['textDecoration'],
+      mark: ['backgroundColor'],
+      sup: ['verticalAlign', 'fontSize'],
+      sub: ['verticalAlign', 'fontSize'],
     };
-    
+
     // 只提取该标签应该贡献的样式属性
     const allowedProperties = tagStyleContributions[tagName] || [];
-    
-    allowedProperties.forEach(property => {
+
+    allowedProperties.forEach((property) => {
       const value = computedStyle[property];
-      
+
       if (value && this.isEffectiveTextStyleRaw(property, value, tagName)) {
         rawStyles[property] = value;
       }
     });
-    
+
     return rawStyles;
   }
-  
+
   /**
    * 判断原始文本样式是否有效（对文本样式标签更宽松的判断）
-   * @param {string} property 
-   * @param {string} value 
-   * @param {string} tagName 
+   * @param {string} property
+   * @param {string} value
+   * @param {string} tagName
    * @returns {boolean}
    */
   isEffectiveTextStyleRaw(property, value, tagName) {
     // 基本无效值检查
     if (!value) return false;
-    
+
     // 对于文本样式标签，其关键样式始终有效（即使是"默认值"）
     const keyStyleMap = {
-      'i': ['fontStyle'], 
-      'em': ['fontStyle'], 
-      'b': ['fontWeight'], 
-      'strong': ['fontWeight'], 
-      'small': ['fontSize'], 
-      'big': ['fontSize'], 
-      'u': ['textDecoration'], 
-      's': ['textDecoration'], 
+      i: ['fontStyle'],
+      em: ['fontStyle'],
+      b: ['fontWeight'],
+      strong: ['fontWeight'],
+      small: ['fontSize'],
+      big: ['fontSize'],
+      u: ['textDecoration'],
+      s: ['textDecoration'],
     };
-    
+
     const keyProperties = keyStyleMap[tagName];
     if (keyProperties && keyProperties.includes(property)) {
       return true; // 关键样式始终保留
     }
-    
+
     // 对于非关键样式，使用标准的有效性判断
     return this.isEffectiveTextStyle(property, value);
   }
@@ -1388,24 +1629,24 @@ export class HTMLParser {
     switch (tagName) {
       case 'br':
         return this.processBrElement();
-        
+
       case 'sup':
       case 'sub':
         return this.processSupSubElement(element, tagName, computedStyle);
-        
+
       case 'del':
       case 'ins':
         return this.processDelInsElement(element, tagName, computedStyle);
-        
+
       case 'mark':
         return this.processMarkElement(element, computedStyle);
-        
+
       case 'small':
         return this.processSmallElement(element, computedStyle);
-        
+
       case 'a':
         return this.processLinkElement(element, computedStyle);
-        
+
       default:
         return null;
     }
@@ -1423,7 +1664,7 @@ export class HTMLParser {
    */
   processSupSubElement(element, tagName, computedStyle) {
     const textStyles = this.extractTextStyles(computedStyle, tagName);
-    
+
     // 添加上标/下标特有样式
     if (tagName === 'sup') {
       textStyles.verticalAlign = 'super';
@@ -1441,7 +1682,7 @@ export class HTMLParser {
    */
   processDelInsElement(element, tagName, computedStyle) {
     const textStyles = this.extractTextStyles(computedStyle, tagName);
-    
+
     // 添加删除/插入特有样式
     if (tagName === 'del') {
       // 删除线样式已移除，可以考虑用其他方式表示（如颜色变化）
@@ -1480,18 +1721,15 @@ export class HTMLParser {
     const alt = element.getAttribute('alt') || '';
     const rect = element.getBoundingClientRect();
 
-    // 返回图片信息，如果有 alt 文本也包含进来
-    const imgData = {
-      type: 'image',
-      src: src,
-      alt: alt,
-      bounds: {
-        top: rect.top,
-        left: rect.left,
-        width: rect.width,
-        height: rect.height
-      }
+    const bounds = {
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height,
     };
+
+    // 返回图片信息，如果有 alt 文本也包含进来
+    const imgData = new ElementNode('image', { src, alt, bounds });
 
     // 如果图片无法加载且有 alt 文本，可以选择返回 alt 文本作为备选
     return imgData;
@@ -1508,15 +1746,17 @@ export class HTMLParser {
     const textStyles = this.extractTextStyles(computedStyle, 'a');
 
     // 对链接文本进行规范化
-    const normalizedText = this.options.normalizeText ? 
-      normalizeEnglishText(textContent) : textContent;
+    const normalizedText = this.options.normalizeText
+      ? normalizeEnglishText(textContent)
+      : textContent;
 
-    return {
-      type: 'link',
+    const linkNode = new ElementNode('link', {
       text: normalizedText,
-      href: href,
-      style: textStyles
-    };
+      href,
+      style: textStyles,
+    });
+
+    return linkNode;
   }
 
   /**
@@ -1541,15 +1781,15 @@ export class HTMLParser {
       prefixText = '• ';
     } else if (parentTag === 'ol') {
       // 有序列表使用阿拉伯数字
-      const listItems = Array.from(parent.children).filter(child => 
-        child.tagName.toLowerCase() === 'li'
+      const listItems = Array.from(parent.children).filter(
+        (child) => child.tagName.toLowerCase() === 'li'
       );
       const itemIndex = listItems.indexOf(element);
-      
+
       // 获取起始数字（默认为 1）
       const startValue = parseInt(parent.getAttribute('start') || '1');
       const actualIndex = startValue + itemIndex;
-      
+
       prefixText = `${actualIndex}. `;
     }
 
@@ -1560,7 +1800,7 @@ export class HTMLParser {
     // 获取父列表的样式，用于前缀文本
     const parentStyle = window.getComputedStyle(parent);
     const textStyles = this.extractTextStyles(parentStyle, parentTag);
-    
+
     return this.createTextNode(prefixText, textStyles);
   }
 
@@ -1570,21 +1810,28 @@ export class HTMLParser {
   processPseudoElement(element, pseudo) {
     const pseudoStyle = window.getComputedStyle(element, pseudo);
     const content = pseudoStyle.content;
-    
+
     if (!content || content === 'none' || content === 'normal') {
       return null;
     }
 
     // 解析伪元素内容
-    let textContent = this.parsePseudoContent(content, element.tagName.toLowerCase(), pseudo);
-    
+    let textContent = this.parsePseudoContent(
+      content,
+      element.tagName.toLowerCase(),
+      pseudo
+    );
+
     // 如果没有文本内容，返回 null
     if (!textContent) {
       return null;
     }
 
     // 返回包含样式的文本节点
-    const textStyles = this.extractTextStyles(pseudoStyle, element.tagName.toLowerCase());
+    const textStyles = this.extractTextStyles(
+      pseudoStyle,
+      element.tagName.toLowerCase()
+    );
     return this.createTextNode(textContent, textStyles);
   }
 
@@ -1626,9 +1873,9 @@ export class HTMLParser {
    */
   getOpenQuote(tagName) {
     const quoteMap = {
-      'blockquote': '"',
-      'q': '"',
-      'cite': '"'
+      blockquote: '"',
+      q: '"',
+      cite: '"',
     };
     return quoteMap[tagName] || '"';
   }
@@ -1638,14 +1885,12 @@ export class HTMLParser {
    */
   getCloseQuote(tagName) {
     const quoteMap = {
-      'blockquote': '"',
-      'q': '"', 
-      'cite': '"'
+      blockquote: '"',
+      q: '"',
+      cite: '"',
     };
     return quoteMap[tagName] || '"';
   }
-
-
 
   /**
    * 处理 SVG 元素，转换为图片
@@ -1654,10 +1899,10 @@ export class HTMLParser {
     try {
       // 获取 SVG 的边界
       const rect = svgElement.getBoundingClientRect();
-      
+
       // 检查 SVG 是否包含 blob URL 引用
       const hasBlobUrl = this.svgContainsBlobUrl(svgElement);
-      
+
       if (hasBlobUrl) {
         // 如果包含 blob URL，提取内部的 image 元素直接处理
         return this.extractSVGImageElement(svgElement, rect);
@@ -1695,7 +1940,9 @@ export class HTMLParser {
       return null;
     }
 
-    const href = imageElement.getAttribute('href') || imageElement.getAttribute('xlink:href');
+    const href =
+      imageElement.getAttribute('href') ||
+      imageElement.getAttribute('xlink:href');
     if (!href) {
       console.warn('Image element has no href attribute');
       return null;
@@ -1705,17 +1952,20 @@ export class HTMLParser {
     const width = imageElement.getAttribute('width') || rect.width;
     const height = imageElement.getAttribute('height') || rect.height;
 
-    return {
-      type: 'image',
-      src: href, // 直接使用 blob URL
-      alt: 'SVG Image Content',
-      bounds: {
-        top: rect.top,
-        left: rect.left,
-        width: parseFloat(width) || rect.width,
-        height: parseFloat(height) || rect.height
-      }
+    const bounds = {
+      top: rect.top,
+      left: rect.left,
+      width: parseFloat(width) || rect.width,
+      height: parseFloat(height) || rect.height,
     };
+
+    const svgImageNode = new ElementNode('image', {
+      src: href,
+      alt: 'SVG Image Content',
+      bounds,
+    });
+
+    return svgImageNode;
   }
 
   /**
@@ -1726,7 +1976,7 @@ export class HTMLParser {
     const clonedSvg = svgElement.cloneNode(true);
     clonedSvg.setAttribute('width', rect.width.toString());
     clonedSvg.setAttribute('height', rect.height.toString());
-    
+
     // 确保 SVG 命名空间存在
     if (!clonedSvg.getAttribute('xmlns')) {
       clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -1735,32 +1985,35 @@ export class HTMLParser {
     // 序列化 SVG
     const serializer = new XMLSerializer();
     let svgString = serializer.serializeToString(clonedSvg);
-    
+
     // 清理 SVG 字符串以提高兼容性
     svgString = this.cleanSVGString(svgString);
-    
+
     // 生成 SVG blob URL
     const svgBlobUrl = this.createSVGBlobURL(svgString);
-    
+
     // 验证 blob URL 是否有效
     if (!svgBlobUrl) {
       console.warn('Failed to create valid SVG blob URL');
       return null;
     }
 
-    return {
-      type: 'image',
+    const bounds = {
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height,
+    };
+
+    const svgNode = new ElementNode('image', {
       src: svgBlobUrl,
       alt: 'SVG Image',
-      bounds: {
-        top: rect.top,
-        left: rect.left,
-        width: rect.width,
-        height: rect.height
-      }
-    };
+      bounds,
+    });
+
+    return svgNode;
   }
-  
+
   /**
    * 清理 SVG 字符串以提高兼容性
    * @param {string} svgString - 原始 SVG 字符串
@@ -1768,7 +2021,7 @@ export class HTMLParser {
    */
   cleanSVGString(svgString) {
     if (!svgString) return '';
-    
+
     // 移除可能导致问题的字符和属性
     let cleaned = svgString
       // 移除 XML 声明
@@ -1781,7 +2034,7 @@ export class HTMLParser {
       .replace(/'/g, '&#39;')
       // 移除可能有问题的注释
       .replace(/<!--[\s\S]*?-->/g, '');
-    
+
     return cleaned;
   }
 
@@ -1794,16 +2047,16 @@ export class HTMLParser {
     try {
       // 创建 blob 对象
       const blob = new Blob([svgString], { type: 'image/svg+xml' });
-      
+
       // 创建 blob URL
       const blobUrl = URL.createObjectURL(blob);
-      
+
       // 可选：存储 blob URL 以便后续清理（避免内存泄漏）
       if (!this.createdBlobUrls) {
         this.createdBlobUrls = new Set();
       }
       this.createdBlobUrls.add(blobUrl);
-      
+
       return blobUrl;
     } catch (error) {
       console.warn('Failed to create SVG blob URL:', error);
@@ -1816,7 +2069,7 @@ export class HTMLParser {
    */
   cleanup() {
     if (this.createdBlobUrls) {
-      this.createdBlobUrls.forEach(url => {
+      this.createdBlobUrls.forEach((url) => {
         try {
           URL.revokeObjectURL(url);
         } catch (error) {
@@ -1834,4 +2087,6 @@ export const parseHTML = (element, options) => {
   return parser.parse(element);
 };
 
-export default HTMLParser; 
+// 导出 ElementNode 类
+export { ElementNode };
+export default HTMLParser;
