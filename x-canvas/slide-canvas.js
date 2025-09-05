@@ -4,9 +4,6 @@
  * 完全由外部统一管理触摸事件，内部只负责页面切换逻辑
  */
 export class HorizontalSlideManager {
-  /** @type {HTMLElement} 滑动容器 */
-  container;
-
   /** @type {HTMLCanvasElement[]} Canvas池 */
   canvasList = [];
 
@@ -36,6 +33,8 @@ export class HorizontalSlideManager {
    */
   constructor(config) {
     this.poolSize = config.poolSize || 4;
+    this.canvasList = config.canvasList;
+    this.scrollContent = config.scrollContent;
     this.config = {
       viewportWidth: config.viewportWidth,
       viewportHeight: config.viewportHeight,
@@ -49,7 +48,7 @@ export class HorizontalSlideManager {
       viewportWidth: this.config.viewportWidth,
       contentWidth: 0,
       totalPages: 0,
-      currentPage: 0,
+      currentPage: 1,
     };
 
     this.initCanvasPool();
@@ -122,7 +121,7 @@ export class HorizontalSlideManager {
   setContentRange(width) {
     if (this.state.contentWidth !== width) {
       this.state.contentWidth = width;
-
+      this.scrollContent.style.width = width + 'px';
       // 计算总页面数
       const totalPages = Math.ceil(width / this.config.viewportWidth);
       this.state.totalPages = totalPages;
@@ -265,7 +264,6 @@ export class HorizontalSlideManager {
     window.removeEventListener('resize', this.handleResize);
 
     // 清理引用
-    this.container = null;
     this.canvasList = null;
     this.ctxList = null;
   }

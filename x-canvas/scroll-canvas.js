@@ -272,7 +272,6 @@ export class VirtualViewport {
 
       // 更新滚动内容的高度
       this.scrollContent.style.height = height + 'px';
-      this.updateViewport();
     }
   }
 

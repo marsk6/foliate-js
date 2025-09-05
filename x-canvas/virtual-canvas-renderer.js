@@ -259,7 +259,7 @@ export class VirtualCanvasRenderer {
 
     // 解析后的节点数据
     /** @type {Array|null} 解析后的节点数据 */
-    this.parsedNodes = null;
+    this.renderTree = null;
 
     // 创建隐藏的canvas用于测量文本
     this.measureCanvas = document.createElement('canvas');
@@ -301,8 +301,8 @@ export class VirtualCanvasRenderer {
     this.scrollContent.className = 'scroll-content';
     this.scrollContent.style.cssText = `
       position: relative;
-      width: 100%;
-      height: 100%;  /* 动态设置为总内容高度 */
+      width: ${this.viewportWidth}px;
+      height: ${this.viewportHeight}px;
     `;
 
     // 创建Canvas池，作为滚动内容的子元素
@@ -404,7 +404,7 @@ export class VirtualCanvasRenderer {
     const htmlParse = new HTMLParser2();
     const root = await htmlParse.parse(url);
 
-    this.parsedNodes = root ? [root] : [];
+    this.renderTree = root ? [root] : [];
 
     // 垂直模式：执行完整布局计算（不渲染）
     this.calculateFullLayout();
@@ -859,7 +859,7 @@ export class VirtualCanvasRenderer {
     }
 
     // 清理引用
-    this.parsedNodes = null;
+    this.renderTree = null;
     this.container = null;
     this.measureCanvas = null;
     this.measureCtx = null;
@@ -879,7 +879,7 @@ export class VirtualCanvasRenderer {
    * @returns {Object|null}
    */
   findNodeById(nodeId) {
-    if (!this.parsedNodes) return null;
+    if (!this.renderTree) return null;
 
     const traverse = (nodeList) => {
       for (const node of nodeList) {
@@ -894,7 +894,7 @@ export class VirtualCanvasRenderer {
       return null;
     };
 
-    return traverse(this.parsedNodes);
+    return traverse(this.renderTree);
   }
 
   initMode({ mode, poolSize }) {

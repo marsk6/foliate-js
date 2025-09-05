@@ -36,6 +36,8 @@ export class LayoutEngine {
   static instance = null;
   /** @type {Map<number, RenderChunk>} 渲染块缓存 */
   renderChunks = new Map();
+  layoutDirtyIds = new Set();
+  styleDirty = false;
 
   /**
    * @param {Object} renderer - VirtualCanvasRenderer实例
@@ -52,12 +54,18 @@ export class LayoutEngine {
     this.lineBreaker = new LineBreaker(renderer);
     this.lineStylist = new LineStylist(renderer);
 
-    // 布局计算模式 - 是否自动调整跨块内容
-    this.adjustCrossChunkContent = this.renderer.mode === 'horizontal'; // 默认启用
-
     // 布局树结构
-    /** @type {Array} 布局节点列表，与parsedNodes保持相同树形结构 */
+    /** @type {Array} 布局节点列表，与renderTree保持相同树形结构 */
     this.layoutNodesList = null;
+  }
+
+  // 布局计算模式 - 是否自动调整跨块内容
+  get adjustCrossChunkContent() {
+    return this.renderer.mode === 'horizontal';
+  }
+
+  get renderTree() {
+    return this.renderer.renderTree;
   }
 
   get viewportHeight() {
@@ -81,12 +89,7 @@ export class LayoutEngine {
 
     // 使用布局算法计算所有位置，同时创建layoutNodesList
     // 注意：样式继承现在在HTMLParser阶段完成，这里不再需要处理
-    const result = this.layoutNodes(
-      this.renderer.parsedNodes,
-      x,
-      y,
-      currentLine
-    );
+    const result = this.layoutNodes(this.renderTree, x, y, currentLine);
 
     // 保存布局节点列表
     this.layoutNodesList = result.layoutNodes;
@@ -355,9 +358,7 @@ export class LayoutEngine {
         if (inlineChildren.length > 0) {
           // 收集整个内联流
           const { segments, styleMap } =
-            this.inlineFlowManager.collectInlineFlow(
-              inlineChildren
-            );
+            this.inlineFlowManager.collectInlineFlow(inlineChildren);
 
           if (segments.length > 0) {
             // 计算布局参数
@@ -434,8 +435,7 @@ export class LayoutEngine {
             }
             // 为内联子节点创建布局节点
             for (const inlineChild of inlineChildren) {
-              const childWordList =
-                wordsByNodeId.get(inlineChild.nodeId) || [];
+              const childWordList = wordsByNodeId.get(inlineChild.nodeId) || [];
 
               // 计算内联子节点的position
               let childStartX = x,
@@ -459,7 +459,12 @@ export class LayoutEngine {
                 childEndLine = lastWord.line;
               }
 
-              const childLayoutNode = new LayoutNode(inlineChild, childStartX, childStartY, childStartLine);
+              const childLayoutNode = new LayoutNode(
+                inlineChild,
+                childStartX,
+                childStartY,
+                childStartLine
+              );
               // 更新结束位置
               childLayoutNode.position.endX = childEndX;
               childLayoutNode.position.endY = childEndY;
@@ -754,7 +759,6 @@ export class LayoutEngine {
     // 直接获取 camelCase 格式的属性
     return style[property];
   }
-
 
   /**
    * 解析尺寸值（支持em、px、pt等）

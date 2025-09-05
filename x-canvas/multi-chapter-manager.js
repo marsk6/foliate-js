@@ -714,9 +714,7 @@ class SlideManager extends ReadMode {
    * @param {TouchEvent} event
    */
   handleTouchEnd(event) {
-    const activeChapter = this.manager.chapters.get(
-      this.manager.currentChapterIndex
-    );
+    const activeChapter = this.manager.activeChapter;
     if (
       !activeChapter ||
       !activeChapter.renderer ||
@@ -745,7 +743,7 @@ class SlideManager extends ReadMode {
     const maxSwipeTime = 300;
     const isQuickSwipe =
       deltaTime < maxSwipeTime && absDeltaX > minSwipeDistance;
-    const isLongSwipe = absDeltaX > this.manager.state.viewportWidth * 0.3; // 超过30%宽度
+    const isLongSwipe = absDeltaX > this.manager.state.viewportWidth * 0.5; // 超过30%宽度
 
     if (isQuickSwipe || isLongSwipe) {
       if (deltaX > 0) {
@@ -777,7 +775,7 @@ class SlideManager extends ReadMode {
     const totalOffset = baseOffset + clampedDelta;
 
     // 对整个 Manager 容器应用变换
-    this.manager.container.style.transform = `translateX(${totalOffset}px)`;
+    this.container.style.transform = `translateX(${totalOffset}px)`;
   }
 
   /**
@@ -787,17 +785,17 @@ class SlideManager extends ReadMode {
    */
   animateContainerToChapter() {
     const animationDuration = 300;
-    const { currentPage } = this.activeChapter.progress;
+    const { currentPage } = this.manager.activeChapter.progress;
     const scrollLeft =
-      (currentPage - 1) * this.baseOffset + this.activeChapter.baseScrollOffset;
+      (currentPage - 1) * this.baseOffset + this.manager.activeChapter.baseScrollOffset;
 
     // 对容器应用过渡动画
-    this.manager.container.style.transition = `transform ${animationDuration}ms ease-out`;
-    this.manager.container.style.transform = `translateX(${scrollLeft}px)`;
+    this.container.style.transition = `transform ${animationDuration}ms ease-out`;
+    this.container.style.transform = `translateX(${scrollLeft}px)`;
 
     setTimeout(() => {
       // 动画结束后清除过渡效果
-      this.manager.container.style.transition = '';
+      this.container.style.transition = '';
     }, animationDuration);
   }
 
