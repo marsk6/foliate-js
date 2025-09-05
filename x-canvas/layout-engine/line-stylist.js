@@ -2,6 +2,7 @@
  * 行样式处理器 - 负责处理行内的样式、对齐和定位
  * 这是布局的第二阶段：在确定的行内应用样式映射
  */
+import { LayoutEngine } from './LayoutEngine.js';
 export class LineStylist {
   constructor(renderer) {
     this.renderer = renderer;
@@ -29,7 +30,7 @@ export class LineStylist {
 
     const styledWords = [];
     let currentLineNumber = startLine;
-    let wordIndex = 0; // 在当前text node中的word索引
+    const wordIndexByNodeId = new Map(); // 为每个nodeId维护独立的word索引
 
     // 预计算每行的行高（可能包含不同字体大小）
     const lineMetrics = this.calculateLineMetrics(lines, styleMap);
@@ -40,7 +41,7 @@ export class LineStylist {
       const firstLineHeight =
         lineMetrics[0]?.lineHeight ||
         this.renderer.theme.baseFontSize * this.renderer.theme.lineHeight;
-      const baseline = this.renderer.getTextBaseline(firstLineHeight);
+      const baseline = LayoutEngine.instance.getTextBaseline(firstLineHeight);
       currentY = startY + baseline;
     }
 
@@ -63,14 +64,14 @@ export class LineStylist {
           const segment = line.segments[i];
           const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
           const fontSize =
-            this.renderer.parseSize(
-              this.renderer.getStyleProperty(segmentStyle, 'fontSize')
+            LayoutEngine.instance.parseSize(
+              LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontSize')
             ) || this.renderer.theme.baseFontSize;
           const fontWeight =
-            this.renderer.getStyleProperty(segmentStyle, 'fontWeight') ||
+            LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontWeight') ||
             'normal';
           const fontStyle =
-            this.renderer.getStyleProperty(segmentStyle, 'fontStyle') ||
+            LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontStyle') ||
             'normal';
 
           this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
@@ -130,16 +131,16 @@ export class LineStylist {
 
         // 解析样式属性
         const fontSize =
-          this.renderer.parseSize(
-            this.renderer.getStyleProperty(segmentStyle, 'fontSize')
+          LayoutEngine.instance.parseSize(
+            LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontSize')
           ) || this.renderer.theme.baseFontSize;
         const fontWeight =
-          this.renderer.getStyleProperty(segmentStyle, 'fontWeight') ||
+          LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontWeight') ||
           'normal';
         const fontStyle =
-          this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
+          LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
         const color =
-          this.renderer.getStyleProperty(segmentStyle, 'color') ||
+          LayoutEngine.instance.getStyleProperty(segmentStyle, 'color') ||
           this.renderer.theme.textColor;
 
         // 设置测量上下文字体
@@ -161,9 +162,14 @@ export class LineStylist {
           justifyOffsetX += additionalSpace;
         }
 
+        // 为每个textNodeId维护独立的wordIndex
+        const textNodeId = segment.textNodeId;
+        const currentWordIndex = wordIndexByNodeId.get(textNodeId) || 0;
+        wordIndexByNodeId.set(textNodeId, currentWordIndex + 1);
+        
         // 使用 LineBreaker 计算的位置 + 对齐偏移 + 两端对齐偏移
         const styledWord = {
-          wordId: `${nodeId}_${wordIndex++}`, // wordId格式: nodeId_wordIndex
+          wordId: `${textNodeId}_${currentWordIndex}`, // wordId格式: textNodeId_wordIndex
           x: finalX,
           y: currentY,
           width: finalWidth,
@@ -210,10 +216,10 @@ export class LineStylist {
       for (const segment of line.segments) {
         const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
         const fontSize =
-          this.renderer.parseSize(
-            this.renderer.getStyleProperty(segmentStyle, 'fontSize')
+          LayoutEngine.instance.parseSize(
+            LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontSize')
           ) || this.renderer.theme.baseFontSize;
-        const lineHeight = this.renderer.getLineHeight(segmentStyle);
+        const lineHeight = LayoutEngine.instance.getLineHeight(segmentStyle);
 
         if (fontSize > maxFontSize) {
           maxFontSize = fontSize;

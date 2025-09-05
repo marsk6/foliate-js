@@ -15,7 +15,8 @@ export class ElementNode {
   static nodeIdCounter = 0;
   constructor(type, options = {}) {
     this.type = type;
-    this.nodeId = `node_${++ElementNode.nodeIdCounter}`; // 将由 HTMLParser 分配
+    this.dirty = true;
+    this.nodeId = `node-${++ElementNode.nodeIdCounter}`; // 将由 HTMLParser 分配
 
     // 根据节点类型设置相应的属性
     switch (type) {
@@ -59,6 +60,87 @@ export class ElementNode {
   static resetNodeIdCounter() {
     ElementNode.nodeIdCounter = 0;
   }
+
+  /**
+   * 查询子节点
+   * @param {string} nodeId - 节点ID
+   * @returns {ElementNode[]}
+   */
+  query(nodeId) {
+    if (!this.children) return [];
+
+    let results = null;
+    const traverse = (nodes) => {
+      for (const node of nodes) {
+        if (node.nodeId === nodeId) {
+          results = node;
+          return;
+        }
+        if (node.children) {
+          traverse(node.children);
+        }
+      }
+    };
+
+    traverse(this.children);
+    return results;
+  }
+
+  /**
+   * 插入子节点
+   * @param {ElementNode} child - 要插入的子节点
+   * @param {ElementNode} [nextSibling] - 下一个兄弟节点，不提供则插入到末尾
+   * @returns {ElementNode}
+   */
+  insertChild(child, nextSibling) {
+    if (!this.children) {
+      this.children = [];
+    }
+
+    if (!nextSibling) {
+      this.children.push(child);
+      return child;
+    }
+
+    const index = this.children.indexOf(nextSibling);
+    if (index === -1) {
+      this.children.push(child);
+    } else {
+      this.children.splice(index, 0, child);
+    }
+
+    return child;
+  }
+
+  /**
+   * 移除子节点
+   * @param {ElementNode} child - 要移除的子节点
+   * @returns {ElementNode|null}
+   */
+  removeChild(child) {
+    if (!this.children) return null;
+
+    const index = this.children.indexOf(child);
+    if (index === -1) return null;
+
+    return this.children.splice(index, 1)[0];
+  }
+
+  /**
+   * 检查节点是否匹配选择器
+   * @param {ElementNode} node
+   * @param {function|string} selector
+   * @returns {boolean}
+   */
+  _matches(node, selector) {
+    if (typeof selector === 'function') {
+      return selector(node);
+    }
+    if (typeof selector === 'string') {
+      return node.type === 'element' && node.tag === selector;
+    }
+    return false;
+  }
 }
 
 export class HTMLParser {
@@ -74,13 +156,99 @@ export class HTMLParser {
     };
   }
 
+  // ===== 样式继承方法 =====
+
+  /**
+   * 获取可继承的样式属性列表
+   * @returns {string[]}
+   */
+  getInheritableStyleProperties() {
+    return [
+      // 字体相关
+      'fontFamily',
+      'fontSize',
+      'fontWeight',
+      'fontStyle',
+      'fontVariant',
+      'lineHeight',
+      'letterSpacing',
+      'wordSpacing',
+
+      // 文本相关
+      'color',
+      'textAlign',
+      'textIndent',
+    ];
+  }
+
+  /**
+   * 从样式对象中提取可继承的样式
+   * @param {Object} style - 样式对象
+   * @returns {Object} 可继承的样式
+   */
+  extractInheritableStyles(style) {
+    const inheritableStyles = {};
+    const inheritableProps = this.getInheritableStyleProperties();
+
+    inheritableProps.forEach((prop) => {
+      if (style && style[prop] !== undefined) {
+        inheritableStyles[prop] = style[prop];
+      }
+    });
+
+    return inheritableStyles;
+  }
+
+  /**
+   * 合并继承样式和节点样式
+   * @param {Object} inheritedStyle - 继承的样式
+   * @param {Object} nodeStyle - 节点自身的样式
+   * @returns {Object} 合并后的样式
+   */
+  mergeInheritedStyle(inheritedStyle = {}, nodeStyle = {}) {
+    // 先应用继承样式，再覆盖节点样式（节点样式优先级更高）
+    return {
+      ...inheritedStyle,
+      ...nodeStyle,
+    };
+  }
+
+  /**
+   * 判断是否应该应用 text-indent（只有第一个内联节点应该应用）
+   * @param {Object} inheritedStyle - 继承的样式
+   * @param {boolean} isFirstInlineNode - 是否是第一个内联节点
+   * @returns {Object} 处理后的样式（可能移除了 textIndent）
+   */
+  applyTextIndentRule(inheritedStyle, isFirstInlineNode) {
+    // 如果不是第一个内联节点，移除 textIndent
+    if (!isFirstInlineNode && inheritedStyle.textIndent !== undefined) {
+      const modifiedStyle = { ...inheritedStyle };
+      delete modifiedStyle.textIndent;
+      return modifiedStyle;
+    }
+    return inheritedStyle;
+  }
+
+  /**
+   * 判断元素是否为内联元素
+   * @param {Element} element - DOM元素
+   * @returns {boolean} 是否为内联元素
+   */
+  isInlineElement(element) {
+    const computedStyle = window.getComputedStyle(element);
+    const display = computedStyle.display;
+    return display === 'inline' || display === 'inline-block' || display === 'inline-table';
+  }
+
   /**
    * 创建规范化的文本节点
    * @param {string} text - 原始文本
    * @param {Object} style - 文本样式
+   * @param {Object} inheritedStyle - 继承的样式
+   * @param {boolean} isFirstInlineNode - 是否是第一个内联节点
    * @returns {ElementNode} 文本节点对象
    */
-  createTextNode(text, style = {}) {
+  createTextNode(text, style = {}, inheritedStyle = {}, isFirstInlineNode = true) {
     if (!text) return null;
 
     const trimmedText = text.trim();
@@ -91,7 +259,13 @@ export class HTMLParser {
       ? normalizeEnglishText(trimmedText)
       : trimmedText;
 
-    const textNode = new ElementNode('text', { text: finalText, style });
+    // 处理 textIndent 规则
+    const processedInheritedStyle = this.applyTextIndentRule(inheritedStyle, isFirstInlineNode);
+
+    // 合并继承样式和节点样式
+    const finalStyle = this.mergeInheritedStyle(processedInheritedStyle, style);
+
+    const textNode = new ElementNode('text', { text: finalText, style: finalStyle });
 
     return textNode;
   }
@@ -102,22 +276,34 @@ export class HTMLParser {
    * @returns {Object} 解析后的元素树
    */
   parse(element = document.body) {
-    return this.parseElement(element);
+    // 初始化根级别的继承样式（从默认主题获取）
+    const initialInheritedStyle = {
+      color: '#000000',
+      fontFamily: 'serif',
+      fontSize: '16px',
+      lineHeight: '1.5',
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+    };
+    
+    return this.parseElement(element, initialInheritedStyle, true);
   }
 
   /**
    * 解析单个元素
    * @param {Element} element
+   * @param {Object} inheritedStyle - 从父元素继承的样式
+   * @param {boolean} isFirstInlineNode - 是否是第一个内联节点
    * @returns {Object}
    */
-  parseElement(element) {
+  parseElement(element, inheritedStyle = {}, isFirstInlineNode = true) {
     if (!element || element.nodeType !== Node.ELEMENT_NODE) {
       return null;
     }
 
     // 优先处理需要忽略包装的标签（如time标签）
     if (this.isIgnoreWrapperTag(element)) {
-      const contentNodes = this.processIgnoreWrapperTag(element);
+      const contentNodes = this.processIgnoreWrapperTag(element, inheritedStyle, isFirstInlineNode);
       // 如果只有一个节点，直接返回；如果多个节点，用fragment包装
       if (contentNodes.length === 1) {
         return contentNodes[0];
@@ -139,11 +325,18 @@ export class HTMLParser {
     }
 
     // 按优先级提取样式：className样式 → 内联样式 → computedStyle补充
-    const allStyles = this.extractAllElementStyles(element, computedStyle);
+    const elementStyles = this.extractAllElementStyles(element, computedStyle);
+
+    // 合并继承样式到当前元素样式中
+    const finalElementStyles = this.mergeInheritedStyle(inheritedStyle, elementStyles);
+
+    // 准备传递给子元素的继承样式
+    const inheritableStyles = this.extractInheritableStyles(finalElementStyles);
+    const childInheritedStyle = this.mergeInheritedStyle(inheritedStyle, inheritableStyles);
 
     const elementData = new ElementNode('element', {
       tag: element.tagName.toLowerCase(),
-      style: allStyles, // 合并所有来源的样式
+      style: finalElementStyles, // 包含继承样式的完整样式
       bounds: this.getBounds(element),
       children: [],
     });
@@ -161,13 +354,19 @@ export class HTMLParser {
     }
 
     // 处理文本节点和子元素
+    let inlineNodeCount = 0; // 用于跟踪内联节点的数量，确定是否是第一个
+    
     for (let child = element.firstChild; child; child = child.nextSibling) {
       if (child.nodeType === Node.TEXT_NODE) {
-        const textNode = this.createTextNode(child.textContent);
+        const isFirstInlineChild = inlineNodeCount === 0;
+        const textNode = this.createTextNode(child.textContent, {}, childInheritedStyle, isFirstInlineChild);
         if (textNode) {
           elementData.children.push(textNode);
+          inlineNodeCount++; // 文本节点算作内联节点
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const isFirstInlineChild = inlineNodeCount === 0 && this.isInlineElement(child);
+        
         // 特殊处理 SVG 元素
         if (child.tagName.toLowerCase() === 'svg') {
           const svgElement = this.processSVGElement(child);
@@ -184,36 +383,54 @@ export class HTMLParser {
         }
         // 特殊处理图书相关元素
         else if (this.isBookSpecialElement(child)) {
-          const specialElement = this.processBookSpecialElement(child);
+          const specialElement = this.processBookSpecialElement(child, childInheritedStyle, isFirstInlineChild);
           if (specialElement) {
             if (Array.isArray(specialElement)) {
               elementData.children.push(...specialElement);
+              // 如果是内联元素，增加计数
+              if (this.isInlineElement(child)) {
+                inlineNodeCount += specialElement.length;
+              }
             } else {
               elementData.children.push(specialElement);
+              // 如果是内联元素，增加计数
+              if (this.isInlineElement(child)) {
+                inlineNodeCount++;
+              }
             }
           }
         }
         // 处理需要忽略包装但保留内容的标签（如time标签）
         else if (this.isIgnoreWrapperTag(child)) {
-          const contentNodes = this.processIgnoreWrapperTag(child);
+          const contentNodes = this.processIgnoreWrapperTag(child, childInheritedStyle, isFirstInlineChild);
           if (contentNodes && contentNodes.length > 0) {
             elementData.children.push(...contentNodes);
+            // 计算内联节点数量
+            const inlineContentNodes = contentNodes.filter(node => 
+              node.type === 'text' || node.type === 'link' || this.isInlineElement(child)
+            );
+            inlineNodeCount += inlineContentNodes.length;
           }
         }
         // 处理纯文本样式标签：直接合并样式到文本节点，不创建element节点
         else if (this.isPureTextStyleTag(child)) {
-          const textNodes = this.processTextStyleTag(child, computedStyle);
+          const textNodes = this.processTextStyleTag(child, computedStyle, childInheritedStyle, isFirstInlineChild);
           if (textNodes && textNodes.length > 0) {
             elementData.children.push(...textNodes);
+            inlineNodeCount += textNodes.length; // 文本样式标签产生的都是内联文本节点
           }
         } else {
-          const childElement = this.parseElement(child);
+          const childElement = this.parseElement(child, childInheritedStyle, isFirstInlineChild);
           if (childElement) {
             // 如果是fragment节点，展开其children
             if (childElement.type === 'fragment') {
               elementData.children.push(...childElement.children);
             } else {
               elementData.children.push(childElement);
+            }
+            // 如果是内联元素，增加计数
+            if (this.isInlineElement(child)) {
+              inlineNodeCount++;
             }
           }
         }
@@ -1457,27 +1674,37 @@ export class HTMLParser {
   /**
    * 处理忽略包装但保留内容的标签（如time、span等）
    * @param {Element} element - 需要忽略包装的元素
+   * @param {Object} inheritedStyle - 继承的样式
+   * @param {boolean} isFirstInlineNode - 是否是第一个内联节点
    * @returns {Array} 内容节点数组
    */
-  processIgnoreWrapperTag(element) {
+  processIgnoreWrapperTag(element, inheritedStyle = {}, isFirstInlineNode = true) {
     const contentNodes = [];
+    let inlineCount = 0; // 跟踪内联节点计数
 
     // 遍历子节点，直接提取内容，不保留包装元素
     for (let child = element.firstChild; child; child = child.nextSibling) {
       if (child.nodeType === Node.TEXT_NODE) {
-        const textNode = this.createTextNode(child.textContent);
+        const isFirstInlineChild = isFirstInlineNode && inlineCount === 0;
+        const textNode = this.createTextNode(child.textContent, {}, inheritedStyle, isFirstInlineChild);
         if (textNode) {
           contentNodes.push(textNode);
+          inlineCount++;
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const isFirstInlineChild = isFirstInlineNode && inlineCount === 0 && this.isInlineElement(child);
         // 递归处理子元素
-        const childElement = this.parseElement(child);
+        const childElement = this.parseElement(child, inheritedStyle, isFirstInlineChild);
         if (childElement) {
           // 如果是fragment节点，展开其children
           if (childElement.type === 'fragment') {
             contentNodes.push(...childElement.children);
           } else {
             contentNodes.push(childElement);
+          }
+          // 如果是内联元素，增加计数
+          if (this.isInlineElement(child)) {
+            inlineCount++;
           }
         }
       }
@@ -1490,11 +1717,14 @@ export class HTMLParser {
    * 处理纯文本样式标签，将样式直接合并到文本节点
    * @param {Element} element - 文本样式标签元素
    * @param {CSSStyleDeclaration} parentStyle - 父元素的计算样式
+   * @param {Object} inheritedStyle - 继承的样式
+   * @param {boolean} isFirstInlineNode - 是否是第一个内联节点
    * @returns {Array} 文本节点数组
    */
-  processTextStyleTag(element, parentStyle) {
+  processTextStyleTag(element, parentStyle, inheritedStyle = {}, isFirstInlineNode = true) {
     const textNodes = [];
     const tagName = element.tagName.toLowerCase();
+    let inlineCount = 0; // 跟踪内联节点计数
 
     // 获取这个标签的计算样式
     const elementStyle = window.getComputedStyle(element);
@@ -1502,42 +1732,54 @@ export class HTMLParser {
     // 直接从计算样式中提取关键的文本样式，避免被优化过滤
     const elementTextStyles = this.extractRawTextStyles(elementStyle, tagName);
 
-    // 注意：不再合并父元素样式，父元素的textStyle会在渲染时继承
-    // 这里只保存元素特有的样式（如<i>的italic、<b>的bold等）
-
     // 遍历子节点
     for (let child = element.firstChild; child; child = child.nextSibling) {
       if (child.nodeType === Node.TEXT_NODE) {
+        const isFirstInlineChild = isFirstInlineNode && inlineCount === 0;
         const textNode = this.createTextNode(
           child.textContent,
-          elementTextStyles
+          elementTextStyles,
+          inheritedStyle,
+          isFirstInlineChild
         );
         if (textNode) {
           textNodes.push(textNode);
+          inlineCount++;
         }
       } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const isFirstInlineChild = isFirstInlineNode && inlineCount === 0 && this.isInlineElement(child);
+        
         // 如果是嵌套的纯文本样式标签，递归处理
         if (this.isPureTextStyleTag(child)) {
-          const nestedTextNodes = this.processTextStyleTag(child, elementStyle);
+          const nestedTextNodes = this.processTextStyleTag(child, elementStyle, inheritedStyle, isFirstInlineChild);
           if (nestedTextNodes && nestedTextNodes.length > 0) {
             textNodes.push(...nestedTextNodes);
+            inlineCount += nestedTextNodes.length;
           }
         }
         // 处理需要忽略包装但保留内容的标签
         else if (this.isIgnoreWrapperTag(child)) {
-          const contentNodes = this.processIgnoreWrapperTag(child);
+          const contentNodes = this.processIgnoreWrapperTag(child, inheritedStyle, isFirstInlineChild);
           if (contentNodes && contentNodes.length > 0) {
             textNodes.push(...contentNodes);
+            const inlineContentNodes = contentNodes.filter(node => 
+              node.type === 'text' || node.type === 'link'
+            );
+            inlineCount += inlineContentNodes.length;
           }
         }
         // 其他元素类型的子节点可以忽略或特殊处理
         else if (this.isBookSpecialElement(child)) {
-          const specialElement = this.processBookSpecialElement(child);
+          const specialElement = this.processBookSpecialElement(child, inheritedStyle, isFirstInlineChild);
           if (specialElement) {
             if (Array.isArray(specialElement)) {
               textNodes.push(...specialElement);
+              inlineCount += specialElement.length;
             } else {
               textNodes.push(specialElement);
+              if (this.isInlineElement(child)) {
+                inlineCount++;
+              }
             }
           }
         }
@@ -1622,30 +1864,30 @@ export class HTMLParser {
   /**
    * 处理图书特有的元素
    */
-  processBookSpecialElement(element) {
+  processBookSpecialElement(element, inheritedStyle = {}, isFirstInlineNode = true) {
     const tagName = element.tagName.toLowerCase();
     const computedStyle = window.getComputedStyle(element);
 
     switch (tagName) {
       case 'br':
-        return this.processBrElement();
+        return this.processBrElement(inheritedStyle, isFirstInlineNode);
 
       case 'sup':
       case 'sub':
-        return this.processSupSubElement(element, tagName, computedStyle);
+        return this.processSupSubElement(element, tagName, computedStyle, inheritedStyle, isFirstInlineNode);
 
       case 'del':
       case 'ins':
-        return this.processDelInsElement(element, tagName, computedStyle);
+        return this.processDelInsElement(element, tagName, computedStyle, inheritedStyle, isFirstInlineNode);
 
       case 'mark':
-        return this.processMarkElement(element, computedStyle);
+        return this.processMarkElement(element, computedStyle, inheritedStyle, isFirstInlineNode);
 
       case 'small':
-        return this.processSmallElement(element, computedStyle);
+        return this.processSmallElement(element, computedStyle, inheritedStyle, isFirstInlineNode);
 
       case 'a':
-        return this.processLinkElement(element, computedStyle);
+        return this.processLinkElement(element, computedStyle, inheritedStyle, isFirstInlineNode);
 
       default:
         return null;
@@ -1655,14 +1897,14 @@ export class HTMLParser {
   /**
    * 处理 br 元素，转换为换行符
    */
-  processBrElement() {
-    return this.createTextNode('\n');
+  processBrElement(inheritedStyle = {}, isFirstInlineNode = true) {
+    return this.createTextNode('\n', {}, inheritedStyle, isFirstInlineNode);
   }
 
   /**
    * 处理上标/下标元素
    */
-  processSupSubElement(element, tagName, computedStyle) {
+  processSupSubElement(element, tagName, computedStyle, inheritedStyle = {}, isFirstInlineNode = true) {
     const textStyles = this.extractTextStyles(computedStyle, tagName);
 
     // 添加上标/下标特有样式
@@ -1674,13 +1916,13 @@ export class HTMLParser {
       textStyles.fontSize = '0.75em';
     }
 
-    return this.createTextNode(element.textContent, textStyles);
+    return this.createTextNode(element.textContent, textStyles, inheritedStyle, isFirstInlineNode);
   }
 
   /**
    * 处理删除/插入元素
    */
-  processDelInsElement(element, tagName, computedStyle) {
+  processDelInsElement(element, tagName, computedStyle, inheritedStyle = {}, isFirstInlineNode = true) {
     const textStyles = this.extractTextStyles(computedStyle, tagName);
 
     // 添加删除/插入特有样式
@@ -1691,26 +1933,26 @@ export class HTMLParser {
       textStyles.backgroundColor = 'rgba(255, 255, 0, 0.3)'; // 浅黄色背景表示插入内容
     }
 
-    return this.createTextNode(element.textContent, textStyles);
+    return this.createTextNode(element.textContent, textStyles, inheritedStyle, isFirstInlineNode);
   }
 
   /**
    * 处理标记元素
    */
-  processMarkElement(element, computedStyle) {
+  processMarkElement(element, computedStyle, inheritedStyle = {}, isFirstInlineNode = true) {
     const textStyles = this.extractTextStyles(computedStyle, 'mark');
     textStyles.backgroundColor = 'rgba(255, 255, 0, 0.5)'; // 高亮背景
 
-    return this.createTextNode(element.textContent, textStyles);
+    return this.createTextNode(element.textContent, textStyles, inheritedStyle, isFirstInlineNode);
   }
 
   /**
    * 处理小字号元素
    */
-  processSmallElement(element, computedStyle) {
+  processSmallElement(element, computedStyle, inheritedStyle = {}, isFirstInlineNode = true) {
     const textStyles = this.extractTextStyles(computedStyle, 'small');
 
-    return this.createTextNode(element.textContent, textStyles);
+    return this.createTextNode(element.textContent, textStyles, inheritedStyle, isFirstInlineNode);
   }
 
   /**
@@ -1738,7 +1980,7 @@ export class HTMLParser {
   /**
    * 处理链接元素
    */
-  processLinkElement(element, computedStyle) {
+  processLinkElement(element, computedStyle, inheritedStyle = {}, isFirstInlineNode = true) {
     const textContent = element.textContent.trim();
     if (!textContent) return null;
 
@@ -1750,10 +1992,16 @@ export class HTMLParser {
       ? normalizeEnglishText(textContent)
       : textContent;
 
+    // 处理 textIndent 规则
+    const processedInheritedStyle = this.applyTextIndentRule(inheritedStyle, isFirstInlineNode);
+
+    // 合并继承样式和节点样式
+    const finalStyle = this.mergeInheritedStyle(processedInheritedStyle, textStyles);
+
     const linkNode = new ElementNode('link', {
       text: normalizedText,
       href,
-      style: textStyles,
+      style: finalStyle,
     });
 
     return linkNode;
@@ -2088,5 +2336,4 @@ export const parseHTML = (element, options) => {
 };
 
 // 导出 ElementNode 类
-export { ElementNode };
 export default HTMLParser;

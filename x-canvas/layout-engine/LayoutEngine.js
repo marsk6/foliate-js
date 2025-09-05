@@ -7,11 +7,44 @@ import { InlineFlowManager } from './inline-flow-manager.js';
 import { LineBreaker } from './line-breaker.js';
 import { LineStylist } from './line-stylist.js';
 
+/**
+ * 布局节点类
+ */
+export class LayoutNode {
+  constructor(node, startX, startY, startLine) {
+    this.type = node.type;
+    this.nodeId = node.nodeId;
+    this.style = node.style;
+    this.children = [];
+    this.position = {
+      startX,
+      startY,
+      startLine,
+      endX: startX, // 初始化为startX，会在后面更新
+      endY: startY, // 初始化为startY，会在后面更新
+      endLine: startLine, // 初始化为startLine，会在后面更新
+    };
+
+    // 为文本和图片节点添加layout字段
+    if (node.type === 'text' || node.type === 'link' || node.type === 'image') {
+      this.layout = []; // 存储words数组或image元素信息
+    }
+  }
+}
+
 export class LayoutEngine {
+  static instance = null;
+  /** @type {Map<number, RenderChunk>} 渲染块缓存 */
+  renderChunks = new Map();
+
   /**
    * @param {Object} renderer - VirtualCanvasRenderer实例
    */
   constructor(renderer) {
+    if (LayoutEngine.instance) {
+      return LayoutEngine.instance;
+    }
+    LayoutEngine.instance = this;
     this.renderer = renderer;
 
     // 初始化布局工具
@@ -19,9 +52,20 @@ export class LayoutEngine {
     this.lineBreaker = new LineBreaker(renderer);
     this.lineStylist = new LineStylist(renderer);
 
+    // 布局计算模式 - 是否自动调整跨块内容
+    this.adjustCrossChunkContent = this.renderer.mode === 'horizontal'; // 默认启用
+
     // 布局树结构
     /** @type {Array} 布局节点列表，与parsedNodes保持相同树形结构 */
     this.layoutNodesList = null;
+  }
+
+  get viewportHeight() {
+    return this.renderer.viewportHeight;
+  }
+
+  get viewportWidth() {
+    return this.renderer.viewportWidth;
   }
 
   /**
@@ -33,25 +77,15 @@ export class LayoutEngine {
     let currentLine = 0;
 
     // 初始化渲染块管理
-    this.renderer.initRenderChunks();
-
-    // 设置初始的继承样式（从主题中获取）
-    const initialInheritedStyle = {
-      color: this.renderer.theme.textColor,
-      fontFamily: this.renderer.theme.fontFamily,
-      fontSize: this.renderer.theme.baseFontSize,
-      lineHeight: this.renderer.theme.lineHeight,
-      fontWeight: 'normal',
-      fontStyle: 'normal',
-    };
+    this.initRenderChunks();
 
     // 使用布局算法计算所有位置，同时创建layoutNodesList
+    // 注意：样式继承现在在HTMLParser阶段完成，这里不再需要处理
     const result = this.layoutNodes(
       this.renderer.parsedNodes,
       x,
       y,
-      currentLine,
-      initialInheritedStyle
+      currentLine
     );
 
     // 保存布局节点列表
@@ -63,14 +97,14 @@ export class LayoutEngine {
     // 📐 正确的总高度计算方式：使用实际的Y坐标
     const contentHeight = result.y;
     // 计算需要的总块数
-    const chunkHeight = this.renderer.chunkHeight;
-    const chunkWidth = this.renderer.chunkWidth;
-    const totalChunks = Math.ceil(contentHeight / chunkHeight);
+    const viewportHeight = this.viewportHeight;
+    const viewportWidth = this.viewportWidth;
+    const totalChunks = Math.ceil(contentHeight / viewportHeight);
 
     // scrollContent 的高度基于块数量，而不是内容高度
-    const scrollContentHeight = totalChunks * chunkHeight;
-    const scrollContentWidth = totalChunks * chunkWidth;
-    this.renderer.fullLayoutData = {
+    const scrollContentHeight = totalChunks * viewportHeight;
+    const scrollContentWidth = totalChunks * viewportWidth;
+    return {
       words, // 从layoutNodesList提取的words
       elements, // 从layoutNodesList提取的elements
       contentHeight, // 实际内容高度
@@ -79,6 +113,7 @@ export class LayoutEngine {
       totalWidth: scrollContentWidth,
       totalChunks,
       layoutNodesList: this.layoutNodesList, // 包含布局节点列表
+      renderChunks: this.renderChunks,
     };
   }
 
@@ -88,16 +123,14 @@ export class LayoutEngine {
    * @param {number} startX
    * @param {number} startY
    * @param {number} startLine
-   * @param {Object} inheritedStyle - 从父元素继承的样式
-   * @returns {Object} {x, y, line, words, elements, layoutNodes}
+   * @returns {Object} {x, y, line, layoutNodes}
    */
-  layoutNodes(nodes, startX, startY, startLine, inheritedStyle = {}) {
+  layoutNodes(nodes, startX, startY, startLine) {
     return this.layoutNodesWithInlineState(
       nodes,
       startX,
       startY,
       startLine,
-      inheritedStyle,
       false
     );
   }
@@ -111,7 +144,6 @@ export class LayoutEngine {
     startX,
     startY,
     startLine,
-    inheritedStyle = {},
     firstNodeInlineTextContinuation = false
   ) {
     let x = startX;
@@ -142,7 +174,6 @@ export class LayoutEngine {
         x,
         y,
         line,
-        inheritedStyle,
         isInlineTextContinuation
       );
 
@@ -166,7 +197,6 @@ export class LayoutEngine {
    * @param {number} startX
    * @param {number} startY
    * @param {number} startLine
-   * @param {Object} inheritedStyle - 从父元素继承的样式
    * @param {boolean} isInlineTextContinuation - 是否是同一行内联文本的续接部分
    * @returns {Object} {x, y, line, layoutNode}
    */
@@ -175,37 +205,14 @@ export class LayoutEngine {
     startX,
     startY,
     startLine,
-    inheritedStyle = {},
     isInlineTextContinuation = false
   ) {
     // 创建布局节点，包含position字段记录开始位置
-    const layoutNode = {
-      type: node.type,
-      nodeId: node._nodeId,
-      children: [],
-      position: {
-        startX,
-        startY,
-        startLine,
-        endX: startX, // 初始化为startX，会在后面更新
-        endY: startY, // 初始化为startY，会在后面更新
-        endLine: startLine, // 初始化为startLine，会在后面更新
-      },
-    };
-
-    // 为文本和图片节点添加layout字段
-    if (node.type === 'text' || node.type === 'link') {
-      layoutNode.layout = []; // 存储words数组
-    } else if (node.type === 'image') {
-      layoutNode.layout = []; // 存储image元素信息
-    }
+    const layoutNode = new LayoutNode(node, startX, startY, startLine);
 
     if (node.type === 'text') {
-      // 文本节点的样式：继承的样式 + 节点自身的特有样式
-      const nodeStyle = node.style || {};
-
-      // 合并继承样式和节点特有样式（节点样式优先）
-      const textStyle = this.mergeInheritedStyle(inheritedStyle, nodeStyle);
+      // 文本节点的样式已经在HTMLParser阶段处理了继承
+      const textStyle = node.style || {};
 
       const result = this.layoutText(
         node.text,
@@ -214,7 +221,7 @@ export class LayoutEngine {
         startY,
         startLine,
         isInlineTextContinuation,
-        node._nodeId
+        node.nodeId
       );
 
       // 将words填充到布局节点
@@ -234,18 +241,17 @@ export class LayoutEngine {
     }
 
     if (node.type === 'link') {
-      // 链接节点：继承的样式 + 节点自身的样式
+      // 链接节点的样式已经在HTMLParser阶段处理了继承
       const linkStyle = node.style || {};
-      const textStyle = this.mergeInheritedStyle(inheritedStyle, linkStyle);
 
       const result = this.layoutText(
         node.text,
-        textStyle,
+        linkStyle,
         startX,
         startY,
         startLine,
         isInlineTextContinuation,
-        node._nodeId
+        node.nodeId
       );
 
       // 将words填充到布局节点
@@ -288,16 +294,8 @@ export class LayoutEngine {
     let y = startY;
     let line = startLine;
 
-    // 直接使用节点的样式，HTMLParser已经处理了默认样式合并
+    // 直接使用节点的样式，HTMLParser已经处理了样式继承和合并
     const currentNodeStyle = node.style || {};
-
-    // 准备传递给子节点的继承样式：从当前节点提取可继承样式并与父节点继承样式合并
-    const currentInheritableStyles =
-      this.extractInheritableStyles(currentNodeStyle);
-    const inheritedStyleForChildren = this.mergeInheritedStyle(
-      inheritedStyle,
-      currentInheritableStyles
-    );
 
     // 处理块级元素的上边距和上内边距
     if (this.isBlockElement(currentNodeStyle)) {
@@ -349,17 +347,16 @@ export class LayoutEngine {
 
       if (isBlockElement) {
         // 块级元素：使用内联流处理方式
+        // 注意：样式继承已在HTMLParser阶段处理，这里直接使用节点的样式
         const inlineChildren = this.inlineFlowManager.extractInlineNodes(
-          node.children,
-          inheritedStyleForChildren
+          node.children
         );
 
         if (inlineChildren.length > 0) {
           // 收集整个内联流
           const { segments, styleMap } =
             this.inlineFlowManager.collectInlineFlow(
-              inlineChildren,
-              inheritedStyleForChildren
+              inlineChildren
             );
 
           if (segments.length > 0) {
@@ -406,7 +403,7 @@ export class LayoutEngine {
               lines,
               styleMap,
               styleContext,
-              node._nodeId
+              node.nodeId
             );
 
             // 添加到渲染系统并按nodeId分组布局节点
@@ -418,7 +415,7 @@ export class LayoutEngine {
             const inlineLayoutNodes = [];
 
             for (const styledWord of styledWords) {
-              const adjustedWord = this.renderer.addWordToChunk(styledWord);
+              const adjustedWord = this.checkWordCrossViewport(styledWord);
 
               // 按nodeId分组words
               const wordNodeId = adjustedWord.wordId
@@ -435,11 +432,10 @@ export class LayoutEngine {
               finalY = adjustedWord.y;
               finalLine = adjustedWord.line;
             }
-
             // 为内联子节点创建布局节点
             for (const inlineChild of inlineChildren) {
               const childWordList =
-                wordsByNodeId.get(inlineChild._nodeId) || [];
+                wordsByNodeId.get(inlineChild.nodeId) || [];
 
               // 计算内联子节点的position
               let childStartX = x,
@@ -463,20 +459,11 @@ export class LayoutEngine {
                 childEndLine = lastWord.line;
               }
 
-              const childLayoutNode = {
-                type: inlineChild.type,
-                nodeId: inlineChild._nodeId,
-                children: [],
-                position: {
-                  startX: childStartX,
-                  startY: childStartY,
-                  startLine: childStartLine,
-                  endX: childEndX,
-                  endY: childEndY,
-                  endLine: childEndLine,
-                },
-              };
-
+              const childLayoutNode = new LayoutNode(inlineChild, childStartX, childStartY, childStartLine);
+              // 更新结束位置
+              childLayoutNode.position.endX = childEndX;
+              childLayoutNode.position.endY = childEndY;
+              childLayoutNode.position.endLine = childEndLine;
               if (inlineChild.type === 'text' || inlineChild.type === 'link') {
                 childLayoutNode.layout = childWordList;
               }
@@ -508,7 +495,6 @@ export class LayoutEngine {
             x,
             y,
             line,
-            inheritedStyleForChildren,
             false
           );
 
@@ -526,7 +512,6 @@ export class LayoutEngine {
           x,
           y,
           line,
-          inheritedStyleForChildren,
           isInlineTextContinuation
         );
 
@@ -667,7 +652,7 @@ export class LayoutEngine {
 
     for (const styledWord of styledWords) {
       // 立即添加到渲染块（可能会调整位置）
-      const adjustedWord = this.renderer.addWordToChunk(styledWord);
+      const adjustedWord = this.checkWordCrossViewport(styledWord);
 
       words.push(adjustedWord);
 
@@ -730,7 +715,7 @@ export class LayoutEngine {
 
     const imageElement = {
       type: 'image',
-      nodeId: node._nodeId, // 添加nodeId信息
+      nodeId: node.nodeId, // 添加nodeId信息
       x: centeredX,
       y: startY,
       width: scaleResult.width,
@@ -743,7 +728,7 @@ export class LayoutEngine {
     };
 
     // 立即添加到渲染块（可能会调整位置）
-    const adjustedImageElement = this.renderer.addElementToChunk(imageElement);
+    const adjustedImageElement = this.checkElementCrossViewport(imageElement);
 
     const elements = [adjustedImageElement];
 
@@ -770,60 +755,6 @@ export class LayoutEngine {
     return style[property];
   }
 
-  /**
-   * 获取可继承的样式属性列表
-   * @returns {string[]}
-   */
-  getInheritableStyleProperties() {
-    return [
-      // 字体相关
-      'fontFamily',
-      'fontSize',
-      'fontWeight',
-      'fontStyle',
-      'fontVariant',
-      'lineHeight',
-      'letterSpacing',
-      'wordSpacing',
-
-      // 文本相关
-      'color',
-      'textAlign',
-      'textIndent',
-    ];
-  }
-
-  /**
-   * 从样式对象中提取可继承的样式
-   * @param {Object} style - 样式对象
-   * @returns {Object} 可继承的样式
-   */
-  extractInheritableStyles(style) {
-    const inheritableStyles = {};
-    const inheritableProps = this.getInheritableStyleProperties();
-
-    inheritableProps.forEach((prop) => {
-      if (style && style[prop] !== undefined) {
-        inheritableStyles[prop] = style[prop];
-      }
-    });
-
-    return inheritableStyles;
-  }
-
-  /**
-   * 合并继承样式和节点样式
-   * @param {Object} inheritedStyle - 继承的样式
-   * @param {Object} nodeStyle - 节点自身的样式
-   * @returns {Object} 合并后的样式
-   */
-  mergeInheritedStyle(inheritedStyle = {}, nodeStyle = {}) {
-    // 先应用继承样式，再覆盖节点样式（节点样式优先级更高）
-    return {
-      ...inheritedStyle,
-      ...nodeStyle,
-    };
-  }
 
   /**
    * 解析尺寸值（支持em、px、pt等）
@@ -1096,45 +1027,6 @@ export class LayoutEngine {
   // ===== 布局节点管理方法 =====
 
   /**
-   * 从layoutNodesList中提取所有words和elements
-   * @param {Array} layoutNodes - 布局节点列表（可选，默认使用this.layoutNodesList）
-   * @returns {Object} {words: Array, elements: Array}
-   */
-  extractWordsAndElementsFromLayoutNodes(layoutNodes = null) {
-    const nodes = layoutNodes || this.layoutNodesList;
-    if (!nodes) return { words: [], elements: [] };
-
-    const words = [];
-    const elements = [];
-
-    const traverse = (nodeList) => {
-      for (const node of nodeList) {
-        // 收集当前节点的layout数据
-        if (node.layout && Array.isArray(node.layout)) {
-          for (const item of node.layout) {
-            // 检查是否为word（有wordId字段）
-            if (item.wordId) {
-              words.push(item);
-            }
-            // 检查是否为element（有type字段且为image）
-            else if (item.type === 'image') {
-              elements.push(item);
-            }
-          }
-        }
-
-        // 递归处理子节点
-        if (node.children && node.children.length > 0) {
-          traverse(node.children);
-        }
-      }
-    };
-
-    traverse(nodes);
-    return { words, elements };
-  }
-
-  /**
    * 根据nodeId查找布局节点（全局查找，用于向后兼容）
    * @param {string} nodeId - 节点ID
    * @returns {Object|null} 布局节点或null
@@ -1166,5 +1058,229 @@ export class LayoutEngine {
     return this.layoutNodesList
       ? JSON.parse(JSON.stringify(this.layoutNodesList))
       : null;
+  }
+
+  checkWordCrossViewport(word) {
+    // 如果启用了跨块内容调整
+    if (this.adjustCrossChunkContent) {
+      const lineHeight = this.getLineHeight(word.style);
+      const baseline = this.getTextBaseline(lineHeight);
+      const viewportHeight = this.viewportHeight;
+
+      let wordTop = word.y - baseline;
+      let wordBottom = wordTop + lineHeight;
+      const wordChunkIndex = Math.floor(wordTop / viewportHeight);
+      const chunkBottom = (wordChunkIndex + 1) * viewportHeight;
+
+      // 检查单词是否与块底部交叉
+      if (wordBottom > chunkBottom && wordTop < chunkBottom) {
+        // 将单词调整到下一个块的开始
+        const nextChunkStart = chunkBottom;
+        const adjustment = nextChunkStart - wordTop;
+
+        // 更新单词的y坐标
+        word.y += adjustment;
+
+        // 重新计算位置
+        wordTop = word.y - baseline;
+        wordBottom = wordTop + lineHeight;
+      }
+    }
+    return word;
+  }
+
+  checkElementCrossViewport(element) {
+    // 如果启用了跨块内容调整
+    if (this.adjustCrossChunkContent) {
+      const viewportHeight = this.viewportHeight;
+
+      let elementTop = element.y;
+      let elementBottom = element.y + element.height;
+      const elementChunkIndex = Math.floor(elementTop / viewportHeight);
+      const chunkBottom = (elementChunkIndex + 1) * viewportHeight;
+
+      // 检查元素是否与块底部交叉
+      if (elementBottom > chunkBottom && elementTop < chunkBottom) {
+        // 将元素调整到下一个块的开始
+        const nextChunkStart = chunkBottom;
+        const adjustment = nextChunkStart - elementTop;
+
+        // 更新元素的y坐标
+        element.y += adjustment;
+
+        // 重新计算位置
+        elementTop = element.y;
+        elementBottom = element.y + element.height;
+      }
+    }
+    return element;
+  }
+
+  /**
+   * 从layoutNodesList中提取所有words和elements
+   * @param {Array} layoutNodes - 布局节点列表（可选，默认使用this.layoutNodesList）
+   * @returns {Object} {words: Array, elements: Array}
+   */
+  extractWordsAndElementsFromLayoutNodes(layoutNodes = null) {
+    const nodes = layoutNodes || this.layoutNodesList;
+    if (!nodes) return { words: [], elements: [] };
+
+    const words = [];
+    const elements = [];
+
+    const traverse = (nodeList) => {
+      for (const node of nodeList) {
+        // 收集当前节点的layout数据
+        if (node.layout && Array.isArray(node.layout)) {
+          for (const item of node.layout) {
+            // 检查是否为word（有wordId字段）
+            if (item.wordId) {
+              this.addWordToChunk(item);
+              words.push(item);
+            }
+            // 检查是否为element（有type字段且为image）
+            else if (item.type === 'image') {
+              this.addElementToChunk(item);
+              elements.push(item);
+            }
+          }
+        }
+
+        // 递归处理子节点
+        if (node.children && node.children.length > 0) {
+          traverse(node.children);
+        }
+      }
+    };
+
+    traverse(nodes);
+    return { words, elements };
+  }
+
+  /**
+   * 初始化渲染块管理
+   */
+  initRenderChunks() {
+    // 清空现有块
+    this.renderChunks.clear();
+
+    // 初始化当前块索引
+    this.currentChunkIndex = 0;
+    this.currentChunk = null;
+
+    // 创建第一个块
+    this.createNewChunk(0);
+  }
+
+  /**
+   * 创建新的渲染块
+   * @param {number} chunkIndex - 块索引
+   */
+  createNewChunk(chunkIndex) {
+    const viewportHeight = this.viewportHeight;
+    const startY = chunkIndex * viewportHeight;
+    const endY = (chunkIndex + 1) * viewportHeight;
+
+    this.currentChunk = {
+      index: chunkIndex,
+      startY,
+      endY,
+      words: [],
+      elements: [],
+      rendered: false,
+    };
+    this.renderChunks.set(chunkIndex, this.currentChunk);
+  }
+
+  /**
+   * 将单词添加到适当的渲染块
+   * @param {Object} word - 单词对象
+   * @returns {Object} 可能调整后的单词对象
+   */
+  addWordToChunk(word) {
+    const viewportHeight = this.viewportHeight;
+    const wordTop = word.y;
+    const wordBottom = word.y + word.height;
+    // 计算单词所属的块索引（使用调整后的位置）
+    const wordChunkIndex = Math.floor(wordTop / viewportHeight);
+
+    // 如果需要创建新块
+    if (wordChunkIndex > this.currentChunkIndex) {
+      // 创建中间可能缺失的块
+      for (let i = this.currentChunkIndex + 1; i <= wordChunkIndex; i++) {
+        this.createNewChunk(i);
+        this.currentChunkIndex = i;
+      }
+    }
+
+    // 将单词添加到对应的块中
+    const targetChunk = this.renderChunks.get(wordChunkIndex);
+
+    if (targetChunk) {
+      targetChunk.words.push(word);
+    }
+
+    // 检查是否仍然跨越多个块（调整后应该很少发生）
+    const endChunkIndex = Math.floor((wordBottom - 1) / viewportHeight);
+    if (endChunkIndex > wordChunkIndex) {
+      for (let i = wordChunkIndex + 1; i <= endChunkIndex; i++) {
+        if (i > this.currentChunkIndex) {
+          this.createNewChunk(i);
+          this.currentChunkIndex = i;
+        }
+
+        const chunk = this.renderChunks.get(i);
+
+        if (chunk) {
+          chunk.words.push(word);
+        }
+      }
+    }
+  }
+
+  /**
+   * 将元素添加到适当的渲染块
+   * @param {Object} element - 元素对象
+   * @returns {Object} 可能调整后的元素对象
+   */
+  addElementToChunk(element) {
+    const viewportHeight = this.viewportHeight;
+    const elementTop = element.y;
+    const elementBottom = element.y + element.height;
+    // 计算元素所属的块索引（使用调整后的位置）
+    const elementChunkIndex = Math.floor(elementTop / viewportHeight);
+
+    // 如果需要创建新块
+    if (elementChunkIndex > this.currentChunkIndex) {
+      // 创建中间可能缺失的块
+      for (let i = this.currentChunkIndex + 1; i <= elementChunkIndex; i++) {
+        this.createNewChunk(i);
+        this.currentChunkIndex = i;
+      }
+    }
+
+    // 将元素添加到对应的块中
+    const targetChunk = this.renderChunks.get(elementChunkIndex);
+
+    if (targetChunk) {
+      targetChunk.elements.push(element);
+    }
+
+    // 检查是否仍然跨越多个块（调整后应该很少发生）
+    const endChunkIndex = Math.floor((elementBottom - 1) / viewportHeight);
+    if (endChunkIndex > elementChunkIndex) {
+      for (let i = elementChunkIndex + 1; i <= endChunkIndex; i++) {
+        if (i > this.currentChunkIndex) {
+          this.createNewChunk(i);
+          this.currentChunkIndex = i;
+        }
+
+        const chunk = this.renderChunks.get(i);
+
+        if (chunk) {
+          chunk.elements.push(element);
+        }
+      }
+    }
   }
 }

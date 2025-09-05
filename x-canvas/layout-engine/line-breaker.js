@@ -1,4 +1,5 @@
 import { LineBox } from './line-box.js';
+import { LayoutEngine } from './LayoutEngine.js';
 
 /**
  * 行分割器 - 负责将统一的文本流按照可用宽度分行
@@ -78,14 +79,14 @@ export class LineBreaker {
       if (styleMap && segment.originalSegmentIndex !== undefined) {
         const segmentStyle = styleMap.get(segment.originalSegmentIndex) || {};
         const fontSize =
-          this.renderer.parseSize(
-            this.renderer.getStyleProperty(segmentStyle, 'fontSize')
+          LayoutEngine.instance.parseSize(
+            LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontSize')
           ) || this.renderer.theme.baseFontSize;
         const fontWeight =
-          this.renderer.getStyleProperty(segmentStyle, 'fontWeight') ||
+          LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontWeight') ||
           'normal';
         const fontStyle =
-          this.renderer.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
+          LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontStyle') || 'normal';
 
         // 设置正确的字体
         this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
@@ -151,14 +152,14 @@ export class LineBreaker {
                 const segmentStyle =
                   styleMap.get(backtrackSegment.originalSegmentIndex) || {};
                 const fontSize =
-                  this.renderer.parseSize(
-                    this.renderer.getStyleProperty(segmentStyle, 'fontSize')
+                  LayoutEngine.instance.parseSize(
+                    LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontSize')
                   ) || this.renderer.theme.baseFontSize;
                 const fontWeight =
-                  this.renderer.getStyleProperty(segmentStyle, 'fontWeight') ||
+                  LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontWeight') ||
                   'normal';
                 const fontStyle =
-                  this.renderer.getStyleProperty(segmentStyle, 'fontStyle') ||
+                  LayoutEngine.instance.getStyleProperty(segmentStyle, 'fontStyle') ||
                   'normal';
 
                 this.measureCtx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${this.renderer.theme.fontFamily}`;
