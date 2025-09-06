@@ -664,6 +664,7 @@ class SlideManager extends ReadMode {
    * 绑定滑动事件
    */
   bindSlideEvents() {
+    // return;
     // 横向模式：监听触摸事件
     this.container.addEventListener(
       'touchstart',
@@ -689,7 +690,6 @@ class SlideManager extends ReadMode {
   handleTouchStart(event) {
     const startX = event.touches[0].clientX;
     if (this.isAnimating) return false;
-
     this.touchStartX = startX;
     this.touchStartTime = Date.now();
     this.isTouching = true;
@@ -702,9 +702,7 @@ class SlideManager extends ReadMode {
   handleTouchMove(event) {
     const currentX = event.touches[0].clientX;
     if (!this.isTouching || this.isAnimating) return false;
-
     const deltaX = currentX - this.touchStartX;
-
     // 实时更新滚动内容位置（但不改变页面状态）
     this.updateContainerTransform(deltaX);
   }
@@ -729,7 +727,6 @@ class SlideManager extends ReadMode {
     const endX = event.changedTouches[0].clientX;
     const deltaX = endX - this.touchStartX;
     const deltaTime = Date.now() - this.touchStartTime;
-
     // 分发给当前活跃章节的滑动管理器
     this.handleSwipeGesture(deltaX, deltaTime);
   }
@@ -739,21 +736,15 @@ class SlideManager extends ReadMode {
    */
   handleSwipeGesture(deltaX, deltaTime) {
     const absDeltaX = Math.abs(deltaX);
-    const minSwipeDistance = 50;
-    const maxSwipeTime = 300;
-    const isQuickSwipe =
-      deltaTime < maxSwipeTime && absDeltaX > minSwipeDistance;
-    const isLongSwipe = absDeltaX > this.manager.state.viewportWidth * 0.5; // 超过30%宽度
-
-    if (isQuickSwipe || isLongSwipe) {
-      if (deltaX > 0) {
+    const isQuickSwipe = absDeltaX / deltaTime > 0.01
+    const isSwipeHalfDistance = absDeltaX > this.manager.state.viewportWidth * 0.5; // 超过50%宽度
+    if (isQuickSwipe || isSwipeHalfDistance) {
+      if (deltaX < 0) {
         // 向左滑动，显示下一页
         this.nextPage();
-        this.manager.activeChapter.renderer.viewport.handleSwipeLeft();
       } else {
         // 向右滑动，显示上一页
         this.previousPage();
-        this.manager.activeChapter.renderer.viewport.handleSwipeRight();
       }
     } else {
       // 回弹到当前页面
@@ -766,15 +757,14 @@ class SlideManager extends ReadMode {
    * @param {number} deltaX - X轴偏移量
    */
   updateContainerTransform(deltaX) {
-    const maxDelta = this.manager.state.viewportWidth * 0.5; // 最大拖拽距离
-    const clampedDelta = Math.max(-maxDelta, Math.min(maxDelta, deltaX));
+    const clampedDelta = deltaX
+    const { currentPage } = this.manager.activeChapter.progress;
 
     // 计算当前章节的基础偏移
-    const baseOffset =
-      -this.manager.currentChapterIndex * this.manager.state.viewportWidth;
-    const totalOffset = baseOffset + clampedDelta;
+    const scrollLeft =
+      -((currentPage - 1) * this.baseOffset + this.manager.activeChapter.baseScrollOffset);
 
-    // 对整个 Manager 容器应用变换
+    const totalOffset = scrollLeft + clampedDelta;
     this.container.style.transform = `translateX(${totalOffset}px)`;
   }
 
@@ -787,7 +777,7 @@ class SlideManager extends ReadMode {
     const animationDuration = 300;
     const { currentPage } = this.manager.activeChapter.progress;
     const scrollLeft =
-      (currentPage - 1) * this.baseOffset + this.manager.activeChapter.baseScrollOffset;
+      -((currentPage - 1) * this.baseOffset + this.manager.activeChapter.baseScrollOffset);
 
     // 对容器应用过渡动画
     this.container.style.transition = `transform ${animationDuration}ms ease-out`;
@@ -857,9 +847,10 @@ class SlideManager extends ReadMode {
    * @param {number} pageIndex - 页面索引
    */
   goToPage(pageIndex) {
+
     const activeChapter = this.manager.activeChapter;
 
-    const { currentPage: oldPage } = activeChapter.progress;
+    const { currentPage: oldPage, totalPages } = activeChapter.progress;
 
     activeChapter.progress.currentPage = pageIndex;
 
@@ -873,10 +864,10 @@ class SlideManager extends ReadMode {
     // 执行页面切换动画
     this.animateContainerToChapter();
 
-    if (totalPages - currentPage < 2) {
+    if (totalPages - oldPage < 2) {
       this.manager.loadChapter(this.manager.currentChapterIndex + 1, 0);
     }
-    if (currentPage < 2) {
+    if (oldPage < 2) {
       this.manager.loadChapter(this.manager.currentChapterIndex - 1, 1);
     }
   }

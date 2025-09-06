@@ -1,4 +1,4 @@
-const layoutNodesList = [
+const layoutTree = [
   {
     type: 'element',
     nodeId: _nodeId1,

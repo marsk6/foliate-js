@@ -36,7 +36,7 @@ export class LayoutEngine {
   static instance = null;
   /** @type {Map<number, RenderChunk>} 渲染块缓存 */
   renderChunks = new Map();
-  layoutDirtyIds = new Set();
+  layoutDirty = false;
   styleDirty = false;
 
   /**
@@ -56,7 +56,7 @@ export class LayoutEngine {
 
     // 布局树结构
     /** @type {Array} 布局节点列表，与renderTree保持相同树形结构 */
-    this.layoutNodesList = null;
+    this.layoutTree = null;
   }
 
   // 布局计算模式 - 是否自动调整跨块内容
@@ -87,12 +87,12 @@ export class LayoutEngine {
     // 初始化渲染块管理
     this.initRenderChunks();
 
-    // 使用布局算法计算所有位置，同时创建layoutNodesList
+    // 使用布局算法计算所有位置，同时创建layoutTree
     // 注意：样式继承现在在HTMLParser阶段完成，这里不再需要处理
     const result = this.layoutNodes(this.renderTree, x, y, currentLine);
-
+    this.layoutDirty = false
     // 保存布局节点列表
-    this.layoutNodesList = result.layoutNodes;
+    this.layoutTree = result.layoutTree;
 
     // 从布局节点列表中一次性提取words和elements
     const { words, elements } = this.extractWordsAndElementsFromLayoutNodes();
@@ -108,14 +108,14 @@ export class LayoutEngine {
     const scrollContentHeight = totalChunks * viewportHeight;
     const scrollContentWidth = totalChunks * viewportWidth;
     return {
-      words, // 从layoutNodesList提取的words
-      elements, // 从layoutNodesList提取的elements
+      words, // 从layoutTree提取的words
+      elements, // 从layoutTree提取的elements
       contentHeight, // 实际内容高度
       scrollContentHeight, // 滚动容器高度
       totalHeight: scrollContentHeight, // 兼容性，使用滚动容器高度
       totalWidth: scrollContentWidth,
       totalChunks,
-      layoutNodesList: this.layoutNodesList, // 包含布局节点列表
+      layoutTree: this.layoutTree, // 包含布局节点列表
       renderChunks: this.renderChunks,
     };
   }
@@ -155,7 +155,7 @@ export class LayoutEngine {
     let lastNodeWasInline = firstNodeInlineTextContinuation; // 使用传入的状态作为初始状态
 
     // 创建结果容器
-    const layoutNodes = [];
+    const layoutTree = [];
 
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
@@ -181,7 +181,7 @@ export class LayoutEngine {
       );
 
       // 收集结果
-      layoutNodes.push(result.layoutNode);
+      layoutTree.push(result.layoutNode);
 
       // 更新坐标
       y = result.y;
@@ -191,7 +191,7 @@ export class LayoutEngine {
       lastNodeWasInline = currentNodeIsInline;
     }
 
-    return { x, y, line, layoutNodes };
+    return { x, y, line, layoutTree };
   }
 
   /**
@@ -211,8 +211,8 @@ export class LayoutEngine {
     isInlineTextContinuation = false
   ) {
     // 创建布局节点，包含position字段记录开始位置
-    const layoutNode = new LayoutNode(node, startX, startY, startLine);
 
+    const layoutNode = new LayoutNode(node, startX, startY, startLine);
     if (node.type === 'text') {
       // 文本节点的样式已经在HTMLParser阶段处理了继承
       const textStyle = node.style || {};
@@ -413,25 +413,24 @@ export class LayoutEngine {
             let finalLine = line;
 
             const wordsByNodeId = new Map();
-            const inlineLayoutNodes = [];
+            const inlineLayoutTree = [];
 
             for (const styledWord of styledWords) {
-              const adjustedWord = this.checkWordCrossViewport(styledWord);
 
               // 按nodeId分组words
-              const wordNodeId = adjustedWord.wordId
-                ? adjustedWord.wordId.split('_')[0]
+              const wordNodeId = styledWord.wordId
+                ? styledWord.wordId.split('_')[0]
                 : null;
               if (wordNodeId) {
                 if (!wordsByNodeId.has(wordNodeId)) {
                   wordsByNodeId.set(wordNodeId, []);
                 }
-                wordsByNodeId.get(wordNodeId).push({ ...adjustedWord });
+                wordsByNodeId.get(wordNodeId).push({ ...styledWord });
               }
 
-              finalX = adjustedWord.x + adjustedWord.width;
-              finalY = adjustedWord.y;
-              finalLine = adjustedWord.line;
+              finalX = styledWord.x + styledWord.width;
+              finalY = styledWord.y;
+              finalLine = styledWord.line;
             }
             // 为内联子节点创建布局节点
             for (const inlineChild of inlineChildren) {
@@ -473,10 +472,10 @@ export class LayoutEngine {
                 childLayoutNode.layout = childWordList;
               }
 
-              inlineLayoutNodes.push(childLayoutNode);
+              inlineLayoutTree.push(childLayoutNode);
             }
 
-            layoutNode.children.push(...inlineLayoutNodes);
+            layoutNode.children.push(...inlineLayoutTree);
 
             x = finalX;
             y = finalY;
@@ -504,7 +503,7 @@ export class LayoutEngine {
           );
 
           // 合并结果
-          layoutNode.children.push(...result.layoutNodes);
+          layoutNode.children.push(...result.layoutTree);
 
           x = result.x;
           y = result.y;
@@ -521,7 +520,7 @@ export class LayoutEngine {
         );
 
         // 合并结果
-        layoutNode.children.push(...result.layoutNodes);
+        layoutNode.children.push(...result.layoutTree);
 
         x = result.x;
         y = result.y;
@@ -656,15 +655,10 @@ export class LayoutEngine {
     const words = [];
 
     for (const styledWord of styledWords) {
-      // 立即添加到渲染块（可能会调整位置）
-      const adjustedWord = this.checkWordCrossViewport(styledWord);
-
-      words.push(adjustedWord);
-
       // 更新最终位置信息
-      finalX = adjustedWord.x + adjustedWord.width;
-      finalY = adjustedWord.y;
-      finalLine = adjustedWord.line;
+      finalX = styledWord.x + styledWord.width;
+      finalY = styledWord.y;
+      finalLine = styledWord.line;
     }
 
     // 如果没有生成任何单词，保持原始位置
@@ -1036,7 +1030,7 @@ export class LayoutEngine {
    * @returns {Object|null} 布局节点或null
    */
   findLayoutNodeById(nodeId) {
-    if (!this.layoutNodesList) return null;
+    if (!this.layoutTree) return null;
 
     const traverse = (nodeList) => {
       for (const node of nodeList) {
@@ -1051,47 +1045,19 @@ export class LayoutEngine {
       return null;
     };
 
-    return traverse(this.layoutNodesList);
+    return traverse(this.layoutTree);
   }
 
   /**
    * 获取完整的布局节点列表（调试和检查用）
-   * @returns {Array} layoutNodesList的深拷贝
+   * @returns {Array} layoutTree的深拷贝
    */
-  getLayoutNodesList() {
-    return this.layoutNodesList
-      ? JSON.parse(JSON.stringify(this.layoutNodesList))
+  getLayoutTree() {
+    return this.layoutTree
+      ? JSON.parse(JSON.stringify(this.layoutTree))
       : null;
   }
 
-  checkWordCrossViewport(word) {
-    // 如果启用了跨块内容调整
-    if (this.adjustCrossChunkContent) {
-      const lineHeight = this.getLineHeight(word.style);
-      const baseline = this.getTextBaseline(lineHeight);
-      const viewportHeight = this.viewportHeight;
-
-      let wordTop = word.y - baseline;
-      let wordBottom = wordTop + lineHeight;
-      const wordChunkIndex = Math.floor(wordTop / viewportHeight);
-      const chunkBottom = (wordChunkIndex + 1) * viewportHeight;
-
-      // 检查单词是否与块底部交叉
-      if (wordBottom > chunkBottom && wordTop < chunkBottom) {
-        // 将单词调整到下一个块的开始
-        const nextChunkStart = chunkBottom;
-        const adjustment = nextChunkStart - wordTop;
-
-        // 更新单词的y坐标
-        word.y += adjustment;
-
-        // 重新计算位置
-        wordTop = word.y - baseline;
-        wordBottom = wordTop + lineHeight;
-      }
-    }
-    return word;
-  }
 
   checkElementCrossViewport(element) {
     // 如果启用了跨块内容调整
@@ -1105,12 +1071,12 @@ export class LayoutEngine {
 
       // 检查元素是否与块底部交叉
       if (elementBottom > chunkBottom && elementTop < chunkBottom) {
-        // 将元素调整到下一个块的开始
+        // 将元素调整到下一个块的开始位置，考虑顶部间距
         const nextChunkStart = chunkBottom;
-        const adjustment = nextChunkStart - elementTop;
-
-        // 更新元素的y坐标
-        element.y += adjustment;
+        const topPadding = this.renderer.theme.paddingX || 16;
+        
+        // 更新元素的y坐标：下一个块开始 + 顶部间距
+        element.y = nextChunkStart + topPadding;
 
         // 重新计算位置
         elementTop = element.y;
@@ -1121,12 +1087,12 @@ export class LayoutEngine {
   }
 
   /**
-   * 从layoutNodesList中提取所有words和elements
-   * @param {Array} layoutNodes - 布局节点列表（可选，默认使用this.layoutNodesList）
+   * 从layoutTree中提取所有words和elements
+   * @param {Array} layoutNodes - 布局节点列表（可选，默认使用this.layoutTree）
    * @returns {Object} {words: Array, elements: Array}
    */
   extractWordsAndElementsFromLayoutNodes(layoutNodes = null) {
-    const nodes = layoutNodes || this.layoutNodesList;
+    const nodes = layoutNodes || this.layoutTree;
     if (!nodes) return { words: [], elements: [] };
 
     const words = [];
@@ -1202,9 +1168,12 @@ export class LayoutEngine {
    * @returns {Object} 可能调整后的单词对象
    */
   addWordToChunk(word) {
+    const lineHeight = this.getLineHeight(word.style);
+    const baseline = this.getTextBaseline(lineHeight);
     const viewportHeight = this.viewportHeight;
-    const wordTop = word.y;
-    const wordBottom = word.y + word.height;
+
+    let wordTop = word.y - baseline;
+    let wordBottom = wordTop + lineHeight;
     // 计算单词所属的块索引（使用调整后的位置）
     const wordChunkIndex = Math.floor(wordTop / viewportHeight);
 

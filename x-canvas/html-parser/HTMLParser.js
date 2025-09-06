@@ -16,7 +16,6 @@ export class ElementNode {
   constructor(type, options = {}) {
     this.type = type;
     this.nodeId = `node-${++ElementNode.nodeIdCounter}`; // 将由 HTMLParser 分配
-
     // 根据节点类型设置相应的属性
     switch (type) {
       case 'element':

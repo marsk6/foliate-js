@@ -166,7 +166,7 @@ export class LineStylist {
         const textNodeId = segment.textNodeId;
         const currentWordIndex = wordIndexByNodeId.get(textNodeId) || 0;
         wordIndexByNodeId.set(textNodeId, currentWordIndex + 1);
-        
+
         // 使用 LineBreaker 计算的位置 + 对齐偏移 + 两端对齐偏移
         const styledWord = {
           wordId: `${textNodeId}_${currentWordIndex}`, // wordId格式: textNodeId_wordIndex
@@ -194,7 +194,10 @@ export class LineStylist {
       // 准备下一行
       if (lineIndex < lines.length - 1) {
         currentLineNumber++;
-        currentY += lineMetric.lineHeight;
+        const nextY = currentY + lineMetric.lineHeight;
+
+        // 检查下一行是否会跨越视口边界
+        currentY = this.adjustYForViewportBoundary(nextY, lineMetric.lineHeight);
       }
     }
 
@@ -285,5 +288,43 @@ export class LineStylist {
       default:
         return startX;
     }
+  }
+
+  /**
+   * 检查并调整Y坐标以避免跨越视口边界
+   * @param {number} nextY - 计算出的下一行Y坐标
+   * @param {number} lineHeight - 当前行高
+   * @returns {number} 调整后的Y坐标
+   */
+  adjustYForViewportBoundary(nextY, lineHeight) {
+    // 获取LayoutEngine实例以访问边界调整设置
+    const layoutEngine = LayoutEngine.instance;
+
+    if (!layoutEngine || !layoutEngine.adjustCrossChunkContent) {
+      return nextY;
+    }
+
+    const viewportHeight = layoutEngine.viewportHeight;
+    const baseline = layoutEngine.getTextBaseline(lineHeight);
+
+    // 计算文字区域的top和bottom位置
+    const textTop = nextY - baseline;
+    const textBottom = textTop + lineHeight;
+
+    // 计算当前所在的视口块
+    const currentChunkIndex = Math.floor(textTop / viewportHeight);
+    const chunkBottom = (currentChunkIndex + 1) * viewportHeight;
+
+    // 检查文字是否会跨越视口底部边界
+    if (textBottom > chunkBottom && textTop < chunkBottom) {
+      // 需要调整到下一个视口块
+      const nextChunkStart = chunkBottom;
+      const topPadding = this.renderer.theme.paddingX || 16;
+
+      // 计算新的Y坐标：下一个块开始 + 顶部间距 + 基线偏移
+      return nextChunkStart + topPadding + baseline;
+    }
+
+    return nextY;
   }
 } 

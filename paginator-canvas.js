@@ -66,8 +66,8 @@ export class Paginator extends HTMLElement {
         const el = this.#root.getElementById('renderCanvas')
         const chapterManager = new MultiChapterManager({
             el,
-            mode: 'horizontal',
-            // mode: 'vertical',
+            // mode: 'horizontal',
+            mode: 'vertical',
             theme: {
                 backgroundColor: '#fff',
                 textColor: '#222',

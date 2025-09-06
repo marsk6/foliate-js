@@ -1010,13 +1010,5 @@ export class VirtualCanvasRenderer {
       }
     }
   }
-
-  /**
-   * 获取完整的布局节点列表（调试和检查用）
-   * @returns {Array} layoutNodesList的深拷贝
-   */
-  getLayoutNodesList() {
-    return this.layoutEngine ? this.layoutEngine.getLayoutNodesList() : null;
-  }
 }
 export default VirtualCanvasRenderer;
