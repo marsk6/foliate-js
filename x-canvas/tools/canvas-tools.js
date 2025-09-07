@@ -21,7 +21,7 @@ export class CanvasTools {
    */
   selectionMenu = null; // 选中菜单元素
   /**
-   * @type {import('./virtual-canvas-renderer').VirtualCanvasRenderer}
+   * @type {import('../virtual-canvas-renderer').VirtualCanvasRenderer}
    */
   renderer = null;
 
@@ -130,7 +130,7 @@ export class CanvasTools {
           });
           // 清除选择状态
           this.handleTouch();
-          
+
           // 触发重新渲染以显示新高亮
           this.triggerCanvasRerender();
         }
@@ -435,7 +435,7 @@ export class CanvasTools {
         opacity: 0.3
       }
     };
-    
+
     this.highlights.set(id, highlight);
     return id;
   }
@@ -465,7 +465,7 @@ export class CanvasTools {
     if (!this.renderer.fullLayoutData || !this.renderer.fullLayoutData.words) {
       return null;
     }
-    
+
     const words = this.renderer.fullLayoutData.words;
     for (let i = 0; i < words.length; i++) {
       if (words[i].wordId === wordId) {
@@ -484,11 +484,11 @@ export class CanvasTools {
   getIndexRangeByWordIds(startWordId, endWordId) {
     const startIdx = this.findWordIndexByWordId(startWordId);
     const endIdx = this.findWordIndexByWordId(endWordId);
-    
+
     if (startIdx === null || endIdx === null) {
       return null;
     }
-    
+
     return { startIdx, endIdx };
   }
 
@@ -502,7 +502,7 @@ export class CanvasTools {
     if (highlightPosition.startWordId && highlightPosition.endWordId) {
       return this.getIndexRangeByWordIds(highlightPosition.startWordId, highlightPosition.endWordId);
     }
-    
+
     return null;
   }
 
@@ -512,7 +512,7 @@ export class CanvasTools {
    */
   triggerCanvasRerender() {
     if (!this.renderer || !this.renderer.viewport) return;
-    
+
     // 标记所有canvas需要重新渲染
     const { canvasInfoList } = this.renderer.viewport;
     if (canvasInfoList) {
@@ -520,7 +520,7 @@ export class CanvasTools {
         canvasInfo.needsRerender = true;
       });
     }
-    
+
     // 触发重新渲染
     if (this.renderer.renderMultiCanvas) {
       this.renderer.renderMultiCanvas();
@@ -540,10 +540,10 @@ export class CanvasTools {
       // 检查划线是否在当前Canvas可视区域内
       if (!highlight.position) return;
 
-              // 根据wordId获取索引范围
-        const indexRange = this.getHighlightIndexRange(highlight.position);
-        if (!indexRange) return; // wordId未找到，可能是文本已更新
-      
+      // 根据wordId获取索引范围
+      const indexRange = this.getHighlightIndexRange(highlight.position);
+      if (!indexRange) return; // wordId未找到，可能是文本已更新
+
       const { startIdx, endIdx } = indexRange;
       const words = this.renderer.fullLayoutData.words;
 

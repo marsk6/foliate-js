@@ -855,7 +855,7 @@ class SlideManager extends ReadMode {
     activeChapter.progress.currentPage = pageIndex;
 
     activeChapter.progress.faction =
-      (pageIndex * this.baseOffset) / activeChapter.progress.scrollLength;
+      (pageIndex) / activeChapter.progress.totalPages;
 
     activeChapter.progress.scrollOffset = oldPage * this.baseOffset;
     // 设置页面状态和Canvas重定位
