@@ -518,8 +518,8 @@ export class VirtualCanvasRenderer {
       this.renderCanvasText(canvasWords, ctx, contentStartY);
       this.renderCanvasElements(canvasElements, ctx, contentStartY);
 
-      // 渲染划线
-      this.canvasTools.renderCanvasHighlights(ctx, contentStartY, contentEndY);
+      // 渲染划线（并生成命中矩形）
+      this.canvasTools.renderCanvasHighlights(ctx, canvasInfo);
     }
   }
 

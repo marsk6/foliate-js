@@ -1,4 +1,8 @@
 
+import { HighlightStorage } from './highlight/storage.js';
+import { computeLineRectsFromIndices, filterRectsByYRange } from './highlight/geometry.js';
+import { mergeHighlights } from './highlight/merge.js';
+
 export class CanvasTools {
   static instance = null;
   startIdx = null;
@@ -25,9 +29,17 @@ export class CanvasTools {
    */
   renderer = null;
 
+  // 高亮点击/菜单
+  activeHighlightId = null;
+
   // 新增：高亮存储
   highlights = new Map(); // 存储所有高亮，key为高亮ID，value为高亮对象
   highlightCounter = 0; // 高亮计数器，用于生成唯一ID
+
+  /**
+   * @type {HighlightStorage}
+   */
+  storage = null;
 
   anchors = {
     start: null,
@@ -45,6 +57,7 @@ export class CanvasTools {
     CanvasTools.instance = this;
 
     this.renderer = renderer;
+    this.storage = new HighlightStorage(this.renderer?.bookKey || 'default-book');
     this.createDOMStructure();
   }
 
@@ -85,6 +98,13 @@ export class CanvasTools {
 
     // 添加菜单项点击事件
     this.setupMenuEvents();
+
+    // 装载持久化高亮并触发一次渲染
+    this.loadHighlightsFromStorage();
+    this.triggerCanvasRerender();
+
+    // 设置点击命中测试
+    this.setupHighlightHitTest();
   }
 
   /**
@@ -94,6 +114,14 @@ export class CanvasTools {
     if (!this.selectionMenu) return;
 
     this.selectionMenu.addEventListener('touchstart', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const action = e.target.dataset.action;
+      this.handleMenuAction(action);
+      this.hideSelectionMenu();
+    });
+
+    this.selectionMenu.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
       const action = e.target.dataset.action;
@@ -110,7 +138,12 @@ export class CanvasTools {
     const selection = this.getSelection();
     switch (action) {
       case 'copy':
-        if (selection.text && navigator.clipboard) {
+        if (this.activeHighlightId) {
+          const h = this.highlights.get(this.activeHighlightId);
+          if (h && h.text && navigator.clipboard) {
+            navigator.clipboard.writeText(h.text).catch(console.error);
+          }
+        } else if (selection.text && navigator.clipboard) {
           navigator.clipboard.writeText(selection.text).catch(console.error);
         }
         break;
@@ -157,6 +190,7 @@ export class CanvasTools {
     // 根据单行/多行调整箭头样式
     const arrow = this.selectionMenu.querySelector('.selection-menu-arrow');
     this.selectionMenu.style.top = this.anchors.start.y - 12 + 'px';
+    this.selectionMenu.style.left = (this.anchors.start?.x || 0) + 'px';
     this.selectionMenu.style.display = 'block';
     this.selectionMenu.style.top = this.anchors.start.y - 38 + 'px';
     if (isSingleLine) {
@@ -170,6 +204,7 @@ export class CanvasTools {
    */
   hideSelectionMenu() {
     this.selectionMenu.style.display = 'none';
+    this.activeHighlightId = null;
   }
 
   /**
@@ -420,11 +455,11 @@ export class CanvasTools {
    * @returns {string} 高亮ID
    */
   addHighlight(highlightData) {
-    const id = `highlight_${this.highlightCounter++}`;
+    const id = this.generateHighlightId();
     const highlight = {
       id,
       position: {
-        chapterIndex: highlightData.chapterIndex,
+        chapterIndex: highlightData.chapterIndex ?? this.renderer.chapterIndex,
         startWordId: highlightData.startWordId,
         endWordId: highlightData.endWordId,
       },
@@ -432,11 +467,12 @@ export class CanvasTools {
       style: highlightData.style || {
         type: 'highlight',
         color: '#FFFF00',
-        opacity: 0.3
-      }
+        opacity: 0.3,
+      },
     };
 
-    this.highlights.set(id, highlight);
+    // 合并并持久化当前章节高亮
+    this.mergeAndPersistChapterHighlights(highlight.position.chapterIndex, [highlight]);
     return id;
   }
 
@@ -453,7 +489,10 @@ export class CanvasTools {
    * @param {string} highlightId 高亮ID
    */
   removeHighlight(highlightId) {
-    return this.highlights.delete(highlightId);
+    const ok = this.highlights.delete(highlightId);
+    if (ok) this.persistAllHighlights();
+    this.triggerCanvasRerender();
+    return ok;
   }
 
   /**
@@ -533,43 +572,35 @@ export class CanvasTools {
    * @param {number} contentStartY - 内容起始Y坐标
    * @param {number} contentEndY - 内容结束Y坐标
    */
-  renderCanvasHighlights(ctx, contentStartY, contentEndY) {
-    // 使用新的高亮存储
-    const highlights = this.getAllHighlights();
+  renderCanvasHighlights(ctx, canvasInfo) {
+    const { contentStartY, contentEndY } = canvasInfo;
+    const words = this.renderer?.fullLayoutData?.words;
+    if (!words) return;
+    // 当前章节筛选
+    const currentChapter = this.renderer.chapterIndex;
+    const highlights = this.getAllHighlights().filter(h => h?.position?.chapterIndex === currentChapter);
+    canvasInfo.highlightRects = [];
     highlights.forEach((highlight) => {
-      // 检查划线是否在当前Canvas可视区域内
-      if (!highlight.position) return;
-
-      // 根据wordId获取索引范围
       const indexRange = this.getHighlightIndexRange(highlight.position);
-      if (!indexRange) return; // wordId未找到，可能是文本已更新
-
+      if (!indexRange) return;
       const { startIdx, endIdx } = indexRange;
-      const words = this.renderer.fullLayoutData.words;
-
-      // 检查划线是否与当前Canvas区域有交集
-      if (startIdx >= words.length || endIdx >= words.length) return;
-
-      const startWord = words[startIdx];
-      const endWord = words[endIdx];
-      if (!startWord || !endWord) return;
-
-      // 检查Y坐标是否在当前Canvas渲染范围内
-      const highlightTop = startWord.y - this.renderer.theme.baseFontSize;
-      const highlightBottom = endWord.y + this.renderer.theme.baseFontSize;
-
-      if (highlightBottom < contentStartY || highlightTop > contentEndY) {
-        return; // 不在当前Canvas范围内
-      }
-
-      // 按行分组绘制划线
-      this.drawCanvasHighlight(
-        ctx,
-        highlight,
-        startIdx,
-        endIdx,
-        contentStartY
-      );
+      if (startIdx == null || endIdx == null) return;
+      const rects = computeLineRectsFromIndices(words, startIdx, endIdx, this.renderer.theme);
+      const visibleRects = filterRectsByYRange(rects, contentStartY, contentEndY);
+      // 绘制可见部分，并记录命中区域（使用内容坐标）
+      visibleRects.forEach((r) => {
+        this.drawHighlightShape(
+          ctx,
+          {
+            x: r.x,
+            y: r.y - contentStartY,
+            width: r.width,
+            height: r.height,
+          },
+          highlight.style
+        );
+        canvasInfo.highlightRects.push({ ...r, id: highlight.id });
+      });
     });
   }
 
@@ -582,53 +613,7 @@ export class CanvasTools {
    * @param {number} offsetY Canvas偏移Y
    */
   drawCanvasHighlight(ctx, highlight, startIdx, endIdx, offsetY) {
-    const words = this.renderer.fullLayoutData.words;
-
-    // 按行分组
-    const lineMap = {};
-    for (let i = startIdx; i <= endIdx; i++) {
-      if (i >= words.length) break;
-      const word = words[i];
-      if (!word) continue;
-
-      const line = word.line;
-      if (!lineMap[line]) {
-        lineMap[line] = { start: i, end: i, words: [word] };
-      } else {
-        lineMap[line].end = i;
-        lineMap[line].words.push(word);
-      }
-    }
-
-    // 设置绘制样式
-    const { style } = highlight;
-
-    // 为每行绘制划线
-    Object.values(lineMap).forEach((lineData) => {
-      const { start, end } = lineData;
-      const startWord = words[start];
-      const endWord = words[end];
-
-      // 计算在Canvas内的相对位置
-      const canvasY = startWord.y - offsetY;
-      const x = startWord.x;
-      const width = endWord.x + endWord.width - startWord.x;
-      const height = this.renderer.theme.baseFontSize + 2;
-
-      // 只渲染在当前Canvas范围内的部分
-      if (canvasY > -height && canvasY < this.renderer.canvasHeight + height) {
-        this.drawHighlightShape(
-          ctx,
-          {
-            x: x,
-            y: canvasY - this.renderer.theme.baseFontSize + 2,
-            width: width,
-            height: height,
-          },
-          style
-        );
-      }
-    });
+    // 已重构：使用 renderCanvasHighlights -> geometry 计算
   }
 
   /**
@@ -673,5 +658,141 @@ export class CanvasTools {
 
     // 恢复透明度
     ctx.globalAlpha = 1.0;
+  }
+
+  // =====================
+  // 高亮存储与合并
+  // =====================
+  loadHighlightsFromStorage() {
+    const list = this.storage.load();
+    this.highlights = new Map();
+    Array.isArray(list) && list.forEach(h => {
+      if (h && h.id && h.position) this.highlights.set(h.id, h);
+    });
+  }
+
+  persistAllHighlights() {
+    const list = Array.from(this.highlights.values());
+    this.storage.save(list);
+  }
+
+  generateHighlightId() {
+    return `highlight_${this.highlightCounter++}`;
+  }
+
+  /**
+   * 合并并持久化指定章节的高亮
+   * @param {number} chapterIndex
+   * @param {Array} newHighlights 追加的新高亮（可为空）
+   */
+  mergeAndPersistChapterHighlights(chapterIndex, newHighlights = []) {
+    const words = this.renderer?.fullLayoutData?.words || [];
+    const all = this.getAllHighlights();
+    const others = all.filter(h => h?.position?.chapterIndex !== chapterIndex);
+    const current = all.filter(h => h?.position?.chapterIndex === chapterIndex);
+    const merged = mergeHighlights([...current, ...newHighlights], words, { mergeAdjacent: true });
+
+    // 将合并结果索引转换回 wordId，并构建文本
+    const toHighlightObj = (h) => {
+      const start = words[h.startIndex];
+      const end = words[h.endIndex];
+      if (!start || !end) return null;
+      const id = h.id || this.generateHighlightId();
+      let text = '';
+      for (let i = h.startIndex; i <= h.endIndex; i++) {
+        const w = words[i];
+        if (w && typeof w.text === 'string') text += w.text;
+      }
+      return {
+        id,
+        position: {
+          chapterIndex,
+          startWordId: start.wordId,
+          endWordId: end.wordId,
+        },
+        text,
+        style: h.style || { type: 'highlight', color: '#FFFF00', opacity: 0.3 },
+      };
+    };
+
+    const mergedHighlights = merged.map(toHighlightObj).filter(Boolean);
+    // 重建 Map
+    this.highlights = new Map();
+    others.forEach(h => this.highlights.set(h.id, h));
+    mergedHighlights.forEach(h => this.highlights.set(h.id, h));
+
+    // 持久化
+    this.persistAllHighlights();
+    this.triggerCanvasRerender();
+  }
+
+  // =====================
+  // 命中测试与菜单
+  // =====================
+  setupHighlightHitTest() {
+    const container = this.renderer?.container;
+    if (!container) return;
+    const onPointer = (evt) => {
+      if (this.isSelecting) return; // 正在选择时不触发高亮点击
+      // 忽略在菜单上的点击
+      if (evt.target && this.selectionMenu && this.selectionMenu.contains(evt.target)) return;
+      const point = { x: evt.clientX, y: evt.clientY };
+      const contentPoint = this.clientToContentPoint(point);
+      const hit = this.findHighlightAt(contentPoint);
+      if (hit) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        this.activeHighlightId = hit.id;
+        // 使用命中矩形作为菜单锚点
+        this.anchors.start = { x: hit.rect.x, y: hit.rect.y };
+        this.anchors.end = { x: hit.rect.x + hit.rect.width, y: hit.rect.y };
+        this.showSelectionMenu();
+      }
+    };
+    container.addEventListener('pointerdown', onPointer, { passive: false });
+    container.addEventListener('click', onPointer, { passive: false });
+    container.addEventListener('touchstart', (e) => {
+      if (e.touches && e.touches[0]) {
+        const t = e.touches[0];
+        onPointer({ clientX: t.clientX, clientY: t.clientY, preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation(), target: e.target });
+      }
+    }, { passive: false });
+  }
+
+  clientToContentPoint(point) {
+    const { x: clientX, y: clientY } = point;
+    const containerRect = this.renderer.container.getBoundingClientRect();
+    const containerX = clientX - containerRect.left;
+    const containerY = clientY - containerRect.top;
+    const contentX = containerX;
+    const contentY = this.renderer.mode === 'vertical'
+      ? containerY + this.renderer.viewport.state.scrollTop
+      : containerY; // 横向模式可在需要时扩展
+    return { x: contentX, y: contentY };
+  }
+
+  /**
+   * 在所有 Canvas 命中矩形中查找命中高亮
+   * @param {{x:number,y:number}} contentPoint
+   * @returns {{id:string, rect: {x:number,y:number,width:number,height:number}}|null}
+   */
+  findHighlightAt(contentPoint) {
+    const list = [];
+    const canvasInfoList = this.renderer?.viewport?.canvasInfoList || [];
+    canvasInfoList.forEach((ci) => {
+      const rects = ci.highlightRects || [];
+      rects.forEach(r => list.push(r));
+    });
+    // 从后往前遍历，优先命中最后绘制的（更靠上的）
+    for (let i = list.length - 1; i >= 0; i--) {
+      const r = list[i];
+      if (
+        contentPoint.x >= r.x && contentPoint.x <= r.x + r.width &&
+        contentPoint.y >= r.y && contentPoint.y <= r.y + r.height
+      ) {
+        return { id: r.id, rect: r };
+      }
+    }
+    return null;
   }
 }
