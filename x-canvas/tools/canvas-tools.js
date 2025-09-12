@@ -1,6 +1,6 @@
 
 import { HighlightStorage } from './highlight/storage.js';
-import { computeLineRectsFromIndices, filterRectsByYRange } from './highlight/geometry.js';
+import { computeLineRectsFromIndices, computeLineRectsFromIndicesList, filterRectsByYRange } from './highlight/geometry.js';
 import { mergeHighlights } from './highlight/merge.js';
 
 export class CanvasTools {
@@ -102,9 +102,6 @@ export class CanvasTools {
     // 装载持久化高亮并触发一次渲染
     this.loadHighlightsFromStorage();
     this.triggerCanvasRerender();
-
-    // 设置点击命中测试
-    this.setupHighlightHitTest();
   }
 
   /**
@@ -135,7 +132,7 @@ export class CanvasTools {
    * @param {string} action
    */
   handleMenuAction(action) {
-    const selection = this.getSelection();
+    const selection = this.selection;
     switch (action) {
       case 'copy':
         if (this.activeHighlightId) {
@@ -162,7 +159,7 @@ export class CanvasTools {
             }
           });
           // 清除选择状态
-          this.handleTouch();
+          this.handleTap();
 
           // 触发重新渲染以显示新高亮
           this.triggerCanvasRerender();
@@ -179,11 +176,15 @@ export class CanvasTools {
    * 显示选中菜单
    */
   showSelectionMenu() {
-    if (!this.selectionMenu || this.startIdx == null || this.endIdx == null)
-      return;
-
+    if (!this.selectionMenu) return;
     if (!this.renderer.fullLayoutData || !this.renderer.fullLayoutData.words)
       return;
+
+    // 允许以下任一条件显示：
+    // 1) 有选择范围；2) 命中已有高亮(activeHighlightId)
+    const hasSelection = this.startIdx != null && this.endIdx != null;
+    const hasActive = !!this.activeHighlightId;
+    if (!hasSelection && !hasActive) return;
 
     const isSingleLine = this.anchors.start.y === this.anchors.end.y;
 
@@ -370,11 +371,7 @@ export class CanvasTools {
     });
   }
 
-  getSelection() {
-    return this.selection;
-  }
-
-  handleTouch(e) {
+  handleTap({ x, y } = { x: 0, y: 0 }) {
     if (this.isSelecting) {
       this.isSelecting = false;
       this.startIdx = null;
@@ -384,6 +381,8 @@ export class CanvasTools {
       this.updateAnchors();
       this.hideSelectionMenu();
       window.native.postMessage('webviewTouch');
+    } else {
+      this.handleHighlightTap({ x, y });
     }
   }
 
@@ -462,6 +461,26 @@ export class CanvasTools {
         chapterIndex: highlightData.chapterIndex ?? this.renderer.chapterIndex,
         startWordId: highlightData.startWordId,
         endWordId: highlightData.endWordId,
+        // 记录完整词集合，便于隐藏文本后保留可见交集
+        wordIds: (() => {
+          const words = this.renderer?.fullLayoutData?.words || [];
+          // 优先使用当前 selection 的索引
+          let s = this.selection?.startIdx;
+          let e = this.selection?.endIdx;
+          if (s == null || e == null) {
+            const range = this.getIndexRangeByWordIds(highlightData.startWordId, highlightData.endWordId);
+            if (range) { s = range.startIdx; e = range.endIdx; }
+          }
+          if (s == null || e == null) return [];
+          const min = Math.max(0, Math.min(s, e));
+          const max = Math.min(words.length - 1, Math.max(s, e));
+          const ids = [];
+          for (let i = min; i <= max; i++) {
+            const wid = words[i]?.wordId;
+            if (wid) ids.push(wid);
+          }
+          return ids;
+        })(),
       },
       text: highlightData.text,
       style: highlightData.style || {
@@ -581,11 +600,26 @@ export class CanvasTools {
     const highlights = this.getAllHighlights().filter(h => h?.position?.chapterIndex === currentChapter);
     canvasInfo.highlightRects = [];
     highlights.forEach((highlight) => {
-      const indexRange = this.getHighlightIndexRange(highlight.position);
-      if (!indexRange) return;
-      const { startIdx, endIdx } = indexRange;
-      if (startIdx == null || endIdx == null) return;
-      const rects = computeLineRectsFromIndices(words, startIdx, endIdx, this.renderer.theme);
+      let indicesList = [];
+      const pos = highlight.position || {};
+      if (Array.isArray(pos.wordIds) && pos.wordIds.length > 0) {
+        for (const wid of pos.wordIds) {
+          const idx = this.findWordIndexByWordId(wid);
+          if (idx != null) indicesList.push(idx);
+        }
+      } else {
+        const indexRange = this.getHighlightIndexRange(pos);
+        if (indexRange) {
+          const { startIdx, endIdx } = indexRange;
+          if (startIdx != null && endIdx != null) {
+            const min = Math.max(0, Math.min(startIdx, endIdx));
+            const max = Math.min(words.length - 1, Math.max(startIdx, endIdx));
+            for (let i = min; i <= max; i++) indicesList.push(i);
+          }
+        }
+      }
+      if (indicesList.length === 0) return;
+      const rects = computeLineRectsFromIndicesList(words, indicesList, this.renderer.theme);
       const visibleRects = filterRectsByYRange(rects, contentStartY, contentEndY);
       // 绘制可见部分，并记录命中区域（使用内容坐标）
       visibleRects.forEach((r) => {
@@ -726,37 +760,21 @@ export class CanvasTools {
     this.triggerCanvasRerender();
   }
 
-  // =====================
-  // 命中测试与菜单
-  // =====================
-  setupHighlightHitTest() {
+  handleHighlightTap({ x, y }) {
     const container = this.renderer?.container;
     if (!container) return;
-    const onPointer = (evt) => {
-      if (this.isSelecting) return; // 正在选择时不触发高亮点击
-      // 忽略在菜单上的点击
-      if (evt.target && this.selectionMenu && this.selectionMenu.contains(evt.target)) return;
-      const point = { x: evt.clientX, y: evt.clientY };
-      const contentPoint = this.clientToContentPoint(point);
-      const hit = this.findHighlightAt(contentPoint);
-      if (hit) {
-        evt.preventDefault();
-        evt.stopPropagation();
-        this.activeHighlightId = hit.id;
-        // 使用命中矩形作为菜单锚点
-        this.anchors.start = { x: hit.rect.x, y: hit.rect.y };
-        this.anchors.end = { x: hit.rect.x + hit.rect.width, y: hit.rect.y };
-        this.showSelectionMenu();
-      }
-    };
-    container.addEventListener('pointerdown', onPointer, { passive: false });
-    container.addEventListener('click', onPointer, { passive: false });
-    container.addEventListener('touchstart', (e) => {
-      if (e.touches && e.touches[0]) {
-        const t = e.touches[0];
-        onPointer({ clientX: t.clientX, clientY: t.clientY, preventDefault: () => e.preventDefault(), stopPropagation: () => e.stopPropagation(), target: e.target });
-      }
-    }, { passive: false });
+    if (this.isSelecting) return; // 正在选择时不触发高亮点击
+    // 忽略在菜单上的点击
+    const point = { x, y };
+    const contentPoint = this.clientToContentPoint(point);
+    const hit = this.findHighlightAt(contentPoint);
+    if (hit) {
+      this.activeHighlightId = hit.id;
+      // 使用命中矩形作为菜单锚点
+      this.anchors.start = { x: hit.rect.x, y: hit.rect.y };
+      this.anchors.end = { x: hit.rect.x + hit.rect.width, y: hit.rect.y };
+      this.showSelectionMenu();
+    }
   }
 
   clientToContentPoint(point) {

@@ -10,29 +10,114 @@ export function computeLineRectsFromIndices(words, startIdx, endIdx, theme) {
   if (!words || startIdx == null || endIdx == null) return [];
   const min = Math.max(0, Math.min(startIdx, endIdx));
   const max = Math.min(words.length - 1, Math.max(startIdx, endIdx));
-  const byLine = new Map();
+
+  const isVisible = (w) => {
+    if (!w) return false;
+    const display = w.style?.display;
+    const visibility = w.style?.visibility;
+    if (display === 'none' || visibility === 'hidden') return false;
+    if (w.hidden === true) return false;
+    if (typeof w.width === 'number' && w.width <= 0) return false;
+    return true;
+  };
+
+  // 按行分割为多个连续可见段
+  /** @type {Map<number, Array<{start:number,end:number}>>} */
+  const segmentsByLine = new Map();
   for (let i = min; i <= max; i++) {
     const w = words[i];
     if (!w) continue;
     const line = w.line;
-    const slot = byLine.get(line);
-    if (!slot) byLine.set(line, { start: i, end: i });
-    else slot.end = i;
+    if (!segmentsByLine.has(line)) segmentsByLine.set(line, []);
+    const segments = segmentsByLine.get(line);
+    const visible = isVisible(w);
+    if (!visible) {
+      // 结束当前活动段
+      const last = segments[segments.length - 1];
+      if (last && !last._closed) last._closed = true;
+      continue;
+    }
+    const last = segments[segments.length - 1];
+    if (!last || last._closed) {
+      segments.push({ start: i, end: i, _closed: false });
+    } else {
+      last.end = i;
+    }
   }
+
+  const height = (theme?.baseFontSize || 18) + 2;
   const result = [];
-  byLine.forEach(({ start, end }) => {
-    const w1 = words[start];
-    const w2 = words[end];
-    if (!w1 || !w2) return;
-    const height = (theme?.baseFontSize || 18) + 2;
-    result.push({
+  segmentsByLine.forEach((segments) => {
+    segments.forEach((seg) => {
+      const w1 = words[seg.start];
+      const w2 = words[seg.end];
+      if (!w1 || !w2) return;
+      result.push({
+        x: w1.x,
+        y: w1.y - (theme?.baseFontSize || 18) + 2,
+        width: w2.x + w2.width - w1.x,
+        height,
+      });
+    });
+  });
+  return result;
+}
+
+/**
+ * 根据任意索引列表计算行矩形（自动按行与连续性分段），并过滤隐藏词
+ * @param {Array} words
+ * @param {number[]} indicesList 任意顺序的索引列表
+ * @param {Object} theme
+ * @returns {Array<{x:number,y:number,width:number,height:number}>}
+ */
+export function computeLineRectsFromIndicesList(words, indicesList, theme) {
+  if (!Array.isArray(words) || !Array.isArray(indicesList) || indicesList.length === 0) return [];
+  const uniqueSorted = Array.from(new Set(indicesList.filter(i => Number.isInteger(i) && i >= 0 && i < words.length))).sort((a,b) => a - b);
+  const isVisible = (w) => {
+    if (!w) return false;
+    const display = w.style?.display;
+    const visibility = w.style?.visibility;
+    if (display === 'none' || visibility === 'hidden') return false;
+    if (w.hidden === true) return false;
+    if (typeof w.width === 'number' && w.width <= 0) return false;
+    return true;
+  };
+  // 按行分段，并要求索引相邻或同一行连续（避免跨行)
+  const segments = [];
+  let current = null;
+  for (const idx of uniqueSorted) {
+    const w = words[idx];
+    if (!isVisible(w)) {
+      if (current) { segments.push(current); current = null; }
+      continue;
+    }
+    if (!current) {
+      current = { line: w.line, start: idx, end: idx };
+      continue;
+    }
+    if (w.line === current.line && idx === current.end + 1) {
+      current.end = idx;
+    } else {
+      segments.push(current);
+      current = { line: w.line, start: idx, end: idx };
+    }
+  }
+  if (current) segments.push(current);
+
+  const height = (theme?.baseFontSize || 18) + 2;
+  const rects = [];
+  for (const seg of segments) {
+    const w1 = words[seg.start];
+    const w2 = words[seg.end];
+    if (!w1 || !w2) continue;
+    rects.push({
       x: w1.x,
       y: w1.y - (theme?.baseFontSize || 18) + 2,
       width: w2.x + w2.width - w1.x,
       height,
     });
-  });
-  return result;
+  }
+  return rects;
 }
 
 /**

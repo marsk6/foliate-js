@@ -74,7 +74,13 @@ export function mergeHighlights(highlights, words, options = {}) {
   // 去掉内部字段
   return merged.map((h) => {
     const { _chapter, startIndex, endIndex, ...rest } = h;
-    return { ...rest, startIndex, endIndex };
+    // 保留 wordIds：用于隐藏文本时保留可见交集
+    const wordIds = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      const wid = words[i]?.wordId;
+      if (wid) wordIds.push(wid);
+    }
+    return { ...rest, startIndex, endIndex, position: { ...rest.position, wordIds } };
   });
 }
 
