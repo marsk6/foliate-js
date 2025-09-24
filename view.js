@@ -384,6 +384,7 @@ export class View extends HTMLElement {
             return
         }
         const { index, anchor } = await this.resolveNavigation(value)
+        debugger
         const obj = this.#getOverlayer(index)
         if (obj) {
             const { overlayer, doc } = obj
@@ -400,6 +401,11 @@ export class View extends HTMLElement {
     deleteAnnotation(annotation) {
         return this.addAnnotation(annotation, true)
     }
+    /**
+     * 
+     * @param {章节 index} index，根据章节找到渲染的 view
+     * @returns 
+     */
     #getOverlayer(index) {
         return this.renderer.getContents()
             .find(x => x.index === index && x.overlayer)
