@@ -60,9 +60,27 @@ export function mergeHighlights(highlights, words, options = {}) {
       const overlap = h.startIndex <= current.endIndex;
       const adjacent = mergeAdjacent && h.startIndex === current.endIndex + 1;
       const sameStyle = JSON.stringify(h.style || {}) === JSON.stringify(current.style || {});
+      
       if ((overlap || adjacent) && sameStyle) {
-        current.endIndex = Math.max(current.endIndex, h.endIndex);
-        // 文本可拼接（可选）：省略，避免大内存
+        // 计算合并后的范围
+        const newStartIndex = Math.min(current.startIndex, h.startIndex);
+        const newEndIndex = Math.max(current.endIndex, h.endIndex);
+        
+        // 判断包含关系，选择合适的ID
+        // 如果 current 包含 h，保持 current.id
+        // 如果 h 包含 current，使用 h.id
+        // 如果部分重叠，保持 current.id（先到先得）
+        const currentSize = current.endIndex - current.startIndex;
+        const hSize = h.endIndex - h.startIndex;
+        const mergedSize = newEndIndex - newStartIndex;
+        
+        // 外层高亮（覆盖范围更大的）优先
+        if (hSize > currentSize || (h.startIndex <= current.startIndex && h.endIndex >= current.endIndex)) {
+          current.id = h.id; // 使用外层高亮的ID
+        }
+        
+        current.startIndex = newStartIndex;
+        current.endIndex = newEndIndex;
       } else {
         merged.push(current);
         current = { ...h };
