@@ -2,7 +2,7 @@
  * 图片元素类
  * 替换 imageElement 对象字面量
  */
-export class ImageElement {
+export default class ImageNode {
   constructor({
     type = 'image',
     nodeId,

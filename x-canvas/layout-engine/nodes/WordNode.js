@@ -2,7 +2,7 @@
  * 样式化单词类
  * 替换 styledWord 对象字面量
  */
-export class StyledWord {
+export default class WordNode {
   constructor({
     wordId,
     x,
@@ -14,7 +14,7 @@ export class StyledWord {
     type,
     style,
     startIndex,
-    endIndex
+    endIndex,
   }) {
     this.wordId = wordId;
     this.x = x;
@@ -27,5 +27,6 @@ export class StyledWord {
     this.style = style;
     this.startIndex = startIndex;
     this.endIndex = endIndex;
+    this.highlightId = null;
   }
 }

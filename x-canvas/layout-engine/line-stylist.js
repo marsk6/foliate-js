@@ -3,6 +3,7 @@
  * 这是布局的第二阶段：在确定的行内应用样式映射
  */
 import { LayoutEngine } from './LayoutEngine.js';
+import WordNode from './nodes/WordNode.js';
 export class LineStylist {
   constructor(renderer) {
     this.renderer = renderer;
@@ -168,7 +169,7 @@ export class LineStylist {
         wordIndexByNodeId.set(textNodeId, currentWordIndex + 1);
 
         // 使用 LineBreaker 计算的位置 + 对齐偏移 + 两端对齐偏移
-        const styledWord = {
+        const styledWord = new WordNode({
           wordId: `${textNodeId}_${currentWordIndex}`, // wordId格式: textNodeId_wordIndex
           x: finalX,
           y: currentY,
@@ -186,8 +187,7 @@ export class LineStylist {
           },
           startIndex: segment.startIndex,
           endIndex: segment.endIndex,
-        };
-
+        });
         styledWords.push(styledWord);
       }
 

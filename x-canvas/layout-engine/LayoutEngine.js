@@ -6,31 +6,11 @@
 import { InlineFlowManager } from './inline-flow-manager.js';
 import { LineBreaker } from './line-breaker.js';
 import { LineStylist } from './line-stylist.js';
+import LayoutNode from './nodes/LayoutNode.js';
+import WordNode from './nodes/WordNode.js';
+import ImageNode from './nodes/ImageNode.js';
 
-/**
- * 布局节点类
- */
-export class LayoutNode {
-  constructor(node, startX, startY, startLine) {
-    this.type = node.type;
-    this.nodeId = node.nodeId;
-    this.style = node.style;
-    this.children = [];
-    this.position = {
-      startX,
-      startY,
-      startLine,
-      endX: startX, // 初始化为startX，会在后面更新
-      endY: startY, // 初始化为startY，会在后面更新
-      endLine: startLine, // 初始化为startLine，会在后面更新
-    };
 
-    // 为文本和图片节点添加layout字段
-    if (node.type === 'text' || node.type === 'link' || node.type === 'image') {
-      this.layout = []; // 存储words数组或image元素信息
-    }
-  }
-}
 
 export class LayoutEngine {
   static instance = null;
@@ -712,8 +692,7 @@ export class LayoutEngine {
     // 计算图片居中位置
     const centeredX = this.calculateImageCenterPosition(scaleResult.width);
 
-    const imageElement = {
-      type: 'image',
+    const imageNode = new ImageNode({
       nodeId: node.nodeId, // 添加nodeId信息
       x: centeredX,
       y: startY,
@@ -724,10 +703,10 @@ export class LayoutEngine {
       originalWidth: originalWidth,
       originalHeight: originalHeight,
       isScaled: scaleResult.isScaled,
-    };
+    });
 
     // 立即添加到渲染块（可能会调整位置）
-    const adjustedImageElement = this.checkElementCrossViewport(imageElement);
+    const adjustedImageElement = this.checkElementCrossViewport(imageNode);
 
     const elements = [adjustedImageElement];
 
