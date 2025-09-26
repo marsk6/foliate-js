@@ -118,9 +118,10 @@ export class CanvasTools {
   setupMenuEvents() {
     if (!this.selectionMenu) return;
 
-    this.selectionMenu.addEventListener('touchstart', (e) => {
-      e.stopPropagation();
-      e.preventDefault();
+    this.selectionMenu.addEventListener('tap', (e) => {
+      // e.stopPropagation();
+      // e.preventDefault();
+      console.log('🚨🚨🚨👉👉📢', 'e', e);
       const action = e.target.dataset.action;
       this.handleMenuAction(action);
       this.hideSelectionMenu();
@@ -372,6 +373,7 @@ export class CanvasTools {
   }
 
   handleTap({ x, y } = { x: 0, y: 0 }) {
+    console.log('handleTap', x, y);
     if (this.isSelecting) {
       this.isSelecting = false;
       this.startIdx = null;
