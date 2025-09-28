@@ -92,6 +92,7 @@ export class CanvasTools {
         <div class="selection-menu-content">
           <div class="selection-menu-item" data-action="copy">Copy</div>
           <div class="selection-menu-item" data-action="highlight">Highlight</div>
+          <div class="selection-menu-item" data-action="unhighlight">Unhighlight</div>
           <div class="selection-menu-item" data-action="note">Add Note</div>
         </div>
     `;
@@ -164,6 +165,15 @@ export class CanvasTools {
           this.triggerCanvasRerender();
         }
         break;
+      case 'unhighlight':
+        // 删除当前活跃的高亮
+        if (this.activeHighlightId) {
+          this.removeHighlight(this.activeHighlightId);
+          this.activeHighlightId = null;
+          // 清除选择状态
+          this.handleTap();
+        }
+        break;
       case 'note':
         console.log('add note', selection.text);
         // 添加带笔记的划线，使用蓝色
@@ -179,11 +189,19 @@ export class CanvasTools {
     if (!this.renderer.fullLayoutData || !this.renderer.fullLayoutData.words)
       return;
 
-    // 允许以下任一条件显示：
-    // 1) 有选择范围；2) 命中已有高亮(activeHighlightId)
-    const hasSelection = this.startIdx != null && this.endIdx != null;
-    const hasActive = !!this.activeHighlightId;
-    if (!hasSelection && !hasActive) return;
+    // 根据是否有活跃高亮来控制按钮显示
+    const highlightBtn = this.selectionMenu.querySelector('[data-action="highlight"]');
+    const unhighlightBtn = this.selectionMenu.querySelector('[data-action="unhighlight"]');
+    
+    if (this.activeHighlightId) {
+      // 当前点击的是已有高亮，显示"Unhighlight"按钮
+      if (highlightBtn) highlightBtn.style.display = 'none';
+      if (unhighlightBtn) unhighlightBtn.style.display = 'block';
+    } else {
+      // 当前是新选择的文本，显示"Highlight"按钮
+      if (highlightBtn) highlightBtn.style.display = 'block';
+      if (unhighlightBtn) unhighlightBtn.style.display = 'none';
+    }
 
     const isSingleLine = this.anchors.start.y === this.anchors.end.y;
 
