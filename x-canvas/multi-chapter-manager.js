@@ -30,6 +30,7 @@
  *
  * // 设置全局进度
  * manager.setGlobalProgress(0.5); // 全书50%位置
+ *
  */
 
 import VirtualCanvasRenderer from './virtual-canvas-renderer.js';
@@ -315,6 +316,12 @@ export class MultiChapterManager {
     // 清理所有章节
     this.clearAllChapters();
 
+    // 清理读取模式管理器
+    if (this.readMode) {
+      this.readMode.destroy();
+      this.readMode = null;
+    }
+
     // 清理回调函数
     this.onProgressChange = null;
     this.onChapterChange = null;
@@ -486,7 +493,6 @@ class ScrollManager extends ReadMode {
       this.handleTouchMove.bind(this),
       { passive: false }
     );
-
   }
 
   /**
@@ -736,8 +742,9 @@ class SlideManager extends ReadMode {
    */
   handleSwipeGesture(deltaX, deltaTime) {
     const absDeltaX = Math.abs(deltaX);
-    const isQuickSwipe = absDeltaX / deltaTime > 0.01
-    const isSwipeHalfDistance = absDeltaX > this.manager.state.viewportWidth * 0.5; // 超过50%宽度
+    const isQuickSwipe = absDeltaX / deltaTime > 0.01;
+    const isSwipeHalfDistance =
+      absDeltaX > this.manager.state.viewportWidth * 0.5; // 超过50%宽度
     if (isQuickSwipe || isSwipeHalfDistance) {
       if (deltaX < 0) {
         // 向左滑动，显示下一页
@@ -757,12 +764,14 @@ class SlideManager extends ReadMode {
    * @param {number} deltaX - X轴偏移量
    */
   updateContainerTransform(deltaX) {
-    const clampedDelta = deltaX
+    const clampedDelta = deltaX;
     const { currentPage } = this.manager.activeChapter.progress;
 
     // 计算当前章节的基础偏移
-    const scrollLeft =
-      -((currentPage - 1) * this.baseOffset + this.manager.activeChapter.baseScrollOffset);
+    const scrollLeft = -(
+      (currentPage - 1) * this.baseOffset +
+      this.manager.activeChapter.baseScrollOffset
+    );
 
     const totalOffset = scrollLeft + clampedDelta;
     this.container.style.transform = `translateX(${totalOffset}px)`;
@@ -776,8 +785,10 @@ class SlideManager extends ReadMode {
   animateContainerToChapter() {
     const animationDuration = 300;
     const { currentPage } = this.manager.activeChapter.progress;
-    const scrollLeft =
-      -((currentPage - 1) * this.baseOffset + this.manager.activeChapter.baseScrollOffset);
+    const scrollLeft = -(
+      (currentPage - 1) * this.baseOffset +
+      this.manager.activeChapter.baseScrollOffset
+    );
 
     // 对容器应用过渡动画
     this.container.style.transition = `transform ${animationDuration}ms ease-out`;
@@ -847,7 +858,6 @@ class SlideManager extends ReadMode {
    * @param {number} pageIndex - 页面索引
    */
   goToPage(pageIndex) {
-
     const activeChapter = this.manager.activeChapter;
 
     const { currentPage: oldPage, totalPages } = activeChapter.progress;
@@ -855,7 +865,7 @@ class SlideManager extends ReadMode {
     activeChapter.progress.currentPage = pageIndex;
 
     activeChapter.progress.faction =
-      (pageIndex) / activeChapter.progress.totalPages;
+      pageIndex / activeChapter.progress.totalPages;
 
     activeChapter.progress.scrollOffset = oldPage * this.baseOffset;
     // 设置页面状态和Canvas重定位

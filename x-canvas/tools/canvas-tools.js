@@ -5,6 +5,7 @@ import {
   filterRectsByYRange,
 } from './highlight/geometry.js';
 import { mergeHighlights } from './highlight/merge.js';
+import './tts/bridge.js'; // 导入 TTS bridge
 
 export class CanvasTools {
   static instance = null;
@@ -56,6 +57,13 @@ export class CanvasTools {
     range: null,
   };
 
+  // TTS 相关属性
+  /** @type {Object|null} TTS 实例 */
+  ttsInstance = null;
+
+  /** @type {Function|null} showTTS 事件处理器 */
+  showTTSHandler = null;
+
   constructor(renderer) {
     if (CanvasTools.instance) {
       return CanvasTools.instance;
@@ -67,6 +75,9 @@ export class CanvasTools {
       this.renderer?.bookKey || 'default-book'
     );
     this.createDOMStructure();
+    
+    // 初始化 TTS 功能
+    this.initializeTTS();
   }
 
   async createDOMStructure() {
@@ -94,6 +105,7 @@ export class CanvasTools {
           <div class="selection-menu-item" data-action="highlight">Highlight</div>
           <div class="selection-menu-item" data-action="unhighlight">Unhighlight</div>
           <div class="selection-menu-item" data-action="note">Add Note</div>
+          <div class="selection-menu-item" data-action="speak">🔊 Speak</div>
         </div>
     `;
     selectionMenu.classList.add('selection-menu');
@@ -177,6 +189,19 @@ export class CanvasTools {
       case 'note':
         console.log('add note', selection.text);
         // 添加带笔记的划线，使用蓝色
+        break;
+      case 'speak':
+        // 朗读选中的文本
+        if (this.activeHighlightId) {
+          const h = this.getHighlightById(this.activeHighlightId);
+          if (h && h.text) {
+            this.speak(h.text);
+          }
+        } else if (selection && selection.text) {
+          this.speak(selection.text);
+        } else {
+          console.warn('No text selected to speak');
+        }
         break;
     }
   }
@@ -1072,5 +1097,207 @@ export class CanvasTools {
         ? containerY + this.renderer.viewport.state.scrollTop
         : containerY; // 横向模式可在需要时扩展
     return { x: contentX, y: contentY };
+  }
+
+  // ===== TTS 功能方法 =====
+
+  /**
+   * 初始化 TTS 功能
+   */
+  async initializeTTS() {
+    try {
+      // 动态导入 TTS 模块
+      const TTSModule = await import('./tts/index.js');
+      
+      // 初始化 TTS 实例，使用渲染器容器作为容器
+      this.ttsInstance = TTSModule.initNativeTTS({
+        container: this.renderer.container,
+        autoShow: false,
+        // TTS 配置
+        language: 'zh-CN',
+        rate: '100%',
+        pitch: '0Hz',
+        autoDetectLanguage: true,
+        enableSentenceBreaks: true
+      });
+
+      // 监听来自 native 的 showTTS 事件
+      this.showTTSHandler = () => {
+        this.showTTSPanel();
+      };
+      window.addEventListener('showTTS', this.showTTSHandler);
+
+      console.log('TTS initialized in CanvasTools');
+    } catch (error) {
+      console.error('Failed to initialize TTS in CanvasTools:', error);
+    }
+  }
+
+  /**
+   * 获取当前渲染内容的文本
+   * @returns {string} 当前页面的文本内容
+   */
+  getCurrentPageText() {
+    if (!this.renderer) {
+      return '';
+    }
+
+    try {
+      // 从渲染器获取当前页面的文本内容
+      const textContent = this.renderer.getTextContent();
+      return textContent || '';
+    } catch (error) {
+      console.error('Failed to get page text:', error);
+      return '';
+    }
+  }
+
+  /**
+   * 获取选中的文本内容
+   * @returns {string} 选中的文本
+   */
+  getSelectedText() {
+    const selection = window.getSelection();
+    if (selection.rangeCount > 0) {
+      return selection.toString().trim();
+    }
+    return '';
+  }
+
+  /**
+   * 显示 TTS 面板
+   */
+  showTTSPanel() {
+    if (this.ttsInstance) {
+      this.ttsInstance.show();
+    } else {
+      console.warn('TTS not initialized in CanvasTools');
+    }
+  }
+
+  /**
+   * 隐藏 TTS 面板
+   */
+  hideTTSPanel() {
+    if (this.ttsInstance) {
+      this.ttsInstance.hide();
+    }
+  }
+
+  /**
+   * 切换 TTS 面板显示状态
+   */
+  toggleTTSPanel() {
+    if (this.ttsInstance) {
+      this.ttsInstance.togglePanel();
+    }
+  }
+
+  /**
+   * 朗读当前页面内容
+   */
+  speakCurrentPage() {
+    if (this.ttsInstance) {
+      const text = this.getCurrentPageText();
+      if (text) {
+        this.ttsInstance.speak(text);
+      } else {
+        console.warn('No text content to speak');
+      }
+    }
+  }
+
+  /**
+   * 朗读选中的文本
+   */
+  speakSelectedText() {
+    if (this.ttsInstance) {
+      this.ttsInstance.speakSelection();
+    }
+  }
+
+  /**
+   * 朗读指定文本
+   * @param {string} text - 要朗读的文本
+   * @param {Object} options - 朗读选项
+   */
+  speak(text, options = {}) {
+    if (this.ttsInstance) {
+      this.ttsInstance.speak(text, options);
+    }
+  }
+
+  /**
+   * 暂停 TTS 播放
+   */
+  pauseTTS() {
+    if (this.ttsInstance) {
+      this.ttsInstance.pause();
+    }
+  }
+
+  /**
+   * 继续 TTS 播放
+   */
+  resumeTTS() {
+    if (this.ttsInstance) {
+      this.ttsInstance.resume();
+    }
+  }
+
+  /**
+   * 停止 TTS 播放
+   */
+  stopTTS() {
+    if (this.ttsInstance) {
+      this.ttsInstance.stop();
+    }
+  }
+
+  /**
+   * 切换 TTS 播放状态
+   */
+  toggleTTS() {
+    if (this.ttsInstance) {
+      this.ttsInstance.toggle();
+    }
+  }
+
+  /**
+   * 获取 TTS 状态
+   * @returns {Object} TTS 状态信息
+   */
+  getTTSState() {
+    if (this.ttsInstance) {
+      return this.ttsInstance.getState();
+    }
+    return null;
+  }
+
+  /**
+   * 设置 TTS 选项
+   * @param {Object} options - TTS 选项
+   */
+  setTTSOptions(options) {
+    if (this.ttsInstance) {
+      this.ttsInstance.setOptions(options);
+    }
+  }
+
+  /**
+   * 销毁 TTS 功能
+   */
+  destroyTTS() {
+    // 清理 TTS 实例
+    if (this.ttsInstance) {
+      this.ttsInstance.destroy();
+      this.ttsInstance = null;
+    }
+
+    // 清理 TTS 事件监听器
+    if (this.showTTSHandler) {
+      window.removeEventListener('showTTS', this.showTTSHandler);
+      this.showTTSHandler = null;
+    }
   }
 }
