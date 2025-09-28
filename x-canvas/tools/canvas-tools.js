@@ -120,8 +120,6 @@ export class CanvasTools {
 
     this.selectionMenu.addEventListener('tap', (e) => {
       e.stopPropagation();
-      // e.preventDefault();
-      console.log('🚨🚨🚨👉👉📢', 'selectionMenu');
       const action = e.target.dataset.action;
       this.handleMenuAction(action);
       this.hideSelectionMenu();
