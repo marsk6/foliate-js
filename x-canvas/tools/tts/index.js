@@ -20,6 +20,7 @@ let globalTTSInstance = null;
 export function initNativeTTS(options = {}) {
     const {
         container = document.body,
+        renderer = null,
         autoShow = false,
         ...ttsOptions
     } = options;
@@ -29,8 +30,8 @@ export function initNativeTTS(options = {}) {
         return globalTTSInstance;
     }
 
-    // 创建控制器
-    const controller = new TTSController();
+    // 创建控制器，传递renderer参数
+    const controller = new TTSController(renderer);
     
     // 设置初始选项
     if (Object.keys(ttsOptions).length > 0) {
@@ -45,6 +46,7 @@ export function initNativeTTS(options = {}) {
         controller,
         ui,
         ssmlBuilder: controller.ssmlBuilder,
+        textManager: controller.textManager,
 
         // 快捷方法
         speak: (text, options) => controller.speak(text, options),
@@ -52,6 +54,21 @@ export function initNativeTTS(options = {}) {
         resume: () => controller.resume(),
         stop: () => controller.stop(),
         toggle: () => controller.toggle(),
+        
+        // 新增：从当前位置朗读相关方法
+        speakFromCurrentPosition: (options) => 
+            controller.speakFromCurrentPosition(options),
+        speakFromSentence: (sentenceIndex, options) => 
+            controller.speakFromSentence(sentenceIndex, options),
+        playNextSentence: () => controller.playNextSentence(),
+        playPreviousSentence: () => controller.playPreviousSentence(),
+        jumpToSentence: (index) => controller.jumpToSentence(index),
+        
+        // TTS数据管理相关方法
+        refreshTTSData: () => controller.refreshTTSData(),
+        isTTSDataReady: () => controller.isTTSDataReady(),
+        getTTSSentences: () => controller.getTTSSentences(),
+        getCurrentReadingWordIndex: () => controller.getCurrentReadingWordIndex(),
         
         show: () => ui.show(),
         hide: () => ui.hide(),
@@ -75,91 +92,8 @@ export function initNativeTTS(options = {}) {
         }
     };
 
-    // 自动显示面板
-    if (autoShow) {
-        ui.show();
-    }
-
     globalTTSInstance = instance;
     return instance;
-}
-
-/**
- * 获取全局 TTS 实例
- * @returns {Object|null} TTS 实例或 null
- */
-export function getTTSInstance() {
-    return globalTTSInstance;
-}
-
-
-/**
- * 便捷方法：朗读文本
- * @param {string} text - 要朗读的文本
- * @param {Object} options - 选项
- */
-export function speak(text, options = {}) {
-    if (!globalTTSInstance) {
-        console.warn('TTS not initialized, initializing with default options');
-        initNativeTTS();
-    }
-    
-    return globalTTSInstance.speak(text, options);
-}
-
-/**
- * 便捷方法：朗读选中文本
- */
-export function speakSelection() {
-    if (!globalTTSInstance) {
-        initNativeTTS({ autoShow: true });
-    }
-    
-    return globalTTSInstance.speakSelection();
-}
-
-/**
- * 便捷方法：显示 TTS 面板
- */
-export function showTTSPanel() {
-    if (!globalTTSInstance) {
-        initNativeTTS({ autoShow: true });
-    } else {
-        globalTTSInstance.show();
-    }
-}
-
-/**
- * 检查 TTS 可用性
- * @returns {boolean} 是否支持 TTS
- */
-export function isTTSSupported() {
-    return !!(window.nativeTTSBridge || window.speechSynthesis);
-}
-
-/**
- * 等待 TTS 就绪
- * @returns {Promise} Promise 对象
- */
-export function waitForTTSReady() {
-    return new Promise((resolve) => {
-        if (window.nativeTTSBridge) {
-            resolve(true);
-        } else {
-            const handler = () => {
-                window.removeEventListener('nativeTTSBridgeReady', handler);
-                resolve(true);
-            };
-            
-            window.addEventListener('nativeTTSBridgeReady', handler);
-            
-            // 超时处理
-            setTimeout(() => {
-                window.removeEventListener('nativeTTSBridgeReady', handler);
-                resolve(false);
-            }, 5000);
-        }
-    });
 }
 
 // 导出类
@@ -168,12 +102,6 @@ export { SSMLBuilder, TTSController, TTSUI };
 // 默认导出
 export default {
     initNativeTTS,
-    getTTSInstance,
-    speak,
-    speakSelection,
-    showTTSPanel,
-    isTTSSupported,
-    waitForTTSReady,
     SSMLBuilder,
     TTSController,
     TTSUI

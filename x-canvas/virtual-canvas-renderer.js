@@ -520,6 +520,9 @@ export class VirtualCanvasRenderer {
 
       // 渲染划线（并生成命中矩形）
       this.canvasTools.renderCanvasHighlights(ctx, canvasInfo);
+      
+      // 渲染TTS焦点文本高亮（独立功能）
+      this.canvasTools.renderTTSFocusText(ctx, canvasInfo);
     }
   }
 
