@@ -45,8 +45,8 @@
 import HTMLParser2 from './html-parser/index.js';
 import { HorizontalSlideManager } from './slide-canvas.js';
 import { VirtualViewport } from './scroll-canvas.js';
-import { CanvasTools } from './tools/canvas-tools.js';
-import { LayoutEngine } from './layout-engine/LayoutEngine.js';
+import { CanvasTools } from '../tools/canvas-tools.js';
+import { LayoutEngine } from '../layout-engine/LayoutEngine.js';
 
 /**
  * @typedef {Object} VirtualRenderConfig
