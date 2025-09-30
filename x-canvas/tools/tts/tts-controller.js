@@ -34,14 +34,7 @@
  * controller.playNextSentence();     // 下一句
  * controller.playPreviousSentence(); // 上一句
  * controller.jumpToSentence(5);      // 跳转到第6句
- * 
- * // 监听事件
- * controller.addEventListener('sentenceStart', (data) => {
- *   console.log('开始播放句子:', data.sentence.text);
- * });
- * controller.addEventListener('allSentencesFinished', () => {
- *   console.log('所有句子播放完成');
- * });
+ *
  * ```
  */
 
@@ -199,7 +192,7 @@ export class TTSController {
    * @param {Object} data - 状态数据
    */
   updateState(data) {
-    const { state: newState, message, currentSegment, totalSegments } = data;
+    const { state: newState, message } = data;
 
     // 重置所有状态标志
     this.state.isPlaying = false;
@@ -213,12 +206,6 @@ export class TTSController {
         break;
       case 'playing':
         this.state.isPlaying = true;
-        if (typeof currentSegment !== 'undefined') {
-          this.state.currentSegment = currentSegment;
-        }
-        if (typeof totalSegments !== 'undefined') {
-          this.state.totalSegments = totalSegments;
-        }
         break;
       case 'paused':
         this.state.isPaused = true;
@@ -515,7 +502,6 @@ export class TTSController {
       }
       // 直接使用words数组进行智能分句，避免中途处理
       const sentences = this.textManager.smartSentenceSplitFromWords(words);
-      console.log('🚨🚨🚨👉👉📢', 'sentences', sentences);
 
       // 设置预处理的数据
       this.textManager.setCurrentSentences(sentences);
@@ -695,7 +681,6 @@ export class TTSController {
 
       console.log('🎵 TTS: Speaking sentence', sentenceIndex + 1, 'of', this.currentSentences.length);
       console.log('📝 TTS: Text:', sentence.text.substring(0, 100) + '...');
-
       // 发送到 native 进行朗读
       if (window.nativeTTSBridge) {
         window.nativeTTSBridge.speak(ssml);
@@ -703,13 +688,6 @@ export class TTSController {
         console.error('TTS: Native bridge not available');
         this.emit('error', 'Native TTS 不可用');
       }
-      
-      // 发出播放开始事件
-      this.emit('sentenceStart', {
-        sentence: sentence,
-        index: sentenceIndex,
-        total: this.currentSentences.length
-      });
 
     } catch (error) {
       console.error('TTS: Failed to speak sentence:', error);
@@ -727,7 +705,6 @@ export class TTSController {
 
     // 检查是否还有下一句
     const nextIndex = this.state.currentSegment + 1;
-    
     if (nextIndex < this.currentSentences.length) {
       // 自动播放下一句
       console.log('➡️ TTS: Auto-playing next sentence');
@@ -743,7 +720,6 @@ export class TTSController {
       this.textManager.clearHighlights();
       
       // 发出完成事件
-      this.emit('allSentencesFinished');
       this.emit('finished'); // 保持兼容性
     }
   }

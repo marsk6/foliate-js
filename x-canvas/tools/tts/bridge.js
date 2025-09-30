@@ -105,6 +105,7 @@
   setTimeout(() => {
     if (isNativeAvailable()) {
       console.log('Native TTS bridge initialized successfully');
+      window.nativeTTSBridge.stop();
       window.dispatchEvent(
         new CustomEvent('nativeTTSBridgeReady', {
           detail: { available: true },
@@ -112,6 +113,7 @@
       );
     } else {
       console.warn('Native TTS bridge not available on this platform');
+      window.nativeTTSBridge.stop();
       window.dispatchEvent(
         new CustomEvent('nativeTTSBridgeReady', {
           detail: { available: false },
@@ -120,23 +122,6 @@
     }
   }, 100);
 
-  // 监听来自 native 的 showTTS 事件
-  window.addEventListener('showTTS', () => {
-    // 动态导入并初始化 TTS 模块
-    import('./index.js')
-      .then((module) => {
-        if (!window.nativeTTS) {
-          window.nativeTTS = module.initNativeTTS({
-            autoShow: true,
-          });
-        } else {
-          window.nativeTTS.show();
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to load TTS module:', error);
-      });
-  });
 })();
 
 // 导出 bridge (用于模块化)

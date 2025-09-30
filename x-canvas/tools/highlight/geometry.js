@@ -64,15 +64,19 @@ export function computeLineRectsFromIndices(words, startIdx, endIdx, theme) {
 }
 
 /**
- * 根据任意索引列表计算行矩形（自动按行与连续性分段），并过滤隐藏词
+ * 根据词索引范围计算行矩形，并过滤隐藏词
  * @param {Array} words
- * @param {number[]} indicesList 任意顺序的索引列表
+ * @param {number} startIdx
+ * @param {number} endIdx
  * @param {Object} theme
  * @returns {Array<{x:number,y:number,width:number,height:number}>}
  */
-export function computeLineRectsFromIndicesList(words, indicesList, theme) {
-  if (!Array.isArray(words) || !Array.isArray(indicesList) || indicesList.length === 0) return [];
-  const uniqueSorted = Array.from(new Set(indicesList.filter(i => Number.isInteger(i) && i >= 0 && i < words.length))).sort((a,b) => a - b);
+export function computeLineRectsFromIndicesList(words, startIdx, endIdx, theme) {
+  if (!Array.isArray(words) || startIdx == null || endIdx == null) return [];
+  
+  const min = Math.max(0, Math.min(startIdx, endIdx));
+  const max = Math.min(words.length - 1, Math.max(startIdx, endIdx));
+  
   const isVisible = (w) => {
     if (!w) return false;
     const display = w.style?.display;
@@ -82,24 +86,24 @@ export function computeLineRectsFromIndicesList(words, indicesList, theme) {
     if (typeof w.width === 'number' && w.width <= 0) return false;
     return true;
   };
-  // 按行分段，并要求索引相邻或同一行连续（避免跨行)
+  
+  // 直接按行分段
   const segments = [];
   let current = null;
-  for (const idx of uniqueSorted) {
+  
+  for (let idx = min; idx <= max; idx++) {
     const w = words[idx];
+    
     if (!isVisible(w)) {
       if (current) { segments.push(current); current = null; }
       continue;
     }
-    if (!current) {
+    
+    if (!current || w.line !== current.line) {
+      if (current) segments.push(current);
       current = { line: w.line, start: idx, end: idx };
-      continue;
-    }
-    if (w.line === current.line && idx === current.end + 1) {
-      current.end = idx;
     } else {
-      segments.push(current);
-      current = { line: w.line, start: idx, end: idx };
+      current.end = idx;
     }
   }
   if (current) segments.push(current);

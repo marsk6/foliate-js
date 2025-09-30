@@ -61,9 +61,6 @@ export class CanvasTools {
   /** @type {Object|null} TTS 实例 */
   ttsInstance = null;
 
-  /** @type {Function|null} showTTS 事件处理器 */
-  showTTSHandler = null;
-
   /** @type {Object|null} 当前TTS高亮信息 */
   currentTTSHighlight = null;
 
@@ -84,10 +81,10 @@ export class CanvasTools {
       this.renderer?.bookKey || 'default-book'
     );
     this.createDOMStructure();
-    
+
     // 初始化 TTS 功能
     this.initializeTTS();
-    
+
     // 设置TTS高亮事件监听
     this.setupTTSHighlightEvents();
   }
@@ -227,9 +224,13 @@ export class CanvasTools {
       return;
 
     // 根据是否有活跃高亮来控制按钮显示
-    const highlightBtn = this.selectionMenu.querySelector('[data-action="highlight"]');
-    const unhighlightBtn = this.selectionMenu.querySelector('[data-action="unhighlight"]');
-    
+    const highlightBtn = this.selectionMenu.querySelector(
+      '[data-action="highlight"]'
+    );
+    const unhighlightBtn = this.selectionMenu.querySelector(
+      '[data-action="unhighlight"]'
+    );
+
     if (this.activeHighlightId) {
       // 当前点击的是已有高亮，显示"Unhighlight"按钮
       if (highlightBtn) highlightBtn.style.display = 'none';
@@ -727,10 +728,10 @@ export class CanvasTools {
    */
   getHighlightIndexRange(highlightPosition) {
     // 使用wordId获取索引范围
-    if (highlightPosition.startWordId && highlightPosition.endWordId) {
+    if (highlightPosition.position.startWordId && highlightPosition.position.endWordId) {
       return this.getIndexRangeByWordIds(
-        highlightPosition.startWordId,
-        highlightPosition.endWordId
+        highlightPosition.position.startWordId,
+        highlightPosition.position.endWordId
       );
     }
 
@@ -756,7 +757,6 @@ export class CanvasTools {
     if (this.renderer.renderMultiCanvas) {
       this.renderer.renderMultiCanvas();
     }
-
   }
 
   /**
@@ -774,39 +774,20 @@ export class CanvasTools {
     const highlights = this.getCurrentChapterHighlights();
 
     highlights.forEach((highlight) => {
-      let indicesList = [];
-      const pos = highlight.position || {};
-      if (Array.isArray(pos.wordIds) && pos.wordIds.length > 0) {
-        for (const wid of pos.wordIds) {
-          const idx = this.findWordIndexByWordId(wid);
-          if (idx != null) indicesList.push(idx);
-        }
-      } else {
-        const indexRange = this.getHighlightIndexRange(pos);
-        if (indexRange) {
-          const { startIdx, endIdx } = indexRange;
-          if (startIdx != null && endIdx != null) {
-            const min = Math.max(0, Math.min(startIdx, endIdx));
-            const max = Math.min(words.length - 1, Math.max(startIdx, endIdx));
-            for (let i = min; i <= max; i++) indicesList.push(i);
-          }
-        }
-      }
-      if (indicesList.length === 0) return;
-
+      const indexRange = this.getHighlightIndexRange(highlight);
+      if (!indexRange) return;
+      
+      const { startIdx, endIdx } = indexRange;
+      if (startIdx == null || endIdx == null) return;
       const rects = computeLineRectsFromIndicesList(
         words,
-        indicesList,
+        startIdx,
+        endIdx,
         this.renderer.theme
-      );
-      const visibleRects = filterRectsByYRange(
-        rects,
-        contentStartY,
-        contentEndY
       );
 
       // 只绘制，不再收集矩形数据
-      visibleRects.forEach((r) => {
+      rects.forEach((r) => {
         this.drawHighlightShape(
           ctx,
           {
@@ -1109,7 +1090,7 @@ export class CanvasTools {
     try {
       // 动态导入 TTS 模块
       const TTSModule = await import('./tts/index.js');
-      
+
       // 初始化 TTS 实例，传递renderer参数
       this.ttsInstance = TTSModule.initNativeTTS({
         container: this.renderer.container,
@@ -1120,7 +1101,7 @@ export class CanvasTools {
         rate: '100%',
         pitch: '0Hz',
         autoDetectLanguage: true,
-        enableSentenceBreaks: true
+        enableSentenceBreaks: true,
       });
 
       console.log('TTS initialized in CanvasTools');
@@ -1128,8 +1109,6 @@ export class CanvasTools {
       console.error('Failed to initialize TTS in CanvasTools:', error);
     }
   }
-
-
 
   /**
    * 朗读指定文本
@@ -1142,7 +1121,6 @@ export class CanvasTools {
     }
   }
 
-
   /**
    * 设置TTS高亮事件监听
    */
@@ -1151,15 +1129,18 @@ export class CanvasTools {
     this.renderTTSHighlightHandler = (event) => {
       this.renderTTSHighlight(event.detail);
     };
-    
+
     this.clearTTSHighlightHandler = () => {
       this.clearTTSHighlight();
     };
-    
+
     // 监听TTS高亮更新事件
-    window.addEventListener('renderTTSHighlight', this.renderTTSHighlightHandler);
-    
-    // 监听TTS高亮清除事件  
+    window.addEventListener(
+      'renderTTSHighlight',
+      this.renderTTSHighlightHandler
+    );
+
+    // 监听TTS高亮清除事件
     window.addEventListener('clearTTSHighlight', this.clearTTSHighlightHandler);
   }
 
@@ -1170,12 +1151,11 @@ export class CanvasTools {
   renderTTSHighlight(data) {
     const { focusLines, sentence } = data;
 
-
     // 保存当前TTS高亮信息（包含 focusLines 以供将来使用）
     this.currentTTSHighlight = {
-      focusLines: focusLines,       // 基于行的焦点信息
-      sentence: sentence,           // 句子对象
-      timestamp: Date.now()
+      focusLines: focusLines, // 基于行的焦点信息
+      sentence: sentence, // 句子对象
+      timestamp: Date.now(),
     };
 
     // 触发Canvas重新渲染
@@ -1193,13 +1173,8 @@ export class CanvasTools {
   }
 
   /**
-   * 在Canvas上绘制TTS高亮（基于 focusLines 逐行渲染）
-   * 
-   * 渲染逻辑：
-   * 1. 遍历句子的每一行（focusLines）
-   * 2. 根据每行的 startWord 和 endWord 计算行的 x, y, width, height  
-   * 3. 逐行绘制淡蓝色高亮
-   * 
+   * 在Canvas上绘制TTS高亮（复用高亮渲染逻辑）
+   *
    * @param {CanvasRenderingContext2D} ctx - Canvas上下文
    * @param {Object} canvasInfo - Canvas信息
    */
@@ -1207,42 +1182,49 @@ export class CanvasTools {
     if (!this.currentTTSHighlight || !this.currentTTSHighlight.focusLines) {
       return;
     }
+    const words = this.renderer?.fullLayoutData?.words;
+    if (!words) return;
 
     const { focusLines } = this.currentTTSHighlight;
-    const { contentStartY, contentEndY } = canvasInfo;
-    // 遍历每一行，逐行渲染高亮
-    focusLines.forEach(line => {
-      const { startWord, endWord } = line;
+    const { contentStartY } = canvasInfo;
+    
+    // 遍历每一行，复用高亮渲染逻辑
+    focusLines.forEach((line) => {
+      const { startWordId, endWordId } = line;
+      if (!startWordId || !endWordId) return;
+
+      const indexRange = this.getIndexRangeByWordIds(startWordId, endWordId);
+      if (!indexRange) return;
       
-      if (!startWord || !endWord) return;
+      const { startIdx, endIdx } = indexRange;
+      if (startIdx == null || endIdx == null) return;
 
-      // 计算该行的位置信息
-      const lineY = startWord.y;
-      const lineHeight = Math.max(startWord.height || 0, endWord.height || 0);
-      
-      // 检查该行是否在可见范围内
-      if (lineY + lineHeight < contentStartY || lineY > contentEndY) {
-        return; // 跳过不可见的行
-      }
+      const rects = computeLineRectsFromIndicesList(
+        words,
+        startIdx,
+        endIdx,
+        this.renderer.theme
+      );
 
-      // 计算该行的边界框
-      const lineRect = {
-        x: startWord.x,                           // 行的左边界
-        y: lineY - contentStartY,                 // 相对于canvas的Y位置
-        width: (endWord.x + endWord.width) - startWord.x, // 行的宽度
-        height: lineHeight                        // 行高
-      };
-
-      // 使用 drawHighlightShape 绘制该行的淡蓝色高亮
-      this.drawHighlightShape(ctx, lineRect, {
-        type: 'highlight',
-        color: '#87CEEB',  // 淡蓝色 (SkyBlue)
-        opacity: 0.3
+      // 绘制TTS高亮，使用淡蓝色
+      rects.forEach((r) => {
+        this.drawHighlightShape(
+          ctx,
+          {
+            x: r.x,
+            y: r.y - contentStartY,
+            width: r.width,
+            height: r.height,
+          },
+          {
+            type: 'highlight',
+            color: '#87CEEB', // 淡蓝色 (SkyBlue)
+            opacity: 0.3,
+          }
+        );
       });
     });
   }
-
-
 
   /**
    * 渲染TTS焦点文本高亮（独立方法）
@@ -1264,23 +1246,24 @@ export class CanvasTools {
       this.ttsInstance = null;
     }
 
-    // 清理 TTS 事件监听器
-    if (this.showTTSHandler) {
-      window.removeEventListener('showTTS', this.showTTSHandler);
-      this.showTTSHandler = null;
-    }
 
     // 清理TTS高亮事件监听器
     if (this.renderTTSHighlightHandler) {
-      window.removeEventListener('renderTTSHighlight', this.renderTTSHighlightHandler);
+      window.removeEventListener(
+        'renderTTSHighlight',
+        this.renderTTSHighlightHandler
+      );
       this.renderTTSHighlightHandler = null;
     }
-    
+
     if (this.clearTTSHighlightHandler) {
-      window.removeEventListener('clearTTSHighlight', this.clearTTSHighlightHandler);
+      window.removeEventListener(
+        'clearTTSHighlight',
+        this.clearTTSHighlightHandler
+      );
       this.clearTTSHighlightHandler = null;
     }
-    
+
     // 清理当前TTS高亮
     this.currentTTSHighlight = null;
   }
