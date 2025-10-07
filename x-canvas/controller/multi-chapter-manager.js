@@ -33,7 +33,7 @@
  *
  */
 
-import VirtualCanvasRenderer from './virtual-canvas-renderer.js';
+import VirtualCanvasRenderer from '../core/virtual-canvas-renderer.js';
 
 /**
  * @typedef {Object} ChapterConfig

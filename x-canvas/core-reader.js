@@ -35,7 +35,7 @@
  * ```
  */
 
-import MultiChapterManager from './multi-chapter-manager.js';
+import MultiChapterManager from './controller/multi-chapter-manager.js';
 
 export class CoreReader {
   /** @type {CoreReader|null} 全局单例 */
