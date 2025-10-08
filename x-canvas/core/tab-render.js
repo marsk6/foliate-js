@@ -9,7 +9,7 @@
  * 使用示例：
  *
  * // 垂直滚动模式（默认）
- * const renderer = new VirtualCanvasRenderer({
+ * const renderer = new TabRender({
  *   mountPoint: document.getElementById('container'),
  *   mode: 'vertical',
  *   theme: { baseFontSize: 18 },
@@ -21,7 +21,7 @@
  * });
  *
  * // 横向滑动模式
- * const horizontalRenderer = new VirtualCanvasRenderer({
+ * const horizontalRenderer = new TabRender({
  *   mountPoint: document.getElementById('container'),
  *   mode: 'horizontal',
  *   theme: { baseFontSize: 18 }
@@ -154,7 +154,7 @@ import { LayoutEngine } from './layout-engine/LayoutEngine.js';
  * @property {boolean} canScroll - 是否可以滚动
  */
 
-export class VirtualCanvasRenderer {
+export class TabRender {
   /** @type {HTMLElement} 滚动容器 */
   container;
 
@@ -234,20 +234,12 @@ export class VirtualCanvasRenderer {
     // 进度变化回调
     this.onProgressChange = config.onProgressChange || null;
 
-    // 主题配置需要先初始化，用于计算行高
-    this.theme = {
-      backgroundColor: '#fff',
-      textColor: '#222',
-      baseFontSize: 20,
-      fontFamily: 'system-ui, sans-serif',
-      paddingX: 16,
-      lineHeight: 1.4,
-      ...config.theme,
-    };
+    // 获取全局主题配置
+    this.theme = window.coreReader?.theme || config.theme;
 
-    // 视窗尺寸 - 基于窗口尺寸自动计算
-    this.viewportWidth = window.innerWidth; // 使用窗口宽度作为视窗宽度
-    this.viewportHeight = window.innerHeight; // 使用窗口高度作为视窗高度
+    // 视窗尺寸 - 从主题获取
+    this.viewportWidth = this.theme.viewportWidth;
+    this.viewportHeight = this.theme.viewportHeight;
 
     // Canvas尺寸 - 直接使用视窗尺寸
     this.canvasWidth = this.viewportWidth;
@@ -359,9 +351,9 @@ export class VirtualCanvasRenderer {
   setupHighDPI() {
     const dpr = window.devicePixelRatio || 1;
 
-    // 重新计算尺寸（窗口大小可能已变化）
-    this.viewportWidth = window.innerWidth;
-    this.viewportHeight = window.innerHeight;
+    // 重新计算尺寸（从主题获取）
+    this.viewportWidth = this.theme.viewportWidth;
+    this.viewportHeight = this.theme.viewportHeight;
     this.canvasWidth = this.viewportWidth;
     this.canvasHeight = this.viewportHeight;
     this.chunkHeight = this.canvasHeight;
@@ -775,7 +767,25 @@ export class VirtualCanvasRenderer {
    * @param {Object} theme
    */
   setTheme(theme) {
-    this.theme = { ...this.theme, ...theme };
+    // 更新主题（如果使用 coreReader.theme，它会自动同步）
+    if (this.theme === window.coreReader?.theme) {
+      // 使用全局主题，更新会自动同步
+      Object.assign(this.theme, theme);
+    } else {
+      // 使用局部主题
+      this.theme = { ...this.theme, ...theme };
+    }
+
+    // 更新视窗尺寸
+    if (theme.viewportWidth !== undefined) {
+      this.viewportWidth = theme.viewportWidth;
+      this.canvasWidth = this.viewportWidth;
+    }
+    if (theme.viewportHeight !== undefined) {
+      this.viewportHeight = theme.viewportHeight;
+      this.canvasHeight = this.viewportHeight;
+      this.chunkHeight = this.canvasHeight;
+    }
 
     // 重新渲染
     if (this.currentHTML) {
@@ -1014,4 +1024,4 @@ export class VirtualCanvasRenderer {
     }
   }
 }
-export default VirtualCanvasRenderer;
+export default TabRender;

@@ -20,7 +20,7 @@ export class LayoutEngine {
   styleDirty = false;
 
   /**
-   * @param {Object} renderer - VirtualCanvasRenderer实例
+   * @param {Object} renderer - TabRender实例
    */
   constructor(renderer) {
     if (LayoutEngine.instance) {

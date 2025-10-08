@@ -24,7 +24,7 @@ export class CanvasTools {
    */
   selectionMenu = null; // 选中菜单元素
   /**
-   * @type {import('../virtual-canvas-renderer').VirtualCanvasRenderer}
+   * @type {import('../virtual-canvas-renderer').TabRender}
    */
   renderer = null;
 

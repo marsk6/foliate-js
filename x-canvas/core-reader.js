@@ -36,6 +36,7 @@
  */
 
 import MultiChapterManager from './controller/multi-chapter-manager.js';
+import Theme from './model/Theme.js';
 
 export class CoreReader {
   /** @type {CoreReader|null} 全局单例 */
@@ -60,8 +61,8 @@ export class CoreReader {
     isDestroyed: false,
   };
 
-  /** @type {Object} 主题配置 */
-  #theme = {};
+  /** @type {Theme} 主题配置 */
+  theme = null;
 
   /**
    * 获取全局单例
@@ -98,13 +99,21 @@ export class CoreReader {
    */
   constructor(config) {
     this.#state.mode = config.mode || 'vertical';
-    this.#theme = config.theme || {};
+    
+    // 初始化主题 - 如果传入的是 Theme 实例则直接使用，否则创建新实例
+    if (config.theme instanceof Theme) {
+      this.theme = config.theme;
+    } else if (config.theme) {
+      this.theme = new Theme(config.theme);
+    } else {
+      this.theme = Theme.default();
+    }
 
     // 创建多章节管理器
     this.#manager = new MultiChapterManager({
       el: config.container,
       mode: this.#state.mode,
-      theme: this.#theme,
+      theme: this.theme,
     });
 
     // 绑定管理器事件
@@ -304,20 +313,24 @@ export class CoreReader {
 
   /**
    * 设置主题
-   * @param {Object} theme - 主题配置
+   * @param {Object|Theme} theme - 主题配置或 Theme 实例
    */
   setTheme(theme) {
-    this.#theme = { ...this.#theme, ...theme };
-    this.#manager.setTheme(theme);
-    this.emit('theme:change', { theme: this.#theme });
+    if (theme instanceof Theme) {
+      this.theme = theme;
+    } else {
+      this.theme.update(theme);
+    }
+    this.#manager.setTheme(this.theme);
+    this.emit('theme:change', { theme: this.theme });
   }
 
   /**
    * 获取主题
-   * @returns {Object}
+   * @returns {Theme}
    */
   getTheme() {
-    return { ...this.#theme };
+    return this.theme;
   }
 
   /**
@@ -457,7 +470,7 @@ export class CoreReader {
 
   /**
    * 获取当前章节渲染器（供插件使用）
-   * @returns {VirtualCanvasRenderer|null}
+   * @returns {TabRender|null}
    */
   _getActiveRenderer() {
     return this.#manager.activeChapter?.renderer || null;
