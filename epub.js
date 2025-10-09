@@ -722,7 +722,7 @@ class Loader {
         Object.defineProperty(detail, 'name', { value: href }) // readonly
         const event = new CustomEvent('data', { detail })
         this.eventTarget.dispatchEvent(event)
-        // MOTE: 读出来的就是 epub 里的 html
+        // NOTE: 读出来的就是 epub 里的 html
         const newData = await event.detail.data
         const newType = await event.detail.type
         const url = URL.createObjectURL(new Blob([newData], { type: newType }))
@@ -787,6 +787,7 @@ class Loader {
         if (!item) return href
         return this.loadItem(item, parents.concat(base))
     }
+    // NOTE: 把外部资源替换为 blob url
     async loadReplaced(item, parents = []) {
         const { href, mediaType } = item
         const parent = parents.at(-1)

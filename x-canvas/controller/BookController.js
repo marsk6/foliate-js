@@ -83,7 +83,7 @@ import VirtualCanvasRender from '../core/virtual-canvas-render.js';
  * @property {Function} [onChapterLoad] - 章节加载回调
  */
 
-export class MultiChapterManager {
+export class BookController {
   /** @type {Object} 全局主题配置 */
   theme;
 
@@ -125,19 +125,8 @@ export class MultiChapterManager {
     return this.chapters.get(this.currentChapterIndex);
   }
 
-  /**
-   * @param {MultiChapterConfig} config
-   */
-  constructor(config) {
-    this.config = config;
-    this.state = {
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-    };
-    this.theme = config.theme || {};
-    this.mode = config.mode || 'vertical';
-    this.setupContainer();
-    window.CM = this;
+  constructor() {
+    // this.setupContainer();
   }
 
   /**
@@ -160,7 +149,7 @@ export class MultiChapterManager {
    * 初始化书籍
    * @param {Array<ChapterConfig>} chaptersConfig - 章节配置数组
    */
-  async addBook(chaptersConfig) {
+  async initBook(chaptersConfig) {
     this.chapterConfigs = chaptersConfig;
     this.totalChapters = chaptersConfig.length;
 
@@ -186,7 +175,7 @@ export class MultiChapterManager {
     }
   }
 
-  async startRead(chapterIndex = 0, progress = 0) {
+  async startReading(chapterIndex = 0, progress = 0) {
     this.currentChapterIndex = chapterIndex;
     await this.loadChapter(chapterIndex, progress);
     this.readMode.setOffset(this.activeChapter.progress.scrollOffset);
@@ -367,7 +356,7 @@ class ScrollManager extends ReadMode {
   constructor(manager) {
     super();
     this.manager = manager;
-    this.baseOffset = manager.state.viewportHeight;
+    this.baseOffset = window.coreReader.theme.viewportHeight;
     this.scrollThrottleId = null;
     this.globalScrollTop = 0;
     this.chapterOffsets = new Map();
@@ -377,7 +366,7 @@ class ScrollManager extends ReadMode {
   setupContainer() {
     this.container = document.createElement('div');
     this.container.className = 'multi-chapter-container';
-    const { viewportWidth, viewportHeight } = this.manager.state;
+    const { viewportWidth, viewportHeight } = window.coreReader.theme;
     this.container.style.cssText = `
       position: relative;
       width: ${viewportWidth}px;
@@ -628,7 +617,7 @@ class SlideManager extends ReadMode {
   constructor(manager) {
     super();
     this.manager = manager;
-    this.baseOffset = manager.state.viewportWidth;
+    this.baseOffset = window.coreReader.theme.viewportWidth;
 
     this.touchStartX = 0;
     this.touchStartTime = 0;
@@ -640,7 +629,7 @@ class SlideManager extends ReadMode {
   setupContainer() {
     this.container = document.createElement('div');
     this.container.className = 'multi-chapter-container';
-    const { viewportWidth } = this.manager.state;
+    const { viewportWidth } = window.coreReader.theme;
     this.container.style.cssText = `
         position: relative;
         height: 100%;
@@ -900,4 +889,4 @@ class SlideManager extends ReadMode {
   }
 }
 
-export default MultiChapterManager;
+export default BookController;
