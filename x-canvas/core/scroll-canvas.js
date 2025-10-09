@@ -52,7 +52,6 @@ export class VirtualViewport {
     this.config = {
       viewportHeight: config.viewportHeight, // 默认视窗高度
       viewportWidth: config.viewportWidth, // 默认视窗宽度
-      chunkHeight: config.chunkHeight, // 每个渲染块高度，应该等于Canvas高度
       ...config,
     };
 
@@ -80,8 +79,8 @@ export class VirtualViewport {
       this.canvasInfoList.push({
         canvas,
         ctx,
-        contentStartY: i * this.config.chunkHeight,
-        contentEndY: (i + 1) * this.config.chunkHeight,
+        contentStartY: i * this.config.viewportHeight,
+        contentEndY: (i + 1) * this.config.viewportHeight,
         needsRerender: true, // 初始时需要渲染
       });
     }
@@ -154,7 +153,7 @@ export class VirtualViewport {
    */
   updateCanvasPositions() {
     const { contentHeight, scrollTop } = this.state;
-    const { chunkHeight } = this.config;
+    const { viewportHeight } = this.config;
 
     // 判断滚动方向
     const scrollDirection = scrollTop > this.lastScrollTop ? 'down' : 'up';
@@ -162,10 +161,10 @@ export class VirtualViewport {
 
     if (scrollDirection === 'down') {
       // 向下滚动：检查头部Canvas是否需要移到尾部
-      this.handleDownwardScroll(chunkHeight, contentHeight);
+      this.handleDownwardScroll(viewportHeight, contentHeight);
     } else {
       // 向上滚动：检查尾部Canvas是否需要移到头部
-      this.handleUpwardScroll(chunkHeight);
+      this.handleUpwardScroll(viewportHeight);
     }
   }
 
@@ -174,17 +173,17 @@ export class VirtualViewport {
    * @param {number} targetScrollTop - 目标滚动位置
    */
   setProgress(targetScrollTop) {
-    const { chunkHeight } = this.config;
-    const step = chunkHeight;
+    const { viewportHeight } = this.config;
+    const step = viewportHeight;
     if (this.state.scrollTop < targetScrollTop) {
       while (this.state.scrollTop < targetScrollTop) {
         this.state.scrollTop += step;
-        this.handleDownwardScroll(chunkHeight, this.state.contentHeight);
+        this.handleDownwardScroll(viewportHeight, this.state.contentHeight);
       }
     } else {
       while (this.state.scrollTop > targetScrollTop) {
         this.state.scrollTop -= step;
-        this.handleUpwardScroll(chunkHeight);
+        this.handleUpwardScroll(viewportHeight);
       }
     }
     this.state.scrollTop = targetScrollTop;
@@ -193,19 +192,19 @@ export class VirtualViewport {
   /**
    * 处理向下滚动
    */
-  handleDownwardScroll(chunkHeight, contentHeight) {
+  handleDownwardScroll(viewportHeight, contentHeight) {
     const { scrollTop } = this.state;
     const headCanvas = this.canvasInfoList[this.headIndex];
 
     // 计算触发重定位的阈值：HEAD Canvas + 下一个Canvas的50%
     const triggerPoint =
-      headCanvas.contentStartY + chunkHeight + chunkHeight * 0.5;
+      headCanvas.contentStartY + viewportHeight + viewportHeight * 0.5;
 
     // 如果滚动位置超过触发点，需要重定位HEAD Canvas
     if (scrollTop >= triggerPoint) {
       // 计算新位置：当前尾部Canvas的下方
       const tailCanvas = this.canvasInfoList[this.tailIndex];
-      const newPosition = tailCanvas.contentStartY + chunkHeight;
+      const newPosition = tailCanvas.contentStartY + viewportHeight;
 
       // 确保不超出内容范围
       if (newPosition < contentHeight) {
@@ -221,18 +220,18 @@ export class VirtualViewport {
   /**
    * 处理向上滚动
    */
-  handleUpwardScroll(chunkHeight) {
+  handleUpwardScroll(viewportHeight) {
     const { scrollTop } = this.state;
     const headCanvas = this.canvasInfoList[this.headIndex];
     const tailCanvas = this.canvasInfoList[this.tailIndex];
 
     // 计算触发重定位的阈值：HEAD Canvas开始位置 + Canvas高度的50%
-    const triggerPoint = headCanvas.contentStartY + chunkHeight * 0.5;
+    const triggerPoint = headCanvas.contentStartY + viewportHeight * 0.5;
 
     // 如果滚动位置低于触发点，需要将TAIL Canvas移动到HEAD Canvas前面
     if (scrollTop < triggerPoint) {
       // 计算新位置：当前头部Canvas的上方
-      const newPosition = headCanvas.contentStartY - chunkHeight;
+      const newPosition = headCanvas.contentStartY - viewportHeight;
 
       // 确保不超出内容范围
       if (newPosition >= 0) {
@@ -251,12 +250,12 @@ export class VirtualViewport {
    * @param {number} newTop
    */
   repositionCanvas(canvasInfo, newTop) {
-    const { chunkHeight } = this.config;
+    const { viewportHeight } = this.config;
 
     // 更新Canvas的top位置
     canvasInfo.canvas.style.top = newTop + 'px';
     canvasInfo.contentStartY = newTop;
-    canvasInfo.contentEndY = newTop + chunkHeight;
+    canvasInfo.contentEndY = newTop + viewportHeight;
 
     // 触发重渲染标记
     canvasInfo.needsRerender = true;

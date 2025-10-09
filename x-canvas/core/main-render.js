@@ -1,17 +1,17 @@
-import TabRender from './tab-render.js';
+import VirtualCanvasRender from './virtual-canvas-render.js';
 import { EventEmitter } from '../tools/event-emitter.js';
 export class MainRender {
-  // TODO: 插入新的 tabRender 实例
+  // TODO: 插入新的 VirtualCanvasRender 实例
 }
 
 class ReadMode extends EventEmitter {
-  /** @type {Map<number, TabRender>} 章节渲染器 */
-  tabRenderMap = new Map();
+  /** @type {Map<number, VirtualCanvasRender>} 章节渲染器 */
+  virtualCanvasRenderMap = new Map();
 
   baseOffset = 0;
 
-  get activeTabRender() {
-    return this.tabRenderMap.get(this.manager.currentChapterIndex);
+  get activeVirtualCanvasRender() {
+    return this.virtualCanvasRenderMap.get(this.manager.currentChapterIndex);
   }
 }
 
@@ -32,9 +32,6 @@ class ScrollManager extends ReadMode {
   scrollDirection = '';
 
   lastTouchY = 0;
-
-  /** @type {IntersectionObserver} 当前活跃章节观察器 */
-  activeObserver = null;
 
   loadIndicator = {
     node: null,
@@ -60,85 +57,8 @@ class ScrollManager extends ReadMode {
       height: ${viewportHeight}px;
       overflow: auto;
     `;
-    this.setupLoadingIndicator();
-    // 保留活跃章节观察器
-    this.activeObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          const chapterIndex = +entry.target.dataset.chapterIndex;
-          if (entry.isIntersecting) {
-            this.manager.currentChapterIndex = chapterIndex;
-            return;
-          }
-          if (!entry.isIntersecting && this.scrollDirection === 'up') {
-            this.manager.currentChapterIndex = chapterIndex - 1;
-            return;
-          }
-        });
-      },
-      {
-        root: this.container,
-        threshold: 1,
-      }
-    );
-
+    // this.setupLoadingIndicator(); // 由外部插入 dom
     this.bindScrollEvents();
-  }
-
-  /**
-   * 设置活跃章节哨兵
-   * @param {number} chapterIndex - 章节索引
-   * @param {HTMLElement} chapterContainer - 章节容器
-   */
-  setActiveSentinel(chapterIndex, chapterContainer) {
-    const activeSentinel = document.createElement('div');
-    activeSentinel.dataset.chapterIndex = chapterIndex;
-    activeSentinel.style.cssText = `
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 1px;
-        background-color: transparent;
-        z-index: 9999;
-        pointer-events: none;
-      `;
-    chapterContainer.appendChild(activeSentinel);
-    this.activeObserver.observe(activeSentinel);
-  }
-
-  setupLoadingIndicator() {
-    const node = document.createElement('div');
-    node.style.cssText = `
-      position: absolute;
-      left: 0;
-      right: 0;
-      height: 50px;
-      background: rgba(0, 0, 0, 0.2);
-      color: white;
-      font-size: 14px;
-      z-index: 10000;
-      display: none;
-      justify-content: center;
-      align-items: center;
-      pointer-events: none;
-      user-select: none;
-    `;
-    this.container.appendChild(node);
-    this.loadIndicator = {
-      ...this.loadIndicator,
-      node,
-      /**
-       * @param {'top' | 'bottom'} direction
-       */
-      show: (direction) => {
-        node.style[direction] = 0;
-        node.style.display = 'flex';
-      },
-      hide: () => {
-        node.style.display = 'none';
-      },
-    };
   }
 
   /**
@@ -149,7 +69,6 @@ class ScrollManager extends ReadMode {
    */
   insertChapter(chapterIndex, chapterContainer, nextChapterContainer) {
     this.container.insertBefore(chapterContainer, nextChapterContainer);
-    this.setActiveSentinel(chapterIndex, chapterContainer);
   }
 
   /**
@@ -200,12 +119,8 @@ class ScrollManager extends ReadMode {
   async handleStartReached() {
     if (this.manager.currentChapterIndex > 0) {
       this.loadIndicator.show('top');
-      this.emit('onStartReached', {
-        callback: () => {
-          
-        }
-      });
-      
+      await this.emit('onStartReached');
+      this.loadIndicator.hide('top');
     }
   }
 
@@ -215,12 +130,35 @@ class ScrollManager extends ReadMode {
   async handleEndReached() {
     if (this.manager.currentChapterIndex < this.manager.totalChapters - 1) {
       this.loadIndicator.show('bottom');
-      this.emit('onEndReached', {
-        callback: () => {
-          this.loadIndicator.hide();
-        }
-      });
+      await this.emit('onEndReached');
+      this.loadIndicator.hide('bottom');
     }
+  }
+
+  /**
+   * 计算当前活跃章节
+   * 基于 offsetTop 和 scrollTop 判断哪个章节在视口中
+   */
+  calculateActiveChapter() {
+    const scrollTop = this.container.scrollTop;
+    const viewportHeight = this.baseOffset;
+    
+    // 视口中心位置
+    const viewportCenter = scrollTop + viewportHeight / 2;
+
+    // 遍历所有章节，找到在视口中的章节
+    for (const [chapterIndex, virtualCanvasRender] of this.virtualCanvasRenderMap.entries()) {
+      const offsetTop = virtualCanvasRender.offsetTop;
+      const offsetBottom = offsetTop + virtualCanvasRender.container.offsetHeight;
+
+      // 判断视口中心是否在章节范围内
+      if (viewportCenter >= offsetTop && viewportCenter < offsetBottom) {
+        this.manager.currentChapterIndex = chapterIndex;
+        return chapterIndex;
+      }
+    }
+
+    return this.manager.currentChapterIndex;
   }
 
   /**
@@ -240,8 +178,11 @@ class ScrollManager extends ReadMode {
 
       this.globalScrollTop = this.container.scrollTop;
 
+      // 计算当前活跃章节
+      this.calculateActiveChapter();
+
       const relativeScrollTop =
-        this.globalScrollTop - this.manager.activeChapter.baseScrollOffset;
+        this.globalScrollTop - this.activeVirtualCanvasRender.offsetTop;
       const { activeChapter } = this.manager;
 
       // 将滚动状态传递给当前活跃的章节
@@ -276,12 +217,6 @@ class ScrollManager extends ReadMode {
     if (this.scrollThrottleId) {
       cancelAnimationFrame(this.scrollThrottleId);
       this.scrollThrottleId = null;
-    }
-
-    // 清理观察器
-    if (this.activeObserver) {
-      this.activeObserver.disconnect();
-      this.activeObserver = null;
     }
 
     // 移除事件监听器

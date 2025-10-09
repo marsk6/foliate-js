@@ -38,8 +38,6 @@ export class HorizontalSlideManager {
     this.config = {
       viewportWidth: config.viewportWidth,
       viewportHeight: config.viewportHeight,
-      chunkWidth: config.chunkWidth || config.viewportWidth,
-      chunkHeight: config.chunkHeight || config.viewportHeight,
       ...config,
     };
 
@@ -68,8 +66,8 @@ export class HorizontalSlideManager {
       this.canvasInfoList.push({
         canvas,
         ctx,
-        contentStartY: i * this.config.chunkHeight,
-        contentEndY: (i + 1) * this.config.chunkHeight,
+        contentStartY: i * this.config.viewportHeight,
+        contentEndY: (i + 1) * this.config.viewportHeight,
         page: i,
         needsRerender: true, // 初始时需要渲染
       });
@@ -111,7 +109,7 @@ export class HorizontalSlideManager {
    * 更新滚动位置，模拟垂直滚动的位置
    */
   updateVirtualScrollPosition() {
-    this.state.scrollTop = this.state.currentPage * this.config.chunkHeight;
+    this.state.scrollTop = this.state.currentPage * this.config.viewportHeight;
   }
 
   /**
@@ -133,7 +131,7 @@ export class HorizontalSlideManager {
    * @param {number} targetScrollTop - 目标滚动位置
    */
   setProgress(targetScrollLeft) {
-    const targetPage = targetScrollLeft / this.config.chunkWidth + 1;
+    const targetPage = targetScrollLeft / this.config.viewportWidth + 1;
     let { currentPage } = this.state;
     if (targetPage < currentPage) {
       while (targetPage < currentPage) {
@@ -207,14 +205,14 @@ export class HorizontalSlideManager {
    * @param {number} newPage
    */
   repositionCanvas(canvasInfo, newPage) {
-    const { chunkWidth, chunkHeight } = this.config;
+    const { viewportWidth, viewportHeight } = this.config;
 
     // 更新Canvas的left位置
-    canvasInfo.canvas.style.left = newPage * chunkWidth + 'px';
+    canvasInfo.canvas.style.left = newPage * viewportWidth + 'px';
 
-    const newTop = newPage * chunkHeight;
+    const newTop = newPage * viewportHeight;
     canvasInfo.contentStartY = newTop;
-    canvasInfo.contentEndY = newTop + chunkHeight;
+    canvasInfo.contentEndY = newTop + viewportHeight;
     // 触发重渲染标记
     canvasInfo.needsRerender = true;
   }
@@ -245,7 +243,7 @@ export class HorizontalSlideManager {
    */
   setCurrentPage(pageIndex, oldPage) {
     this.state.currentPage = pageIndex;
-    this.state.scrollTop = this.state.currentPage * this.config.chunkHeight;
+    this.state.scrollTop = this.state.currentPage * this.config.viewportHeight;
 
     // 处理Canvas重定位
     if (pageIndex > oldPage) {

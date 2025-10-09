@@ -1,6 +1,6 @@
 /**
  * 多章节管理器
- * 管理多个TabRender实例，实现跨章节的阅读体验
+ * 管理多个VirtualCanvasRender实例，实现跨章节的阅读体验
  *
  * 功能特性：
  * - 章节元数据管理
@@ -33,7 +33,7 @@
  *
  */
 
-import TabRender from '../core/tab-render.js';
+import VirtualCanvasRender from '../core/virtual-canvas-render.js';
 
 /**
  * @typedef {Object} ChapterConfig
@@ -48,7 +48,7 @@ import TabRender from '../core/tab-render.js';
  * @typedef {Object} ChapterInstance
  * @property {number} sectionIndex - 章节索引
  * @property {string} title - 章节标题
- * @property {TabRender} renderer - 渲染器实例
+ * @property {VirtualCanvasRender} renderer - 渲染器实例
  * @property {HTMLElement} container - 章节容器DOM
  * @property {boolean} loaded - 是否已加载内容
  * @property {boolean} visible - 是否当前可见
@@ -229,10 +229,8 @@ export class MultiChapterManager {
     try {
       // 创建渲染器实例（如果还没有）
       if (!chapter.renderer) {
-        chapter.renderer = new TabRender({
+        chapter.renderer = new VirtualCanvasRender({
           chapterIndex: chapterIndex,
-          theme: this.theme,
-          mode: this.mode,
         });
       }
 
@@ -270,21 +268,24 @@ export class MultiChapterManager {
       console.error(`Failed to load chapter ${chapterIndex}:`, error);
     }
   }
-  /**
-   * 设置主题
-   * @param {Object} theme - 主题配置
-   */
-  setTheme(theme) {
-    this.theme = { ...this.theme, ...theme };
 
-    // 更新所有已加载章节的主题
-    for (const chapter of this.chapters.values()) {
-      if (chapter.loaded && chapter.renderer) {
-        chapter.renderer.setTheme(theme);
-      }
+  /**
+   * 加载上一章
+   */
+  async loadPreviousChapter() {
+    if (this.manager.currentChapterIndex > 0) {
+      await this.manager.loadChapter(this.manager.currentChapterIndex - 1, 1);
     }
   }
 
+  /**
+   * 加载下一章
+   */
+  async loadNextChapter() {
+    if (this.manager.currentChapterIndex < this.manager.totalChapters - 1) {
+      await this.manager.loadChapter(this.manager.currentChapterIndex + 1, 0);
+    }
+  }
   /**
    * 清理所有章节
    */

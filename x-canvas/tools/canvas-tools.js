@@ -24,7 +24,7 @@ export class CanvasTools {
    */
   selectionMenu = null; // 选中菜单元素
   /**
-   * @type {import('../virtual-canvas-renderer').TabRender}
+   * @type {import('../virtual-canvas-renderer').VirtualCanvasRender}
    */
   renderer = null;
 
@@ -389,8 +389,8 @@ export class CanvasTools {
     let offsetTop = 0;
     let offsetLeft = 0;
     if (renderer.mode === 'horizontal') {
-      offsetTop = -renderer.canvasHeight * renderer.viewport.state.currentPage;
-      offsetLeft = renderer.canvasWidth * renderer.viewport.state.currentPage;
+      offsetTop = -renderer.viewportHeight * renderer.viewport.state.currentPage;
+      offsetLeft = renderer.viewportWidth * renderer.viewport.state.currentPage;
     }
 
     Object.values(lineMap).forEach(({ start, end }) => {

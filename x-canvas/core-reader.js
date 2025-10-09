@@ -470,7 +470,7 @@ export class CoreReader {
 
   /**
    * 获取当前章节渲染器（供插件使用）
-   * @returns {TabRender|null}
+   * @returns {VirtualCanvasRender|null}
    */
   _getActiveRenderer() {
     return this.#manager.activeChapter?.renderer || null;

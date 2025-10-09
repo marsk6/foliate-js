@@ -9,7 +9,7 @@
  * 使用示例：
  *
  * // 垂直滚动模式（默认）
- * const renderer = new TabRender({
+ * const renderer = new VirtualCanvasRender({
  *   mountPoint: document.getElementById('container'),
  *   mode: 'vertical',
  *   theme: { baseFontSize: 18 },
@@ -21,7 +21,7 @@
  * });
  *
  * // 横向滑动模式
- * const horizontalRenderer = new TabRender({
+ * const horizontalRenderer = new VirtualCanvasRender({
  *   mountPoint: document.getElementById('container'),
  *   mode: 'horizontal',
  *   theme: { baseFontSize: 18 }
@@ -52,8 +52,6 @@ import { LayoutEngine } from './layout-engine/LayoutEngine.js';
  * @typedef {Object} VirtualRenderConfig
  * @property {HTMLElement} mountPoint - 挂载点元素
  * @property {number} [poolSize=4] - Canvas池大小
- * @property {Object} [theme] - 主题配置
- * @property {string} [mode='vertical'] - 渲染模式：'vertical' | 'horizontal'
  * @property {Function} [onProgressChange] - 进度变化回调函数
  */
 
@@ -64,7 +62,6 @@ import { LayoutEngine } from './layout-engine/LayoutEngine.js';
  * @property {HTMLElement} scrollContent - 滚动内容容器
  * @property {number} viewportHeight - 视窗高度
  * @property {number} viewportWidth - 视窗宽度
- * @property {number} chunkHeight - 每个渲染块的高度
  * @property {number} poolSize - Canvas池大小
  * @property {Function} onViewportChange - 视窗变化回调
  */
@@ -154,7 +151,7 @@ import { LayoutEngine } from './layout-engine/LayoutEngine.js';
  * @property {boolean} canScroll - 是否可以滚动
  */
 
-export class TabRender {
+export class VirtualCanvasRender {
   /** @type {HTMLElement} 滚动容器 */
   container;
 
@@ -174,11 +171,6 @@ export class TabRender {
   /** @type {ThemeConfig} 主题配置 */
   theme;
 
-  /** @type {number} Canvas宽度 */
-  canvasWidth;
-
-  /** @type {number} Canvas高度 */
-  canvasHeight;
 
   /** @type {string} 渲染模式：'vertical' | 'horizontal' */
   mode;
@@ -228,26 +220,18 @@ export class TabRender {
    */
   constructor(config) {
     // 渲染模式配置 - 支持 'vertical' 和 'horizontal'
-    this.mode = config.mode || 'vertical';
+    this.mode = window.coreReader?.theme.mode || 'vertical';
     this.chapterIndex = config.chapterIndex;
 
     // 进度变化回调
     this.onProgressChange = config.onProgressChange || null;
 
     // 获取全局主题配置
-    this.theme = window.coreReader?.theme || config.theme;
+    this.theme = window.coreReader?.theme
 
     // 视窗尺寸 - 从主题获取
     this.viewportWidth = this.theme.viewportWidth;
     this.viewportHeight = this.theme.viewportHeight;
-
-    // Canvas尺寸 - 直接使用视窗尺寸
-    this.canvasWidth = this.viewportWidth;
-    this.canvasHeight = this.viewportHeight;
-
-    // 块高度 - 每个渲染块的高度，等于Canvas高度
-    this.chunkHeight = this.canvasHeight;
-    this.chunkWidth = this.canvasWidth;
 
     // 解析后的节点数据
     /** @type {Array|null} 解析后的节点数据 */
@@ -267,6 +251,10 @@ export class TabRender {
 
     // 初始化划线工具（延迟到DOM创建后）
     this.canvasTools = null;
+  }
+
+  get offsetTop() {
+    return this.container?.offsetTop || 0;
   }
 
   /**
@@ -301,7 +289,7 @@ export class TabRender {
     const poolSize =
       this.fullLayoutData.totalChunks > 4 ? 4 : this.fullLayoutData.totalChunks;
     const baseOffset =
-      this.mode === 'horizontal' ? this.chunkWidth : this.chunkHeight;
+      this.mode === 'horizontal' ? this.viewportWidth : this.viewportHeight;
     for (let i = 0; i < poolSize; i++) {
       const canvas = document.createElement('canvas');
       canvas.className = `virtual-canvas-${i}`;
@@ -309,8 +297,8 @@ export class TabRender {
         position: absolute;
         top: 0;
         left: 0;
-        width: ${this.canvasWidth}px;
-        height: ${this.canvasHeight}px;
+        width: ${this.viewportWidth}px;
+        height: ${this.viewportHeight}px;
         z-index: 2;
         display: block;
         pointer-events: auto;
@@ -323,8 +311,8 @@ export class TabRender {
 
       // 设置Canvas尺寸
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = this.canvasWidth * dpr;
-      canvas.height = this.canvasHeight * dpr;
+      canvas.width = this.viewportWidth * dpr;
+      canvas.height = this.viewportHeight * dpr;
 
       this.canvasList.push(canvas);
       this.scrollContent.appendChild(canvas); // 关键：Canvas在滚动内容内
@@ -354,9 +342,6 @@ export class TabRender {
     // 重新计算尺寸（从主题获取）
     this.viewportWidth = this.theme.viewportWidth;
     this.viewportHeight = this.theme.viewportHeight;
-    this.canvasWidth = this.viewportWidth;
-    this.canvasHeight = this.viewportHeight;
-    this.chunkHeight = this.canvasHeight;
 
     // 更新容器尺寸
     if (this.container) {
@@ -366,10 +351,10 @@ export class TabRender {
 
     // 更新所有Canvas的尺寸
     this.canvasList.forEach((canvas) => {
-      canvas.width = this.canvasWidth * dpr;
-      canvas.height = this.canvasHeight * dpr;
-      canvas.style.width = this.canvasWidth + 'px';
-      canvas.style.height = this.canvasHeight + 'px';
+      canvas.width = this.viewportWidth * dpr;
+      canvas.height = this.viewportHeight * dpr;
+      canvas.style.width = this.viewportWidth + 'px';
+      canvas.style.height = this.viewportHeight + 'px';
 
       const ctx = canvas.getContext('2d');
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -379,8 +364,6 @@ export class TabRender {
     if (this.viewport) {
       this.viewport.config.viewportWidth = this.viewportWidth;
       this.viewport.config.viewportHeight = this.viewportHeight;
-      this.viewport.config.chunkHeight = this.chunkHeight;
-      this.viewport.config.chunkWidth = this.chunkWidth;
       this.viewport.state.viewportHeight = this.viewportHeight;
     }
   }
@@ -489,9 +472,8 @@ export class TabRender {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // 计算需要渲染的chunk范围
-    const chunkHeight = this.chunkHeight;
-    const startChunkIndex = Math.floor(contentStartY / chunkHeight);
-    const endChunkIndex = Math.floor((contentEndY - 1) / chunkHeight);
+    const startChunkIndex = Math.floor(contentStartY / this.viewportHeight);
+    const endChunkIndex = Math.floor((contentEndY - 1) / this.viewportHeight);
 
     // 遍历相关的chunks并渲染内容
     for (
@@ -779,12 +761,9 @@ export class TabRender {
     // 更新视窗尺寸
     if (theme.viewportWidth !== undefined) {
       this.viewportWidth = theme.viewportWidth;
-      this.canvasWidth = this.viewportWidth;
     }
     if (theme.viewportHeight !== undefined) {
       this.viewportHeight = theme.viewportHeight;
-      this.canvasHeight = this.viewportHeight;
-      this.chunkHeight = this.canvasHeight;
     }
 
     // 重新渲染
@@ -921,7 +900,6 @@ export class TabRender {
       scrollContent: this.scrollContent,
       viewportHeight: this.viewportHeight,
       viewportWidth: this.viewportWidth,
-      chunkHeight: this.chunkHeight,
       poolSize,
       onViewportChange: this.handleViewportChange.bind(this),
     };
@@ -1024,4 +1002,4 @@ export class TabRender {
     }
   }
 }
-export default TabRender;
+export default VirtualCanvasRender;

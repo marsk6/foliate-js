@@ -20,7 +20,7 @@ export class LayoutEngine {
   styleDirty = false;
 
   /**
-   * @param {Object} renderer - TabRender实例
+   * @param {Object} renderer - VirtualCanvasRender实例
    */
   constructor(renderer) {
     if (LayoutEngine.instance) {
@@ -347,7 +347,7 @@ export class LayoutEngine {
                 this.getStyleProperty(currentNodeStyle, 'paddingRight')
               ) || 0;
             const availableWidth =
-              this.renderer.canvasWidth -
+              this.renderer.viewportWidth -
               this.renderer.theme.paddingX * 2 -
               rightPadding;
             const textIndent =
@@ -578,7 +578,7 @@ export class LayoutEngine {
     const rightPadding =
       this.parseSize(this.getStyleProperty(style, 'paddingRight')) || 0;
     const availableWidth =
-      this.renderer.canvasWidth -
+      this.renderer.viewportWidth -
       this.renderer.theme.paddingX * 2 -
       rightPadding;
 
@@ -680,7 +680,7 @@ export class LayoutEngine {
 
     // 计算可用容器宽度
     const availableWidth =
-      this.renderer.canvasWidth - this.renderer.theme.paddingX * 2;
+      this.renderer.viewportWidth - this.renderer.theme.paddingX * 2;
 
     // 处理图片缩放
     const scaleResult = this.scaleImageToFit(
@@ -767,7 +767,7 @@ export class LayoutEngine {
     // 百分比单位（相对于容器宽度）
     if (trimmedValue.endsWith('%')) {
       const percentage = parseFloat(trimmedValue) / 100;
-      return this.renderer.canvasWidth * percentage;
+      return this.renderer.viewportWidth * percentage;
     }
 
     return parseFloat(trimmedValue) || 0;
@@ -958,7 +958,7 @@ export class LayoutEngine {
     // 如果没有指定容器宽度，使用默认的可用宽度
     if (containerWidth === null) {
       containerWidth =
-        this.renderer.canvasWidth - this.renderer.theme.paddingX * 2;
+        this.renderer.viewportWidth - this.renderer.theme.paddingX * 2;
     }
 
     // 计算居中位置
