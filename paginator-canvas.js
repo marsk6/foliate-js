@@ -44,10 +44,10 @@ export class Paginator extends HTMLElement {
   open(book) {
     console.log('🚨🚨🚨👉👉📢', 'book', book);
     setTimeout(() => {
-      book.sections[0].load().then((s) => {
+      book.sections[1].load().then((s) => {
         fetch(s).then((res) => {
           res.text().then((text) => {
-            console.log('🚨🚨🚨👉👉📢', 'text', text);
+            // console.log('🚨🚨🚨👉👉📢', 'text', text);
           });
         });
       });

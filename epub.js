@@ -785,6 +785,9 @@ class Loader {
         const path = resolveURL(href, base)
         const item = this.manifest.find(item => item.href === path)
         if (!item) return href
+        else {
+            return item.href
+        }
         return this.loadItem(item, parents.concat(base))
     }
     // NOTE: 把外部资源替换为 blob url
