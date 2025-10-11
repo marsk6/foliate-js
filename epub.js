@@ -708,7 +708,8 @@ class Loader {
     #refCount = new Map()
     allowScript = false
     eventTarget = new EventTarget()
-    constructor({ loadText, loadBlob, resources }) {
+    constructor({ loadText, loadBlob, resources, baseUrl }) {
+        this.baseUrl = baseUrl;
         this.loadText = loadText
         this.loadBlob = loadBlob
         this.manifest = resources.manifest
@@ -780,12 +781,15 @@ class Loader {
         const tryLoadBlob = Promise.resolve().then(() => this.loadBlob(href))
         return this.createURL(href, tryLoadBlob, mediaType, parent)
     }
+
+    // NOTE: 处理 html 字符串中的外部资源 href
     async loadHref(href, base, parents = []) {
         if (isExternal(href)) return href
         const path = resolveURL(href, base)
         const item = this.manifest.find(item => item.href === path)
         if (!item) return href
-        return this.loadItem(item, parents.concat(base))
+        else return `${this.baseUrl}/${item.href}`
+        // return this.loadItem(item, parents.concat(base))
     }
     // NOTE: 把外部资源替换为 blob url
     async loadReplaced(item, parents = []) {
@@ -923,6 +927,7 @@ const getDisplayOptions = doc => {
     }
 }
 
+// NOTE: 仅仅用来表示 book 的内容
 export class EPUB {
     parser = new DOMParser()
     /**
@@ -930,7 +935,8 @@ export class EPUB {
      */
     #loader
     #encryption
-    constructor({ loadText, loadBlob, getSize, sha1 }) {
+    constructor({ loadText, loadBlob, getSize, sha1, baseUrl }) {
+        this.baseUrl = baseUrl;
         this.loadText = loadText
         this.loadBlob = loadBlob
         this.getSize = getSize
@@ -967,6 +973,7 @@ ${doc.querySelector('parsererror').innerText}`)
             resolveHref: url => resolveURL(url, opfPath),
         })
         this.#loader = new Loader({
+            baseUrl: this.baseUrl,
             loadText: this.loadText,
             loadBlob: uri => Promise.resolve(this.loadBlob(uri))
                 .then(this.#encryption.getDecoder(uri)),

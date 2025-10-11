@@ -1,4 +1,4 @@
-import { CoreReader } from './x-canvas/core-reader.js';
+import { CoreReader } from '../src/x-canvas/core-reader.js';
 
 // NOTE: everything here assumes the so-called "negative scroll type" for RTL
 // NOTE: 整体的布局 header（标题） container（book） footer（进度）
@@ -42,16 +42,16 @@ export class Paginator extends HTMLElement {
   }
 
   open(book) {
-    console.log('🚨🚨🚨👉👉📢', 'book', book);
-    setTimeout(() => {
-      book.sections[0].load().then((s) => {
-        fetch(s).then((res) => {
-          res.text().then((text) => {
-            console.log('🚨🚨🚨👉👉📢', 'text', text);
-          });
-        });
-      });
-    }, 1000);
+    // console.log('🚨🚨🚨👉👉📢', 'book', book);
+    // setTimeout(() => {
+    //   book.sections[0].load().then((s) => {
+    //     fetch(s).then((res) => {
+    //       res.text().then((text) => {
+    //         console.log('🚨🚨🚨👉👉📢', 'text', text);
+    //       });
+    //     });
+    //   });
+    // }, 1000);
     this.bookDir = book.dir;
     this.sections = book.sections;
     book.transformTarget?.addEventListener('data', ({ detail }) => {
@@ -110,7 +110,7 @@ export class Paginator extends HTMLElement {
     const chapters = sections.map((section, index) => {
       return {
         index,
-        loadContent: async () => {
+        getHtmlBlobUrl: async () => {
           const src = await section.load();
           return src;
           // const currentHTML = await fetch(src).then(res => res.text())
