@@ -37,11 +37,14 @@ export const makeZipLoader = async file => {
     const map = new Map(entries.map(entry => [entry.filename, entry]))
     const load = f => (name, ...args) =>
     {
-        console.log('🚨🚨🚨👉👉📢', 'name', name);
+        // TODO: 从接口读取
+        // console.log('🚨🚨🚨👉👉📢', 'name', name);
         return map.has(name) ? f(map.get(name), ...args) : null
     }
     const loadText = load(entry => entry.getData(new TextWriter()))
-    const loadBlob = load((entry, type) => entry.getData(new BlobWriter(type)))
+    const loadBlob = load((entry, type) => {
+        return entry.getData(new BlobWriter(type))
+    })
     const getSize = name => map.get(name)?.uncompressedSize ?? 0
     // return { entries, loadText, loadBlob, getSize }
     return { loadText, loadBlob, getSize, entries }
