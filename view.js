@@ -263,7 +263,7 @@ export class View extends HTMLElement {
             this.renderer = document.createElement('foliate-fxl')
         } else {
             if (window.appName === 'app') {
-                await import('./paginator-canvas.js')
+                // await import('./paginator-canvas.js')
             } else {
                 await import('./paginator.js')
             }
